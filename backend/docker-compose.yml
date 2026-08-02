@@ -25,35 +25,32 @@ services:
     build: .
     depends_on: [db, redis, minio]
     environment:
-      DATABASE_URL: postgresql+psycopg://anjing:anjing@db:5432/anjing
+      DATABASE_URL: postgresql+psycopg2://anjing:anjing@db:5432/anjing
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       STORAGE_BACKEND: minio
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
+      DATA_DIR: /data
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
     ports: ["8000:8000"]
     volumes: [./data:/data]
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 
   worker:
     build: .
     command: celery -A app.tasks.celery_app worker --loglevel=info
     depends_on: [db, redis, minio]
     environment:
-      DATABASE_URL: postgresql+psycopg://anjing:anjing@db:5432/anjing
+      DATABASE_URL: postgresql+psycopg2://anjing:anjing@db:5432/anjing
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       STORAGE_BACKEND: minio
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
+      DATA_DIR: /data
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
     volumes: [./data:/data]
     deploy:
       resources:
