@@ -70,10 +70,9 @@ def run_pipeline(scan_id: int) -> None:
             return
 
         _stage(db, scan, "calibrating", 65, "尺度标定中")
-        from pipeline.calibrator import (A4_LONG, compute_scale_from_pixel,
-                                         detect_a4_in_image, scale_from_door_prior)
+        from pipeline.calibrator import scale_from_door_prior
         scale, calibrated = 1.0, 0
-        a4_scale = _calibrate_with_a4(imgs, cams, work)
+        a4_scale = _calibrate_with_a4(imgs, cams)
         if a4_scale:
             scale, calibrated = a4_scale, 1
         else:
@@ -139,25 +138,71 @@ def _fail(db, scan, message):
     db.commit()
 
 
-def _calibrate_with_a4(imgs, cams, work) -> float | None:
-    """在若干关键帧中找 A4 纸，用 SFM 位姿反推尺度（米/单位）。"""
-    import numpy as np
+def _calibrate_with_a4(imgs, cams) -> float | None:
+    """A4 纸标定：双视角三角化 A4 中心 → SFM 单位深度；成像尺寸 → 米制深度。
+
+    返回尺度因子（米/单位）。任意两帧组合求射线最近点，取合理性范围内的结果。
+    米制深度用平行面近似（A4 平放地面、镜头接近水平时误差小）。
+    """
+    from pipeline.calibrator import A4_LONG, compute_scale_from_pixel, detect_a4_in_image
+
+    dets = []  # [(cam, long_px, cx, cy)]
     for img, cam in zip(imgs[:20], cams[:20]):
         det = detect_a4_in_image(img)
-        if det is None:
-            continue
-        long_px, _ = det
-        # 沿光轴取 1 个单位的深度，投影回世界求距离
-        R, t = cam["R"], cam["t"]
-        center_img = np.array([img.shape[1] / 2, img.shape[0] / 2, 1.0])
-        ray = np.linalg.inv(cam["K"]) @ center_img
-        ray = ray / np.linalg.norm(ray)
-        cam_center = -R.T @ t
-        p_cam = ray * 1.0
-        p_world = R.T @ (p_cam - t)
-        dist = np.linalg.norm(p_world - cam_center)
-        return compute_scale_from_pixel(long_px, A4_LONG, dist, cam["K"][0, 0])
+        if det is not None:
+            long_px, _short_px, cx, cy = det
+            dets.append((cam, long_px, cx, cy))
+    if len(dets) < 2:
+        return None
+
+    for i in range(min(len(dets), 5)):
+        for j in range(i + 1, min(len(dets), 5)):
+            cam_i, long_i, cx_i, cy_i = dets[i]
+            cam_j, long_j, cx_j, cy_j = dets[j]
+            # A4 中心的相机系射线（单位方向）
+            ray_i = _pixel_ray(cam_i, cx_i, cy_i)
+            ray_j = _pixel_ray(cam_j, cx_j, cy_j)
+            # 世界系射线
+            d_i = cam_i["R"].T @ ray_i
+            d_j = cam_j["R"].T @ ray_j
+            C_i = -cam_i["R"].T @ cam_i["t"]
+            C_j = -cam_j["R"].T @ cam_j["t"]
+            P = _triangulate(C_i, d_i, C_j, d_j)
+            if P is None:
+                continue
+            d_units = float(np.linalg.norm(P - C_i))
+            if d_units <= 0.1:
+                continue
+            # 米制深度（两帧平均，平行面近似）
+            d_m = (cam_i["K"][0, 0] * A4_LONG / long_i + cam_j["K"][0, 0] * A4_LONG / long_j) / 2.0
+            scale = d_m / d_units
+            if 0.2 < scale < 5.0:  # 合理性检查（20cm~5m 每单位）
+                return scale
     return None
+
+
+def _pixel_ray(cam: dict, x: float, y: float) -> np.ndarray:
+    """图像像素 → 相机系射线（单位方向）。"""
+    K = cam["K"]
+    ray = np.linalg.inv(K) @ np.array([x, y, 1.0])
+    return ray / np.linalg.norm(ray)
+
+
+def _triangulate(C_i, d_i, C_j, d_j) -> np.ndarray | None:
+    """两射线（起点 C、单位方向 d）的最近点（最小二乘中点）。"""
+    w = C_j - C_i
+    a = float(d_i @ d_i)
+    b = float(d_i @ d_j)
+    c = float(d_j @ d_j)
+    d = float(d_i @ w)
+    e = float(d_j @ w)
+    denom = a * c - b * b
+    if abs(denom) < 1e-12:
+        return None  # 射线平行
+    # 解 [a -b; b -c][s; t] = [d; e]（最小化 |C_i+s*d_i - C_j-t*d_j|²）
+    s = (c * d - b * e) / denom
+    t = (b * d - a * e) / denom
+    return (C_i + s * d_i + C_j + t * d_j) / 2.0
 
 
 def _measure_door_height(points) -> float | None:

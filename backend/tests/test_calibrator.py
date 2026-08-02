@@ -8,6 +8,15 @@ def test_compute_scale_from_pixel():
     assert 0.9 < scale < 1.1  # 单位: 米/单位（此处相机单位=米）
 
 
+def test_compute_scale_from_pixel_direction():
+    """方向验证：SFM 单位深度更浅（distance=1.0）时，米制深度 2.0 → 尺度 2.0 米/单位。"""
+    scale = compute_scale_from_pixel(pixel_len=89.1, physical_len=0.297, distance=1.0, focal=600.0)
+    assert abs(scale - 2.0) < 1e-6
+    # 反过来：SFM 单位深度更深（distance=4.0）→ 尺度 0.5 米/单位
+    scale2 = compute_scale_from_pixel(pixel_len=89.1, physical_len=0.297, distance=4.0, focal=600.0)
+    assert abs(scale2 - 0.5) < 1e-6
+
+
 def test_scale_from_door_prior():
     # 门高先验：点云中门框高度 1.6 单位，标准 2.0m → 尺度 1.25 m/unit
     s = scale_from_door_prior(door_height_units=1.6, standard_height=2.0)
