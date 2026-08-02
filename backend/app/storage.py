@@ -29,7 +29,7 @@ def save_media(scan_id: int, filename: str, content: bytes) -> str:
     root = _local_root()
     dest = root / "media" / str(scan_id)
     dest.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(filename).name  # 防路径注入（../ 等）
+    safe_name = Path(filename).name or "media.bin"  # 防路径注入（../ 等），空名兜底
     (dest / safe_name).write_bytes(content)
     return f"media/{scan_id}/{safe_name}"
 
