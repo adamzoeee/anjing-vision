@@ -1,10 +1,8 @@
 """视频抽帧：ffmpeg 均匀抽帧 + Laplacian 清晰度过滤。"""
-import os
 import subprocess
 from pathlib import Path
 
 import cv2
-import numpy as np
 
 TARGET_COUNT = 200       # 重建输入目标帧数
 MIN_VARIANCE = 60.0      # Laplacian 方差阈值（低于视为模糊）
@@ -13,6 +11,8 @@ MIN_VARIANCE = 60.0      # Laplacian 方差阈值（低于视为模糊）
 def extract_frames(video: Path, out_dir: Path, target_count: int = TARGET_COUNT) -> list[Path]:
     """用 ffmpeg 从视频均匀抽帧为 jpg（先探测时长，再按间隔抽）。"""
     out_dir.mkdir(parents=True, exist_ok=True)
+    for old in out_dir.glob("frame_*.jpg"):
+        old.unlink()
     probe = subprocess.run(
         ["ffmpeg", "-i", str(video)],
         capture_output=True, text=True,

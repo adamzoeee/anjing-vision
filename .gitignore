@@ -5,3 +5,5 @@ backend/.env
 backend/test.db
 out-demo/
 models/
+__pycache__/
+*.pyc
