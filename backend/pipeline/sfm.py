@@ -56,7 +56,6 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
         recon = maps
     if recon is None:
         raise RuntimeError("SFM 失败：无法恢复相机位姿（图片过少或纹理不足）")
-    recon: pycolmap.Reconstruction = maps[0]
     cameras, points = [], []
     for img_id in recon.images:
         img = recon.images[img_id]

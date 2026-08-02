@@ -33,3 +33,80 @@ def test_run_sfm_accepts_minimal_inputs(tmp_path):
     with pytest.raises(FileNotFoundError) as exc:
         run_sfm(tmp_path / "no_images", tmp_path / "out")
     assert "图片" in str(exc.value)
+
+
+class _FakePose:
+    def rotation(self):
+        class _R:
+            @staticmethod
+            def matrix():
+                return np.eye(3)
+        return _R()
+
+    def translation(self):
+        return np.zeros(3)
+
+
+class _FakeImage:
+    def __init__(self, name):
+        self.name = name
+        self.camera_id = 0
+        self.cam_from_world = _FakePose()
+
+
+class _FakeCam:
+    def focal_length_x(self):
+        return 500.0
+
+    def focal_length_y(self):
+        return 500.0
+
+    def principal_point_x(self):
+        return 320.0
+
+    def principal_point_y(self):
+        return 240.0
+
+
+class _FakeRecon:
+    def __init__(self):
+        self.images = {0: _FakeImage("a.jpg")}
+        self.cameras = {0: _FakeCam()}
+        self.points3D = {}
+
+
+def _patch_pycolmap(monkeypatch, return_value):
+    import pycolmap
+    monkeypatch.setattr(pycolmap, "extract_features", lambda *a, **k: None)
+    monkeypatch.setattr(pycolmap, "match_exhaustive", lambda *a, **k: None)
+    monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **k: return_value)
+
+
+def _make_image_dir(tmp_path):
+    img_dir = tmp_path / "imgs"
+    img_dir.mkdir()
+    (img_dir / "a.jpg").write_bytes(b"x")
+    return img_dir
+
+
+def test_run_sfm_accepts_dict_return(tmp_path, monkeypatch):
+    """pycolmap 4.x dict 返回形态（成功路径）。"""
+    _patch_pycolmap(monkeypatch, {"reconstruction": _FakeRecon()})
+    out = run_sfm(_make_image_dir(tmp_path), tmp_path / "work")
+    assert len(out["cameras"]) == 1
+    assert out["cameras"][0]["name"] == "a.jpg"
+    assert out["points3D"].shape == (0, 3)
+
+
+def test_run_sfm_accepts_list_return(tmp_path, monkeypatch):
+    """旧版 list/tuple 返回形态（成功路径）。"""
+    _patch_pycolmap(monkeypatch, [_FakeRecon()])
+    out = run_sfm(_make_image_dir(tmp_path), tmp_path / "work")
+    assert len(out["cameras"]) == 1
+
+
+def test_run_sfm_rejects_empty_dict(tmp_path, monkeypatch):
+    """失败路径：空 dict 应抛 RuntimeError 而非崩溃。"""
+    _patch_pycolmap(monkeypatch, {})
+    with pytest.raises(RuntimeError):
+        run_sfm(_make_image_dir(tmp_path), tmp_path / "work")
