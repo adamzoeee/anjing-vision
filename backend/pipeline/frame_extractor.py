@@ -1,4 +1,6 @@
 """视频抽帧：ffmpeg 均匀抽帧 + Laplacian 清晰度过滤。"""
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -7,6 +9,23 @@ import cv2
 TARGET_COUNT = 200       # 重建输入目标帧数
 MIN_VARIANCE = 60.0      # Laplacian 方差阈值（低于视为模糊）
 
+_FFMPEG_CANDIDATES = (
+    "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
+    "C:/ffmpeg/bin/ffmpeg.exe",
+    "/usr/bin/ffmpeg",
+)
+
+
+def _ffmpeg_bin() -> str:
+    """探测 ffmpeg 可执行文件：PATH 优先，其次常见安装路径。"""
+    p = shutil.which("ffmpeg")
+    if p:
+        return p
+    for cand in _FFMPEG_CANDIDATES:
+        if os.path.exists(cand):
+            return cand
+    raise FileNotFoundError("ffmpeg 未安装或不在 PATH")
+
 
 def extract_frames(video: Path, out_dir: Path, target_count: int = TARGET_COUNT) -> list[Path]:
     """用 ffmpeg 从视频均匀抽帧为 jpg（先探测时长，再按间隔抽）。"""
@@ -14,7 +33,7 @@ def extract_frames(video: Path, out_dir: Path, target_count: int = TARGET_COUNT)
     for old in out_dir.glob("frame_*.jpg"):
         old.unlink()
     probe = subprocess.run(
-        ["ffmpeg", "-i", str(video)],
+        [_ffmpeg_bin(), "-i", str(video)],
         capture_output=True, text=True,
     )
     duration = 0.0
@@ -27,7 +46,7 @@ def extract_frames(video: Path, out_dir: Path, target_count: int = TARGET_COUNT)
         raise ValueError(f"无法解析视频时长: {video}")
     fps = max(target_count / duration, 0.5)
     subprocess.run([
-        "ffmpeg", "-y", "-i", str(video),
+        _ffmpeg_bin(), "-y", "-i", str(video),
         "-vf", f"fps={fps},scale=1600:-2",
         "-q:v", "2", str(out_dir / "frame_%05d.jpg"),
     ], check=True, capture_output=True)

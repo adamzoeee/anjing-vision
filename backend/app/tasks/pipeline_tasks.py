@@ -17,20 +17,8 @@ def dispatch_scan(scan_id: int):
 
 
 def run_pipeline_sync(scan_id: int):
-    """同步执行整条管道。A12 将充实完整实现；当前标记失败以保持状态机流转。"""
-    from ..db import SessionLocal
-    from ..models import Scan
-    db = SessionLocal()
-    try:
-        scan = db.get(Scan, scan_id)
-        if scan is None:
-            return
-        scan.status = "failed"
-        scan.progress = 100
-        scan.message = "管道实现中（A12）"
-        db.commit()
-    finally:
-        db.close()
+    from .pipeline_runner import run_pipeline
+    run_pipeline(scan_id)
 
 
 @celery.task(bind=True)
