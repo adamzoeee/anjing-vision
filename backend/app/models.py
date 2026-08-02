@@ -1,0 +1,69 @@
+import datetime as dt
+
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, JSON, String
+from sqlalchemy.orm import relationship
+
+from .db import Base
+
+
+def _now():
+    return dt.datetime.utcnow()
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), nullable=False, unique=True)
+    created_at = Column(DateTime, default=_now)
+    users = relationship("User", back_populates="org")
+
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    name = Column(String(80), nullable=False)
+    email = Column(String(120), nullable=False, unique=True)
+    password_hash = Column(String(128), nullable=False)
+    role = Column(String(20), default="member")  # admin | member
+    created_at = Column(DateTime, default=_now)
+    org = relationship("Organization", back_populates="users")
+
+
+class Project(Base):
+    __tablename__ = "projects"
+    id = Column(Integer, primary_key=True)
+    org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False)
+    name = Column(String(120), nullable=False)
+    address = Column(String(200), default="")
+    created_at = Column(DateTime, default=_now)
+    scans = relationship("Scan", back_populates="project", cascade="all, delete-orphan")
+
+
+class Scan(Base):
+    __tablename__ = "scans"
+    id = Column(Integer, primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    status = Column(String(20), default="uploading")
+    progress = Column(Integer, default=0)
+    message = Column(String(200), default="")
+    capture_type = Column(String(20), default="video")  # video | photos
+    media_path = Column(String(300), default="")
+    created_at = Column(DateTime, default=_now)
+    project = relationship("Project", back_populates="scans")
+    report = relationship("Report", back_populates="scan", uselist=False)
+
+
+class Report(Base):
+    __tablename__ = "reports"
+    id = Column(Integer, primary_key=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=False)
+    score = Column(Float, default=0)
+    risks = Column(JSON, default=list)
+    measures = Column(JSON, default=dict)
+    advice = Column(JSON, default=list)
+    images = Column(JSON, default=list)
+    preview = Column(JSON, default=dict)
+    calibrated = Column(Integer, default=0)
+    created_at = Column(DateTime, default=_now)
+    scan = relationship("Scan", back_populates="report")
