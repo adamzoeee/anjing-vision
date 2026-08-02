@@ -1,0 +1,7 @@
+.worktrees/
+backend/.venv/
+backend/data/
+backend/.env
+backend/test.db
+out-demo/
+models/
