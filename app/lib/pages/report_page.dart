@@ -94,7 +94,7 @@ class _ReportPageState extends State<ReportPage> {
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: Image.network(
                             '${context.read<ApiClient>().dio.options.baseUrl}/static/$img',
-                            errorBuilder: (_, __, ___) =>
+                            errorBuilder: (_, _, _) =>
                                 const Icon(Icons.broken_image, size: 48),
                           ),
                       )),
