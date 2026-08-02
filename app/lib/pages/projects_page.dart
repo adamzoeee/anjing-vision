@@ -60,7 +60,16 @@ class _ProjectsPageState extends State<ProjectsPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text('项目列表（${store.user?.orgName ?? ''}）'),
-        actions: [IconButton(onPressed: store.logout, icon: const Icon(Icons.logout))]),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () {
+              store.logout();
+              Navigator.of(context).pushNamedAndRemoveUntil(
+                  '/login', (route) => false);
+            },
+          )
+        ]),
       floatingActionButton: FloatingActionButton(
           onPressed: _create, child: const Icon(Icons.add)),
       body: _error != null

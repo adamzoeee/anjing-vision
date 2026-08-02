@@ -14,8 +14,11 @@ class AnjingApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final api = ApiClient();
-    return ChangeNotifierProvider(
-      create: (_) => AuthStore(api)..restore(),
+    return MultiProvider(
+      providers: [
+        Provider<ApiClient>.value(value: api),
+        ChangeNotifierProvider(create: (_) => AuthStore(api)..restore()),
+      ],
       child: MaterialApp(
         title: '安龄智境',
         theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),

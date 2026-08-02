@@ -93,7 +93,7 @@ class _ReportPageState extends State<ReportPage> {
                       ...r.images.map((img) => Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         child: Image.network(
-                            '${context.read<ApiClient>().dio.options.baseUrl}/static/$img',
+                            '${context.read<ApiClient>().dio.options.baseUrl}$img',
                             errorBuilder: (_, _, _) =>
                                 const Icon(Icons.broken_image, size: 48),
                           ),

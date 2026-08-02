@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:dio/dio.dart';
 
 import 'models.dart';
@@ -54,10 +52,11 @@ class ApiClient {
           .map<Scan>((e) => Scan.fromJson(e)).toList();
 
   Future<void> uploadVideo(int scanId, String filePath, String filename) async {
-    final bytes = await File(filePath).readAsBytes();
+    // 流式上传（不整文件读入内存）
     await dio.post('/api/scans/$scanId/upload',
-        data: FormData.fromMap(
-            {'files': MultipartFile.fromBytes(bytes, filename: filename)}),
+        data: FormData.fromMap({
+          'files': await MultipartFile.fromFile(filePath, filename: filename),
+        }),
         options: Options(contentType: 'multipart/form-data'));
   }
 
