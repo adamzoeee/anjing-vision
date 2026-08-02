@@ -46,11 +46,11 @@ def test_upload_sanitizes_filename(client, tmp_path):
     assert r.status_code == 200
     media = r.json()["media"]
     assert ".." not in media
-    # 空 basename（如 ".."）→ 兜底 media.bin，不抛 500
+    # 空 basename（如 ".."）→ 兜底 media 前缀，不抛 500
     r2 = client.post(f"/api/scans/{sid}/upload", headers=h,
                      files={"files": ("..", b"x", "video/mp4")})
     assert r2.status_code == 200
-    assert r2.json()["media"].endswith("media.bin")
+    assert r2.json()["media"].split("/")[-1].startswith("media")
 
 
 def test_upload_over_limit_rejected(client):

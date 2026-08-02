@@ -21,6 +21,10 @@ def clean_db():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield
+    # 清理本地存储目录，避免文件残留影响跨测试用例断言
+    import shutil
+    from app.storage import _local_root
+    shutil.rmtree(_local_root(), ignore_errors=True)
 
 
 @pytest.fixture
