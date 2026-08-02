@@ -7,3 +7,10 @@ out-demo/
 models/
 __pycache__/
 *.pyc
+app/build/
+app/.dart_tool/
+app/.flutter-plugins*
+app/.packages
+app/android/.gradle/
+app/android/local.properties
+app/ios/Pods/
