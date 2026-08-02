@@ -54,8 +54,8 @@ def main():
             save_media(scan.id, f.name, f.read_bytes())
         media = f"media/{scan.id}"
     scan.media_path = media
+    sid = scan.id  # commit 会 expire 全部属性，先保存主键
     db.commit()
-    sid = scan.id  # commit 后属性被 expire，先保存主键
     db.close()
 
     run_pipeline(sid)
@@ -71,6 +71,8 @@ def main():
             "risks": scan.report.risks,
             "measures": scan.report.measures,
             "advice": scan.report.advice,
+            "images": scan.report.images,
+            "preview": scan.report.preview,
             "calibrated": scan.report.calibrated,
         }, ensure_ascii=False, indent=2))
         print(f"报告已写入 {out / 'report.json'}")
