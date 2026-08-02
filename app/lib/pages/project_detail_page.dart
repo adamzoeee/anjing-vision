@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/models.dart';
 import 'capture_page.dart';
+import 'compare_page.dart';
 import 'report_page.dart';
 
 class ProjectDetailPage extends StatefulWidget {
@@ -44,6 +45,17 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
         builder: (_) => CapturePage(project: widget.project, scan: scan)));
   }
 
+  void _compare() {
+    final scans = _scans;
+    if (scans == null) return;
+    final done = scans.where((s) => s.done).toList()
+      ..sort((a, b) => b.id.compareTo(a.id));
+    if (done.length < 2) return;
+    // 最近两次完成的扫描：旧→新
+    Navigator.push(context, MaterialPageRoute(builder: (_) =>
+        ComparePage(scanA: done[1].id, scanB: done[0].id)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final scans = _scans;
@@ -80,6 +92,14 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
                                 builder: (_) => ReportPage(scan: s)))
                             : null,
                       )),
+                    const SizedBox(height: 24),
+                    Center(child: OutlinedButton.icon(
+                      onPressed: _scans != null && _scans!.where((s) => s.done).length >= 2
+                          ? _compare
+                          : null,
+                      icon: const Icon(Icons.compare_arrows),
+                      label: const Text('改造前后对比'),
+                    )),
                   ])),
     );
   }
