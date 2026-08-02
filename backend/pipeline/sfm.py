@@ -18,7 +18,8 @@ def build_synthetic_cameras(n: int = 12, radius: float = 2.0, height: float = 1.
         forward /= np.linalg.norm(forward)
         up = np.array([0.0, 0.0, 1.0])
         right = np.cross(forward, up)
-        R = np.stack([right, np.cross(up, right), up], axis=1)
+        # 针孔约定：x 右、y 下、z 前（光轴=forward 指向圆心）；列 = [x_cam, y_cam, z_cam]
+        R = np.stack([right, -up, forward], axis=1)
         K = np.array([[600.0, 0, 320], [0, 600, 240], [0, 0, 1.0]])
         cams.append({"center": center, "R": R, "K": K})
     return cams
@@ -34,6 +35,7 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
     if not image_dir.exists() or not list(image_dir.glob("*.jpg")):
         raise FileNotFoundError(f"图片目录不存在或没有 jpg: {image_dir}")
     work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
     db_path = work_dir / "database.db"
     model_path = work_dir / OUTPUT_DIR
     for p in (db_path, model_path):
@@ -45,7 +47,14 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
     pycolmap.extract_features(db_path, str(image_dir))
     pycolmap.match_exhaustive(db_path)
     maps = pycolmap.incremental_mapping(db_path, str(image_dir), str(model_path))
-    if not maps or not maps[0]:
+    # 4.x 返回 dict（失败时空 dict）；兼容旧版本返回列表/元组或 None 的情况
+    if isinstance(maps, dict):
+        recon = maps.get("reconstruction")
+    elif isinstance(maps, (list, tuple)):
+        recon = maps[0] if maps else None
+    else:
+        recon = maps
+    if recon is None:
         raise RuntimeError("SFM 失败：无法恢复相机位姿（图片过少或纹理不足）")
     recon: pycolmap.Reconstruction = maps[0]
     cameras, points = [], []
