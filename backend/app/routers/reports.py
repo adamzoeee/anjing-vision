@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pathlib import Path
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -21,7 +22,7 @@ def get_report(scan_id: int, db: Session = Depends(get_db), org_id: int = Depend
         "risks": scan.report.risks,
         "measures": scan.report.measures,
         "advice": scan.report.advice,
-        "images": scan.report.images,
+        "images": [f"/static/{scan_id}/{Path(img).name}" for img in scan.report.images],
         "preview": scan.report.preview,
         "calibrated": scan.report.calibrated,
         "created_at": scan.report.created_at.isoformat(),
