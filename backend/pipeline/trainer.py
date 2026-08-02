@@ -9,12 +9,21 @@ SH_DEGREE = 3
 
 
 def prepare_tensors(cameras: list[dict], images: list[np.ndarray]) -> dict:
-    """把位姿/图片转成训练张量。K(相机内参), c2w, imgs（均带 batch 维）。"""
+    """把位姿/图片转成训练张量。K(相机内参), c2w, imgs（均带 batch 维）。
+
+    支持两种相机约定：
+    - SFM 输出：含 "R"(world→cam) 与 "t" 键 → c2w = [[R.T, -R.T@t],[0,1]]
+    - 合成相机（build_synthetic_cameras）：含 "R"(c2w 旋转) 与 "center" 键、无 "t" → c2w = [[R, center],[0,1]]
+    """
     K = np.stack([c["K"] for c in cameras]).astype(np.float32)
     c2w = []
     for c in cameras:
-        R, t = c["R"].astype(np.float32), c["t"].astype(np.float32)
-        c2w.append(np.block([[R.T, -R.T @ t.reshape(3, 1)], [0, 0, 0, 1]]))
+        if "t" in c:
+            R, t = c["R"].astype(np.float32), c["t"].astype(np.float32)
+            c2w.append(np.block([[R.T, -R.T @ t.reshape(3, 1)], [0, 0, 0, 1]]))
+        else:
+            R, center = c["R"].astype(np.float32), np.asarray(c["center"], np.float32)
+            c2w.append(np.block([[R, center.reshape(3, 1)], [0, 0, 0, 1]]))
     c2w = np.stack(c2w).astype(np.float32)
     imgs = np.stack([np.asarray(im)[..., :3].astype(np.float32) / 255.0 for im in images])
     return {

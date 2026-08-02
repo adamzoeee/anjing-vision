@@ -1,4 +1,4 @@
-"""高斯场 → 稠密点云：按尺度采样高斯中心点，统计滤波去离群。"""
+"""高斯场 → 稠密点云：按尺度采样高斯中心点（统计滤波见 statistical_filter）。"""
 from pathlib import Path
 
 import numpy as np

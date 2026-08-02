@@ -29,7 +29,7 @@ def test_export_pointcloud_filters_low_opacity(tmp_path):
     pcd_path = tmp_path / "pc.ply"
     export_pointcloud(g, pcd_path)
     pcd = o3d.io.read_point_cloud(str(pcd_path))
-    assert len(pcd.points) <= 500  # 低不透明度高斯被过滤
+    assert len(pcd.points) <= 250  # 仅高不透明度（250 个）高斯保留
 
 
 def test_statistical_filter_removes_outliers():
