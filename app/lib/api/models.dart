@@ -1,0 +1,65 @@
+class AuthUser {
+  final int id;
+  final String name;
+  final String email;
+  final String role;
+  final String orgName;
+  AuthUser({required this.id, required this.name, required this.email,
+      required this.role, required this.orgName});
+  factory AuthUser.fromJson(Map<String, dynamic> j) => AuthUser(
+      id: j['id'], name: j['name'], email: j['email'],
+      role: j['role'], orgName: j['org_name']);
+}
+
+class Project {
+  final int id;
+  final String name;
+  final String address;
+  Project({required this.id, required this.name, this.address = ''});
+  factory Project.fromJson(Map<String, dynamic> j) =>
+      Project(id: j['id'], name: j['name'], address: j['address'] ?? '');
+}
+
+class Scan {
+  final int id;
+  final int projectId;
+  final String status;
+  final int progress;
+  final String message;
+  final String captureType;
+  Scan({required this.id, required this.projectId, required this.status,
+      required this.progress, required this.message, required this.captureType});
+  factory Scan.fromJson(Map<String, dynamic> j) => Scan(
+      id: j['id'], projectId: j['project_id'], status: j['status'],
+      progress: j['progress'] ?? 0, message: j['message'] ?? '',
+      captureType: j['capture_type'] ?? '');
+  bool get done => status == 'done';
+  bool get failed => status == 'failed';
+}
+
+class Risk {
+  final String code;
+  final String name;
+  final String level;
+  final dynamic measure;
+  Risk({required this.code, required this.name, required this.level, this.measure});
+  factory Risk.fromJson(Map<String, dynamic> j) =>
+      Risk(code: j['code'], name: j['name'], level: j['level'], measure: j['measure']);
+}
+
+class Report {
+  final int scanId;
+  final double score;
+  final List<Risk> risks;
+  final List<String> advice;
+  final List<String> images;
+  final int calibrated;
+  Report({required this.scanId, required this.score, required this.risks,
+      required this.advice, required this.images, required this.calibrated});
+  factory Report.fromJson(Map<String, dynamic> j) => Report(
+      scanId: j['scan_id'], score: (j['score'] ?? 0).toDouble(),
+      risks: (j['risks'] as List? ?? []).map((e) => Risk.fromJson(e)).toList(),
+      advice: (j['advice'] as List? ?? []).map((e) => e.toString()).toList(),
+      images: (j['images'] as List? ?? []).map((e) => e.toString()).toList(),
+      calibrated: j['calibrated'] ?? 0);
+}
