@@ -16,7 +16,7 @@ def test_create_scan_and_upload_video(client, tmp_path):
     fake.write_bytes(b"fake-mp4-content")
     r = client.post(
         f"/api/scans/{sid}/upload", headers=h,
-        files={"file": ("clip.mp4", fake.read_bytes(), "video/mp4")},
+        files={"files": ("clip.mp4", fake.read_bytes(), "video/mp4")},
     )
     assert r.status_code == 200
     r = client.get(f"/api/scans/{sid}", headers=h)
@@ -42,13 +42,13 @@ def test_upload_sanitizes_filename(client, tmp_path):
     sid = client.post(f"/api/projects/{pid}/scans", json={"capture_type": "video"}, headers=h).json()["id"]
     # ../ 文件名 → 落盘路径不含 ..
     r = client.post(f"/api/scans/{sid}/upload", headers=h,
-                    files={"file": ("../../evil.mp4", b"x", "video/mp4")})
+                    files={"files": ("../../evil.mp4", b"x", "video/mp4")})
     assert r.status_code == 200
     media = r.json()["media"]
     assert ".." not in media
     # 空 basename（如 ".."）→ 兜底 media.bin，不抛 500
     r2 = client.post(f"/api/scans/{sid}/upload", headers=h,
-                     files={"file": ("..", b"x", "video/mp4")})
+                     files={"files": ("..", b"x", "video/mp4")})
     assert r2.status_code == 200
     assert r2.json()["media"].endswith("media.bin")
 
@@ -62,9 +62,28 @@ def test_upload_over_limit_rejected(client):
     from app.routers import scans as scans_mod
     scans_mod.MAX_UPLOAD_BYTES = 100
     r = client.post(f"/api/scans/{sid}/upload", headers=h,
-                    files={"file": ("big.mp4", b"x" * 101, "video/mp4")})
+                    files={"files": ("big.mp4", b"x" * 101, "video/mp4")})
     assert r.status_code == 413
     scans_mod.MAX_UPLOAD_BYTES = 512 * 1024 * 1024
+
+
+def test_photos_upload_multiple_files(client, tmp_path):
+    """照片模式：多文件上传，media_path 指向目录。"""
+    h = _auth(client)
+    pid = client.post("/api/projects", json={"name": "王奶奶家"}, headers=h).json()["id"]
+    sid = client.post(f"/api/projects/{pid}/scans", json={"capture_type": "photos"}, headers=h).json()["id"]
+    files = [
+        ("files", ("p1.jpg", b"img1", "image/jpeg")),
+        ("files", ("p2.jpg", b"img2", "image/jpeg")),
+        ("files", ("p3.jpg", b"img3", "image/jpeg")),
+    ]
+    r = client.post(f"/api/scans/{sid}/upload", headers=h, files=files)
+    assert r.status_code == 200, r.text
+    media = r.json()["media"]
+    assert media == f"media/{sid}"  # 目录路径 → pipeline_runner is_dir() 分支
+    # 文件确实落盘
+    from app.storage import media_path
+    assert (media_path(media) / "p1.jpg").exists()
 
 
 def test_list_scans_by_project(client):

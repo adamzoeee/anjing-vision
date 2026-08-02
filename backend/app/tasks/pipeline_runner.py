@@ -45,7 +45,13 @@ def run_pipeline(scan_id: int) -> None:
 
         _stage(db, scan, "sfm", 25, "相机位姿估计中")
         from pipeline.sfm import run_sfm
-        sfm_out = run_sfm(frames if not src.is_dir() else src, work / "sfm")
+        # SFM 只跑清晰帧（模糊帧会污染特征匹配），复制到独立目录保证位姿与图像一一对应
+        frames_clean = work / "frames_clean"
+        frames_clean.mkdir(parents=True, exist_ok=True)
+        import shutil
+        for p in kept:
+            shutil.copy(p, frames_clean / p.name)
+        sfm_out = run_sfm(frames_clean, work / "sfm")
         if len(sfm_out["cameras"]) < 5:
             _fail(db, scan, "SFM 恢复的相机过少，请重录（保证画面重叠、纹理充足）")
             return
@@ -53,9 +59,15 @@ def run_pipeline(scan_id: int) -> None:
         _stage(db, scan, "training", 45, "3D 重建训练中")
         from pipeline.trainer import prepare_tensors, train_gaussians
         from PIL import Image
-        cams = sfm_out["cameras"]
-        imgs = [np.asarray(Image.open(p).convert("RGB")) for p in sorted(kept)[: len(cams)]]
-        gt = prepare_tensors(cams[: len(imgs)], imgs)
+        # 对齐：相机与图像按文件名排序后一一对应（SFM 可能漏注册部分帧，过滤掉）
+        name_to_cam = {c["name"]: c for c in sfm_out["cameras"]}
+        paired = [(p, name_to_cam[p.name]) for p in sorted(kept) if p.name in name_to_cam]
+        if len(paired) < 5:
+            _fail(db, scan, "SFM 注册帧过少，无法训练")
+            return
+        imgs = [np.asarray(Image.open(p).convert("RGB")) for p, _ in paired]
+        cams = [c for _, c in paired]
+        gt = prepare_tensors(cams, imgs)
         gaussians = train_gaussians(gt, sfm_out["points3D"])
 
         from pipeline.exporter import export_pointcloud, statistical_filter
