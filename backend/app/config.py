@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "sqlite:///./anjing.db"
-    secret_key: str = "dev-secret-change-me"
+    secret_key: str = "dev-secret-change-me-please-use-env-32bytes"
     token_expire_minutes: int = 60 * 24 * 7
     storage_backend: str = "local"          # local | minio
     minio_endpoint: str = "localhost:9000"
