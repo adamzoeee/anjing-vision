@@ -47,8 +47,9 @@ def run_pipeline(scan_id: int) -> None:
         from pipeline.sfm import run_sfm
         # SFM 只跑清晰帧（模糊帧会污染特征匹配），复制到独立目录保证位姿与图像一一对应
         frames_clean = work / "frames_clean"
-        frames_clean.mkdir(parents=True, exist_ok=True)
         import shutil
+        shutil.rmtree(frames_clean, ignore_errors=True)  # 清空重跑残留
+        frames_clean.mkdir(parents=True, exist_ok=True)
         for p in kept:
             shutil.copy(p, frames_clean / p.name)
         sfm_out = run_sfm(frames_clean, work / "sfm")

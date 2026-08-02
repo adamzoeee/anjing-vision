@@ -32,6 +32,13 @@ def save_media(scan_id: int, filename: str, content: bytes) -> str:
     safe_name = Path(filename).name  # 防路径注入（../ 等）
     if safe_name in ("", ".", ".."):
         safe_name = "media.bin"  # 空/点路径兜底
+    # 同名文件自动加序号后缀，避免多选上传时静默互相覆盖
+    if (dest / safe_name).exists():
+        stem, suffix = safe_name.rsplit(".", 1) if "." in safe_name else (safe_name, "")
+        i = 1
+        while (dest / f"{stem}_{i}{'.' + suffix if suffix else ''}").exists():
+            i += 1
+        safe_name = f"{stem}_{i}{'.' + suffix if suffix else ''}"
     (dest / safe_name).write_bytes(content)
     return f"media/{scan_id}/{safe_name}"
 
