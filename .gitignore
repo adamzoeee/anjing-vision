@@ -14,3 +14,4 @@ app/.packages
 app/android/.gradle/
 app/android/local.properties
 app/ios/Pods/
+downloads/
