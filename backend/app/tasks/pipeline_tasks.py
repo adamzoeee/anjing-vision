@@ -12,7 +12,8 @@ def dispatch_scan(scan_id: int):
         try:
             run_pipeline_async.delay(scan_id)
         except Exception:
-            # Redis/Celery 不可用（开发环境）→ 回退同步执行
+            if not s.allow_sync_fallback:
+                raise
             run_pipeline_sync(scan_id)
 
 

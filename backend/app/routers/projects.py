@@ -6,8 +6,6 @@ from ..db import get_db
 from ..deps import get_org_scope
 from ..models import Project, Scan
 from ..schemas import ProjectIn, ProjectOut, ScanIn, ScanOut
-from ..tasks.pipeline_tasks import dispatch_scan
-
 router = APIRouter()
 
 
