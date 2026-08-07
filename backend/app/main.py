@@ -39,6 +39,7 @@ def _error_response(
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     app_settings = settings or get_settings()
+    logger.setLevel(app_settings.log_level)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
