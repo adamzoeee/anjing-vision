@@ -37,17 +37,29 @@ class _ProjectsPageState extends State<ProjectsPage> {
 
   Future<void> _create() async {
     final client = context.read<ApiClient>();
-    final name = await showDialog<String>(context: context, builder: (c) {
-      final tc = TextEditingController();
-      return AlertDialog(
-        title: const Text('新建评估项目'),
-        content: TextField(controller: tc,
-            decoration: const InputDecoration(labelText: '项目名（如：王奶奶家）')),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c), child: const Text('取消')),
-          TextButton(onPressed: () => Navigator.pop(c, tc.text), child: const Text('创建')),
-        ]);
-    });
+    final name = await showDialog<String>(
+      context: context,
+      builder: (c) {
+        final tc = TextEditingController();
+        return AlertDialog(
+          title: const Text('新建评估项目'),
+          content: TextField(
+            controller: tc,
+            decoration: const InputDecoration(labelText: '项目名（如：王奶奶家）'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(c),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(c, tc.text),
+              child: const Text('创建'),
+            ),
+          ],
+        );
+      },
+    );
     if (name != null && name.isNotEmpty) {
       await client.createProject(name, '');
       _load();
@@ -63,39 +75,53 @@ class _ProjectsPageState extends State<ProjectsPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
-            onPressed: () {
-              store.logout();
-              Navigator.of(context).pushNamedAndRemoveUntil(
-                  '/login', (route) => false);
+            onPressed: () async {
+              await store.logout();
+              if (!context.mounted) return;
+              Navigator.of(
+                context,
+              ).pushNamedAndRemoveUntil('/login', (route) => false);
             },
-          )
-        ]),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
-          onPressed: _create, child: const Icon(Icons.add)),
+        onPressed: _create,
+        child: const Icon(Icons.add),
+      ),
       body: _error != null
           ? Center(child: Text(_error!))
           : _projects == null
-              ? const Center(child: CircularProgressIndicator())
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: _projects!.isEmpty
-                      ? ListView(children: const [
-                          SizedBox(height: 120),
-                          Center(child: Text('暂无项目，点击右下角 + 新建')),
-                        ])
-                      : ListView.builder(
-                          itemCount: _projects!.length,
-                          itemBuilder: (_, i) {
-                            final p = _projects![i];
-                            return ListTile(
-                              title: Text(p.name),
-                              subtitle: Text(p.address.isEmpty ? '点击进入' : p.address),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () => Navigator.push(context,
-                                  MaterialPageRoute(
-                                      builder: (_) => ProjectDetailPage(project: p))),
-                            );
-                          })),
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: _projects!.isEmpty
+                  ? ListView(
+                      children: const [
+                        SizedBox(height: 120),
+                        Center(child: Text('暂无项目，点击右下角 + 新建')),
+                      ],
+                    )
+                  : ListView.builder(
+                      itemCount: _projects!.length,
+                      itemBuilder: (_, i) {
+                        final p = _projects![i];
+                        return ListTile(
+                          title: Text(p.name),
+                          subtitle: Text(
+                            p.address.isEmpty ? '点击进入' : p.address,
+                          ),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ProjectDetailPage(project: p),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
     );
   }
 }
