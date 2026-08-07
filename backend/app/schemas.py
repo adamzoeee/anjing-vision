@@ -13,7 +13,7 @@ def _strip_required(value: str) -> str:
 class RegisterIn(BaseModel):
     org_name: str = Field(min_length=1, max_length=120)
     name: str = Field(min_length=1, max_length=80)
-    email: EmailStr
+    email: EmailStr = Field(max_length=120)
     password: str = Field(min_length=8, max_length=64)
 
     _normalize_org = field_validator("org_name")(_strip_required)
@@ -26,7 +26,7 @@ class RegisterIn(BaseModel):
 
 
 class LoginIn(BaseModel):
-    email: EmailStr
+    email: EmailStr = Field(max_length=120)
     password: str = Field(min_length=1, max_length=64)
 
     @field_validator("email")

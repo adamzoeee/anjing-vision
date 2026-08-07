@@ -135,12 +135,23 @@ def test_cross_organization_resources_are_not_enumerable(client):
         f"/api/reports/scans/{scan['id']}",
         headers=outsider,
     )
+    scan_list_response = client.get(
+        f"/api/projects/{project['id']}/scans",
+        headers=outsider,
+    )
+    upload_response = client.post(
+        f"/api/scans/{scan['id']}/upload",
+        headers=outsider,
+        files={"files": ("not-a-real-video.bin", b"x", "application/octet-stream")},
+    )
 
     for response in (
         project_response,
         scan_response,
         create_scan_response,
         report_response,
+        scan_list_response,
+        upload_response,
     ):
         assert response.status_code == 404
         assert response.json()["error"]["code"] == "not_found"
@@ -210,6 +221,12 @@ def test_input_lengths_whitespace_and_enums_are_validated(client):
             "name": "用户",
             "email": "valid@example.com",
             "password": "short",
+        },
+        {
+            "org_name": "机构",
+            "name": "用户",
+            "email": f"{'a' * 64}@{'b' * 48}.example",
+            "password": "secret123",
         },
     ]
     for payload in invalid_registrations:
