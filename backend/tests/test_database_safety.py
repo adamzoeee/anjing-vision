@@ -9,8 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db import get_db
+from app.db import SessionLocal, get_db
 from app.main import app
+from app.models import Organization, User
 
 
 class _TrackingSession:
@@ -75,6 +76,88 @@ def test_database_constraint_error_is_rolled_back_and_sanitized(
     assert "INSERT INTO" not in response.text
     assert "password_hash" not in response.text
     assert rollback_calls >= 1
+
+
+def test_registration_flush_constraint_error_is_rolled_back_and_sanitized(
+    client,
+    monkeypatch,
+):
+    rollback_calls = 0
+    original_flush = Session.flush
+    original_rollback = Session.rollback
+
+    def fail_organization_flush(session, *args, **kwargs):
+        if any(isinstance(item, Organization) for item in session.new):
+            raise IntegrityError(
+                "INSERT INTO organizations ... secret-column",
+                {},
+                RuntimeError("duplicate organization"),
+            )
+        return original_flush(session, *args, **kwargs)
+
+    def track_rollback(session):
+        nonlocal rollback_calls
+        rollback_calls += 1
+        return original_rollback(session)
+
+    monkeypatch.setattr(Session, "flush", fail_organization_flush)
+    monkeypatch.setattr(Session, "rollback", track_rollback)
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "org_name": "并发机构",
+            "name": "用户",
+            "email": "flush-race@example.com",
+            "password": "secret123",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "邮箱或机构已存在"
+    assert "INSERT INTO" not in response.text
+    assert "secret-column" not in response.text
+    assert rollback_calls >= 1
+
+
+def test_email_unique_constraint_rejects_racing_insert_and_session_recovers():
+    db = SessionLocal()
+    try:
+        organization = Organization(name="唯一约束机构")
+        db.add(organization)
+        db.flush()
+        db.add(
+            User(
+                org_id=organization.id,
+                name="用户一",
+                email="database-unique@example.com",
+                password_hash="hash",
+                role="admin",
+            )
+        )
+        db.commit()
+
+        db.add(
+            User(
+                org_id=organization.id,
+                name="用户二",
+                email="database-unique@example.com",
+                password_hash="hash",
+                role="member",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+        assert (
+            db.query(User)
+            .filter(User.email == "database-unique@example.com")
+            .count()
+            == 1
+        )
+    finally:
+        db.close()
 
 
 def test_initial_migration_builds_schema_on_empty_database(tmp_path, monkeypatch):
