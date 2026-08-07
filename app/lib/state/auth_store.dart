@@ -1,9 +1,10 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/client.dart';
 import '../api/models.dart';
 
-enum AuthStatus { restoring, authenticated, unauthenticated }
+enum AuthStatus { restoring, authenticated, unauthenticated, restoreFailed }
 
 abstract interface class TokenStorage {
   Future<String?> read();
@@ -41,6 +42,7 @@ class AuthStore extends ChangeNotifier {
 
   bool get restoring => status == AuthStatus.restoring;
   bool get authenticated => status == AuthStatus.authenticated && user != null;
+  bool get restoreFailed => status == AuthStatus.restoreFailed;
 
   Future<bool> login(String email, String password) async {
     loading = true;
@@ -102,7 +104,15 @@ class AuthStore extends ChangeNotifier {
     error = null;
     notifyListeners();
 
-    final token = await _tokenStorage.read();
+    String? token;
+    try {
+      token = await _tokenStorage.read();
+    } catch (_) {
+      _markRestoreFailed();
+      notifyListeners();
+      return;
+    }
+
     if (token == null || token.isEmpty) {
       user = null;
       api.setToken(null);
@@ -115,11 +125,24 @@ class AuthStore extends ChangeNotifier {
     try {
       user = await api.me();
       status = AuthStatus.authenticated;
+    } on DioException catch (exception) {
+      final statusCode = exception.response?.statusCode;
+      if (statusCode == 401 || statusCode == 403) {
+        await _clearSession();
+        status = AuthStatus.unauthenticated;
+      } else {
+        _markRestoreFailed();
+      }
     } catch (_) {
-      await _clearSession();
-      status = AuthStatus.unauthenticated;
+      _markRestoreFailed();
     }
     notifyListeners();
+  }
+
+  void _markRestoreFailed() {
+    user = null;
+    status = AuthStatus.restoreFailed;
+    error = '恢复登录状态失败，请检查网络或稍后重试';
   }
 
   Future<void> logout() async {
