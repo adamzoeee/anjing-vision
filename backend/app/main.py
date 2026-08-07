@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -159,7 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def readiness(db: Session = get_db_dependency()):
         try:
             db.execute(text("SELECT 1"))
-        except Exception as exc:
+        except SQLAlchemyError as exc:
             logger.warning("database_readiness_failed")
             raise HTTPException(503, "数据库不可用") from exc
         return {"ok": True, "database": "ready"}
