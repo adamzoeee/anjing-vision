@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -23,7 +24,11 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
                 password_hash=hash_password(data.password),
                 role="admin" if not org.users else "member")
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(400, "邮箱或机构已存在") from exc
     db.refresh(user)
     return AuthOut(token=create_token(user.id, user.org_id),
                    user={"id": user.id, "name": user.name, "email": user.email,
