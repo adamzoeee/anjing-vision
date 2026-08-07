@@ -117,6 +117,6 @@ def test_database_readiness_failure_returns_503(client):
     response = client.get("/api/health/ready")
 
     assert response.status_code == 503
-    assert response.json()["error"]["code"] == "http_503"
+    assert response.json()["error"]["code"] == "service_unavailable"
     assert response.json()["error"]["message"] == "数据库不可用"
     assert "password=hidden" not in response.text
