@@ -30,6 +30,9 @@ class ApiClient {
 
   void setToken(String? t) => _token = t;
 
+  Future<AuthUser> me() async =>
+      AuthUser.fromJson((await dio.get('/api/auth/me')).data);
+
   Future<({String token, AuthUser user})> register({
     required String orgName,
     required String name,
