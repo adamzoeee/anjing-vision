@@ -31,12 +31,19 @@ def get_report(scan_id: int, db: Session = Depends(get_db), org_id: int = Depend
 
 @router.get("/compare")
 def compare(a: int, b: int, db: Session = Depends(get_db), org_id: int = Depends(get_org_scope)):
-    """同一项目下两次扫描的报告对比。"""
-    ra, rb = db.get(Report, a), db.get(Report, b)
+    """按 Flutter 使用的 Scan ID 对比同一项目下两次报告。"""
+    scan_a, scan_b = db.get(Scan, a), db.get(Scan, b)
+    if scan_a is None or scan_b is None:
+        raise HTTPException(404, "扫描任务不存在")
+    if (
+        scan_a.project.org_id != org_id
+        or scan_b.project.org_id != org_id
+        or scan_a.project_id != scan_b.project_id
+    ):
+        raise HTTPException(404, "对比对象无效或不属于同一项目")
+    ra, rb = scan_a.report, scan_b.report
     if ra is None or rb is None:
         raise HTTPException(404, "报告不存在")
-    if ra.scan.project.org_id != org_id or ra.scan.project_id != rb.scan.project_id:
-        raise HTTPException(404, "对比对象无效或不属于同一项目")
     return {
         "before": {"scan_id": ra.scan_id, "score": ra.score, "risks": ra.risks},
         "after": {"scan_id": rb.scan_id, "score": rb.score, "risks": rb.risks},
