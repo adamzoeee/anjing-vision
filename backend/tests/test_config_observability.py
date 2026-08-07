@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,10 +31,52 @@ def test_production_rejects_weak_secret(secret):
 
 
 def test_production_requires_explicit_cors_allowlist():
-    with pytest.raises(ValidationError, match="CORS_ORIGINS"):
+    with pytest.raises(ValidationError, match="http\\(s\\) origin"):
         _production_settings(cors_origins=["*"])
     with pytest.raises(ValidationError, match="本地开发地址"):
         _production_settings(cors_origins=["http://localhost:3000"])
+    with pytest.raises(ValidationError, match="http\\(s\\) origin"):
+        _production_settings(cors_origins=["https://*.example.com"])
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "not-an-origin",
+        "ftp://app.example.com",
+        "https://user:password@app.example.com",
+        "https://app.example.com/path",
+        "https://app.example.com?token=secret",
+    ],
+)
+def test_cors_origins_must_be_valid_origins(origin):
+    with pytest.raises(ValidationError, match="http\\(s\\) origin"):
+        Settings(cors_origins=[origin])
+
+
+def test_database_url_must_be_parseable():
+    with pytest.raises(ValidationError, match="DATABASE_URL"):
+        Settings(database_url="://invalid")
+
+
+def test_production_minio_rejects_default_credentials():
+    with pytest.raises(ValidationError, match="MinIO"):
+        _production_settings(storage_backend="minio")
+
+
+def test_compose_production_services_require_explicit_secrets():
+    compose = (Path(__file__).parents[1] / "docker-compose.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ENVIRONMENT: production" in compose
+    assert "AUTO_CREATE_TABLES: \"false\"" in compose
+    assert "ALLOW_SYNC_FALLBACK: \"false\"" in compose
+    assert "${SECRET_KEY:?" in compose
+    assert "${POSTGRES_PASSWORD:?" in compose
+    assert "${MINIO_SECRET_KEY:?" in compose
+    assert "change-me-in-production" not in compose
+    assert "POSTGRES_PASSWORD: anjing" not in compose
 
 
 def test_development_cors_allows_local_origin():

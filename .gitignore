@@ -2,9 +2,17 @@
 backend/.venv/
 backend/data/
 backend/.env
+backend/.env.*
+!backend/.env.example
 backend/test.db
 backend/*.db
+backend/**/*.db
+backend/*.sqlite
+backend/**/*.sqlite
+backend/*.sqlite3
+backend/**/*.sqlite3
 backend/.pytest_cache/
+backend/.cache/
 backend/.coverage
 backend/htmlcov/
 backend/.mypy_cache/
