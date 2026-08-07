@@ -1,9 +1,11 @@
 from enum import Enum
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
 
 
 class EnvironmentMode(str, Enum):
@@ -91,9 +93,38 @@ class Settings(BaseSettings):
         normalized = []
         for origin in origins:
             value = origin.strip().rstrip("/")
+            parsed = urlsplit(value)
+            try:
+                parsed_port = parsed.port
+            except ValueError as exc:
+                raise ValueError(f"CORS 来源端口无效: {value}") from exc
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or "*" in value
+                or parsed.username
+                or parsed.password
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+                or parsed_port is not None
+                and not 1 <= parsed_port <= 65535
+            ):
+                raise ValueError(f"CORS 来源必须是有效的 http(s) origin: {value}")
             if value and value not in normalized:
                 normalized.append(value)
         return normalized
+
+    @field_validator("database_url")
+    @classmethod
+    def _validate_database_url(cls, value: str) -> str:
+        try:
+            parsed = make_url(value)
+        except Exception as exc:
+            raise ValueError("DATABASE_URL 格式无效") from exc
+        if not parsed.drivername:
+            raise ValueError("DATABASE_URL 必须包含数据库驱动")
+        return value
 
     @model_validator(mode="after")
     def _validate_environment_safety(self) -> "Settings":
@@ -107,7 +138,11 @@ class Settings(BaseSettings):
                 raise ValueError("生产环境必须配置 CORS_ORIGINS 白名单")
             if "*" in self.cors_origins:
                 raise ValueError("生产环境 CORS_ORIGINS 不允许使用通配符")
-            if any("localhost" in item or "127.0.0.1" in item for item in self.cors_origins):
+            local_hosts = {"localhost", "127.0.0.1", "::1"}
+            if any(
+                (urlsplit(item).hostname or "").lower() in local_hosts
+                for item in self.cors_origins
+            ):
                 raise ValueError("生产环境 CORS_ORIGINS 不允许使用本地开发地址")
             if self.auto_create_tables:
                 raise ValueError("生产环境必须关闭 AUTO_CREATE_TABLES 并使用数据库迁移")

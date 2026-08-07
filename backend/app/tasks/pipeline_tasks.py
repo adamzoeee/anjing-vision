@@ -1,4 +1,4 @@
-"""管道任务分发：task_sync=True 同步执行（开发兜底）；否则投递 Celery，投递失败回退同步。"""
+"""管道任务分发；生产环境禁止队列失败后在 API 请求内同步执行。"""
 from ..config import get_settings
 from .celery_app import celery
 
