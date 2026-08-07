@@ -3,6 +3,15 @@ backend/.venv/
 backend/data/
 backend/.env
 backend/test.db
+backend/*.db
+backend/.pytest_cache/
+backend/.coverage
+backend/htmlcov/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/*.log
+backend/tmp/
+backend/temp/
 out-demo/
 models/
 __pycache__/
