@@ -40,6 +40,17 @@ void main() {
   });
 
   group('认证 API', () {
+    test('当前用户接口携带 Token 并解析用户信息', () async {
+      client.setToken('restored-token');
+      adapter.onGet('/api/auth/me', (server) => server.reply(200, userJson));
+
+      final user = await client.me();
+
+      expect(user.name, '李阿姨');
+      expect(user.email, 'li@example.com');
+      expect(lastRequest?.headers['Authorization'], 'Bearer restored-token');
+    });
+
     test('注册发送完整请求并解析用户和 Token', () async {
       adapter.onPost(
         '/api/auth/register',
