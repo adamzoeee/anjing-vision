@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 
 class EnvironmentMode(str, Enum):
@@ -120,7 +121,7 @@ class Settings(BaseSettings):
     def _validate_database_url(cls, value: str) -> str:
         try:
             parsed = make_url(value)
-        except Exception as exc:
+        except ArgumentError as exc:
             raise ValueError("DATABASE_URL 格式无效") from exc
         if not parsed.drivername:
             raise ValueError("DATABASE_URL 必须包含数据库驱动")

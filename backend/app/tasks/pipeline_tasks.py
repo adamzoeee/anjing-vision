@@ -1,8 +1,15 @@
 """管道任务分发；生产环境禁止队列失败后在 API 请求内同步执行。"""
+from celery.exceptions import CeleryError
+from kombu.exceptions import KombuError
+
 from ..config import get_settings
 from .celery_app import celery
 
 s = get_settings()
+
+
+class TaskDispatchError(RuntimeError):
+    pass
 
 
 def dispatch_scan(scan_id: int):
@@ -11,9 +18,9 @@ def dispatch_scan(scan_id: int):
     else:
         try:
             run_pipeline_async.delay(scan_id)
-        except Exception:
+        except (CeleryError, KombuError, OSError) as exc:
             if not s.allow_sync_fallback:
-                raise
+                raise TaskDispatchError("任务队列不可用") from exc
             run_pipeline_sync(scan_id)
 
 

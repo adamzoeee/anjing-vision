@@ -145,9 +145,22 @@ def test_async_dispatch_failure_does_not_run_pipeline_in_request(monkeypatch):
         lambda scan_id: sync_calls.append(scan_id),
     )
 
-    with pytest.raises(ConnectionError):
+    with pytest.raises(pipeline_tasks.TaskDispatchError):
         pipeline_tasks.dispatch_scan(12)
     assert sync_calls == []
+
+
+def test_unexpected_dispatch_programming_error_is_not_swallowed(monkeypatch):
+    settings = SimpleNamespace(task_sync=False, allow_sync_fallback=False)
+
+    def fail_delay(_):
+        raise TypeError("programming error")
+
+    monkeypatch.setattr(pipeline_tasks, "s", settings)
+    monkeypatch.setattr(pipeline_tasks.run_pipeline_async, "delay", fail_delay)
+
+    with pytest.raises(TypeError, match="programming error"):
+        pipeline_tasks.dispatch_scan(12)
 
 
 def test_report_image_uses_expiring_signed_url(client, tmp_path):

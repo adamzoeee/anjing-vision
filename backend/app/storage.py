@@ -84,6 +84,7 @@ def _save_local_stream(
     safe_name = _local_unique_name(destination, filename)
     target = destination / safe_name
     size = 0
+    completed = False
     try:
         with target.open("xb") as output:
             while chunk := stream.read(min(_CHUNK_SIZE, max_bytes - size + 1)):
@@ -91,9 +92,10 @@ def _save_local_stream(
                 if size > max_bytes:
                     raise MediaTooLargeError
                 output.write(chunk)
-    except Exception:
-        target.unlink(missing_ok=True)
-        raise
+        completed = True
+    finally:
+        if not completed:
+            target.unlink(missing_ok=True)
     return StoredMedia(f"media/{scan_id}/{safe_name}", size)
 
 
