@@ -321,8 +321,18 @@ def test_report_compare_uses_scan_ids(client):
         f"/api/reports/compare?a={scan_a['id']}&b={scan_b['id']}",
         headers=headers,
     )
+    report_id_response = client.get(
+        "/api/reports/compare?a=1&b=2",
+        headers=headers,
+    )
+    invalid_id_response = client.get(
+        f"/api/reports/compare?a=0&b={scan_b['id']}",
+        headers=headers,
+    )
 
     assert response.status_code == 200
     assert response.json()["before"]["scan_id"] == scan_a["id"]
     assert response.json()["after"]["scan_id"] == scan_b["id"]
     assert response.json()["score_delta"] == 25
+    assert report_id_response.status_code == 404
+    assert invalid_id_response.status_code == 422

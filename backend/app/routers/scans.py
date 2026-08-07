@@ -13,7 +13,7 @@ from ..storage import (
     delete_media,
     save_media_stream,
 )
-from ..tasks.pipeline_tasks import dispatch_scan
+from ..tasks.pipeline_tasks import TaskDispatchError, dispatch_scan
 
 router = APIRouter()
 logger = logging.getLogger("anjing.api")
@@ -70,7 +70,7 @@ def upload(
     db.commit()
     try:
         dispatch_scan(scan.id)
-    except Exception as exc:  # task dispatch is isolated from upload success
+    except TaskDispatchError as exc:
         logger.warning(
             "scan_dispatch_failed scan_id=%s exception_type=%s",
             scan.id,

@@ -57,18 +57,18 @@ def test_get_report_missing_404(client):
 
 def test_compare_same_project(client):
     h = _auth(client)
-    pid, _sid_a, rid_a = _make_report(client, h, name="改造前")
-    _pid2, _sid_b, rid_b = _make_report(client, h, name="改造后", project_id=pid)
-    r = client.get(f"/api/reports/compare?a={rid_a}&b={rid_b}", headers=h)
+    pid, sid_a, _rid_a = _make_report(client, h, name="改造前")
+    _pid2, sid_b, _rid_b = _make_report(client, h, name="改造后", project_id=pid)
+    r = client.get(f"/api/reports/compare?a={sid_a}&b={sid_b}", headers=h)
     assert r.status_code == 200, r.text
     assert r.json()["score_delta"] == 0.0
 
 
 def test_compare_cross_org_rejected(client):
     h = _auth(client)
-    _pid, _sid_a, rid_a = _make_report(client, h)
+    _pid, sid_a, _rid_a = _make_report(client, h)
     h2 = _auth(client, org="养老院B", email="b1@x.com")
-    _pid2, _sid_b, rid_b = _make_report(client, h2, name="乙的项目")
-    # 跨机构对比（B 拿 A 的报告 id + 自己的报告 id）
-    r = client.get(f"/api/reports/compare?a={rid_a}&b={rid_b}", headers=h2)
+    _pid2, sid_b, _rid_b = _make_report(client, h2, name="乙的项目")
+    # 跨机构对比（B 拿 A 的扫描 id + 自己的扫描 id）
+    r = client.get(f"/api/reports/compare?a={sid_a}&b={sid_b}", headers=h2)
     assert r.status_code == 404

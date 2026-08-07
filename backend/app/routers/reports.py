@@ -84,7 +84,12 @@ def get_report_asset(
 
 
 @router.get("/compare")
-def compare(a: int, b: int, db: Session = Depends(get_db), org_id: int = Depends(get_org_scope)):
+def compare(
+    a: int = Query(..., ge=1, description="改造前扫描 ID"),
+    b: int = Query(..., ge=1, description="改造后扫描 ID"),
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+):
     """按 Flutter 使用的 Scan ID 对比同一项目下两次报告。"""
     scan_a, scan_b = db.get(Scan, a), db.get(Scan, b)
     if scan_a is None or scan_b is None:
