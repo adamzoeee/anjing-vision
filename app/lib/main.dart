@@ -53,6 +53,20 @@ class SessionGate extends StatelessWidget {
         ),
       );
     }
+    if (store.restoreFailed) {
+      return Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(store.error ?? '恢复登录状态失败'),
+              const SizedBox(height: 16),
+              ElevatedButton(onPressed: store.restore, child: const Text('重试')),
+            ],
+          ),
+        ),
+      );
+    }
     if (store.authenticated) return const ProjectsPage();
     return const LoginPage(navigateOnSuccess: false);
   }
