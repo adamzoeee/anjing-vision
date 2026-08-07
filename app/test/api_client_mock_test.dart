@@ -177,6 +177,36 @@ void main() {
       expect(scan.message, '正在重建');
     });
 
+    test('查询项目扫描列表并解析多个状态', () async {
+      adapter.onGet(
+        '/api/projects/3/scans',
+        (server) => server.reply(200, [
+          {
+            'id': 12,
+            'project_id': 3,
+            'status': 'done',
+            'progress': 100,
+            'message': '已完成',
+            'capture_type': 'video',
+          },
+          {
+            'id': 13,
+            'project_id': 3,
+            'status': 'failed',
+            'progress': 40,
+            'message': '重建失败',
+            'capture_type': 'video',
+          },
+        ]),
+      );
+
+      final scans = await client.listScans(3);
+
+      expect(scans, hasLength(2));
+      expect(scans.first.done, isTrue);
+      expect(scans.last.failed, isTrue);
+    });
+
     test('获取报告并解析评分、风险和建议', () async {
       adapter.onGet(
         '/api/reports/scans/12',
@@ -205,9 +235,45 @@ void main() {
       expect(report.advice, ['建议拓宽门洞']);
       expect(report.images, ['/reports/12/door.jpg']);
     });
+
+    test('获取报告对比并发送扫描参数', () async {
+      adapter.onGet(
+        '/api/reports/compare',
+        (server) => server.reply(200, {
+          'before': {'score': 62, 'risks': []},
+          'after': {'score': 86, 'risks': []},
+          'score_delta': 24,
+        }),
+        queryParameters: {'a': 10, 'b': 12},
+      );
+
+      final comparison = await client.compare(10, 12);
+
+      expect(comparison['score_delta'], 24);
+      expect((comparison['before'] as Map)['score'], 62);
+      expect((comparison['after'] as Map)['score'], 86);
+    });
   });
 
   group('异常响应', () {
+    test('401 表示 Token 无效或过期并保留状态码', () async {
+      adapter.onGet(
+        '/api/projects',
+        (server) => server.reply(401, {'detail': 'Invalid token'}),
+      );
+
+      await expectLater(
+        client.projects(),
+        throwsA(
+          isA<DioException>().having(
+            (error) => error.response?.statusCode,
+            'statusCode',
+            401,
+          ),
+        ),
+      );
+    });
+
     test('服务端错误作为 DioException 返回给调用方', () async {
       adapter.onGet(
         '/api/projects',
