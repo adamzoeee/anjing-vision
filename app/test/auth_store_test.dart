@@ -140,6 +140,53 @@ void main() {
     expect(lastRequest?.headers['Authorization'], isNull);
   });
 
+  test('恢复时连接失败会保留 Token 并提供可重试状态', () async {
+    SharedPreferences.setMockInitialValues({'token': 'valid-token'});
+    adapter.onGet(
+      '/api/auth/me',
+      (server) => server.throws(
+        0,
+        DioException(
+          requestOptions: RequestOptions(path: '/api/auth/me'),
+          type: DioExceptionType.connectionError,
+          error: 'offline',
+        ),
+      ),
+    );
+
+    await store.restore();
+    final preferences = await SharedPreferences.getInstance();
+
+    expect(store.user, isNull);
+    expect(store.status, AuthStatus.restoreFailed);
+    expect(store.error, contains('请检查网络或稍后重试'));
+    expect(preferences.getString('token'), 'valid-token');
+    expect(lastRequest?.headers['Authorization'], 'Bearer valid-token');
+  });
+
+  test('恢复时服务器错误保留 Token 且重试成功后恢复用户', () async {
+    SharedPreferences.setMockInitialValues({'token': 'valid-token'});
+    adapter.onGet(
+      '/api/auth/me',
+      (server) => server.reply(500, {'detail': '服务暂不可用'}),
+    );
+
+    await store.restore();
+    var preferences = await SharedPreferences.getInstance();
+
+    expect(store.status, AuthStatus.restoreFailed);
+    expect(preferences.getString('token'), 'valid-token');
+
+    adapter.onGet('/api/auth/me', (server) => server.reply(200, userJson));
+    await store.restore();
+    preferences = await SharedPreferences.getInstance();
+
+    expect(store.authenticated, isTrue);
+    expect(store.user?.name, '李阿姨');
+    expect(store.error, isNull);
+    expect(preferences.getString('token'), 'valid-token');
+  });
+
   test('401 登录失败不保存 Token 并向页面暴露错误', () async {
     adapter.onPost(
       '/api/auth/login',
