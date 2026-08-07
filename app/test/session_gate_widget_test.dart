@@ -114,7 +114,7 @@ void main() {
     expect(find.byType(LoginPage), findsNothing);
   });
 
-  testWidgets('项目页等待 Token 删除完成后才进入登录页', (tester) async {
+  testWidgets('正式 SessionGate 退出再登录只保留一个页面且无多余路由', (tester) async {
     final storage = DeferredTokenStorage(token: 'old-token');
     final store = AuthStore(api, tokenStorage: storage)
       ..user = AuthUser.fromJson(userJson)
@@ -124,32 +124,45 @@ void main() {
       (server) => server.reply(200, <Map<String, dynamic>>[]),
     );
 
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          Provider<ApiClient>.value(value: api),
-          ChangeNotifierProvider<AuthStore>.value(value: store),
-        ],
-        child: MaterialApp(
-          home: const ProjectsPage(),
-          routes: {
-            '/login': (_) =>
-                const Scaffold(body: Center(child: Text('登录页已打开'))),
-          },
-        ),
-      ),
-    );
+    await tester.pumpWidget(gateApp(store));
     await tester.pumpAndSettle();
+
+    expect(find.byType(ProjectsPage), findsOneWidget);
+    expect(find.byType(LoginPage), findsNothing);
 
     await tester.tap(find.byIcon(Icons.logout));
     await tester.pump();
 
     expect(storage.clearCalled, isTrue);
-    expect(find.text('登录页已打开'), findsNothing);
+    expect(find.byType(ProjectsPage), findsOneWidget);
+    expect(find.byType(LoginPage), findsNothing);
 
     storage.clearCompleter.complete();
     await tester.pumpAndSettle();
 
-    expect(find.text('登录页已打开'), findsOneWidget);
+    expect(find.byType(LoginPage), findsOneWidget);
+    expect(find.byType(ProjectsPage), findsNothing);
+
+    adapter.onPost(
+      '/api/auth/login',
+      (server) => server.reply(200, {'token': 'new-token', 'user': userJson}),
+      data: {'email': 'li@example.com', 'password': 'secret123'},
+    );
+    adapter.onGet(
+      '/api/projects',
+      (server) => server.reply(200, <Map<String, dynamic>>[]),
+    );
+    await tester.enterText(
+      find.widgetWithText(TextField, '邮箱'),
+      'li@example.com',
+    );
+    await tester.enterText(find.widgetWithText(TextField, '密码'), 'secret123');
+    await tester.tap(find.widgetWithText(ElevatedButton, '登录'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ProjectsPage), findsOneWidget);
+    expect(find.byType(LoginPage), findsNothing);
+    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+    expect(navigator.canPop(), isFalse);
   });
 }

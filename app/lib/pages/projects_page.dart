@@ -77,10 +77,6 @@ class _ProjectsPageState extends State<ProjectsPage> {
             icon: const Icon(Icons.logout),
             onPressed: () async {
               await store.logout();
-              if (!context.mounted) return;
-              Navigator.of(
-                context,
-              ).pushNamedAndRemoveUntil('/login', (route) => false);
             },
           ),
         ],
