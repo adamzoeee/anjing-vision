@@ -1,6 +1,6 @@
 import datetime as dt
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, JSON, String
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, JSON, String, text
 from sqlalchemy.orm import relationship
 
 from .db import Base
@@ -20,6 +20,15 @@ class Organization(Base):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        Index(
+            "uq_users_single_admin_per_org",
+            "org_id",
+            unique=True,
+            sqlite_where=text("role = 'admin'"),
+            postgresql_where=text("role = 'admin'"),
+        ),
+    )
     id = Column(Integer, primary_key=True)
     org_id = Column(Integer, ForeignKey("organizations.id"), nullable=False, index=True)
     name = Column(String(80), nullable=False)

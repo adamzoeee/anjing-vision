@@ -16,14 +16,15 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
     if db.query(User).filter(User.email == data.email).first():
         raise HTTPException(400, "邮箱已注册")
     org = db.query(Organization).filter(Organization.name == data.org_name).first()
+    created_org = org is None
     try:
-        if org is None:
+        if created_org:
             org = Organization(name=data.org_name)
             db.add(org)
             db.flush()
         user = User(org_id=org.id, name=data.name, email=data.email,
                     password_hash=hash_password(data.password),
-                    role="admin" if not org.users else "member")
+                    role="admin" if created_org else "member")
         db.add(user)
         db.commit()
     except IntegrityError as exc:
