@@ -101,6 +101,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             404: "not_found",
             409: "conflict",
             413: "payload_too_large",
+            422: "validation_error",
+            503: "service_unavailable",
         }
         message = exc.detail if isinstance(exc.detail, str) else "请求处理失败"
         return _error_response(
