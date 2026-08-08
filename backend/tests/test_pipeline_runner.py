@@ -1,8 +1,16 @@
 """pipeline_runner 的标定逻辑单元测试（不依赖 GPU/DB）。"""
 import numpy as np
 import pytest
+from sqlalchemy.exc import IntegrityError
 
-from app.tasks.pipeline_runner import _calibrate_with_a4, _triangulate, _pixel_ray
+from app.db import SessionLocal
+from app.models import Organization, Project, Report, Scan
+from app.tasks.pipeline_runner import (
+    _calibrate_with_a4,
+    _pixel_ray,
+    _triangulate,
+    _upsert_report,
+)
 
 
 def _cam(center, look_at, focal=600.0, w=640, h=480):
@@ -65,3 +73,107 @@ def test_calibrate_with_a4_two_views(monkeypatch):
     assert scale is not None
     # 米制深度 2.0 / SFM 单位距离 ~1.04 → 尺度 ~1.9
     assert 1.5 < scale < 2.5
+
+
+def test_report_write_is_idempotent_for_pipeline_retries():
+    db = SessionLocal()
+    try:
+        organization = Organization(name="幂等测试机构")
+        db.add(organization)
+        db.flush()
+        project = Project(org_id=organization.id, name="测试项目")
+        db.add(project)
+        db.flush()
+        scan = Scan(project_id=project.id, status="reporting")
+        db.add(scan)
+        db.commit()
+
+        _upsert_report(
+            db,
+            scan_id=scan.id,
+            score=60,
+            risks=[{"code": "old"}],
+            measures={"door_width_m": 0.7},
+            advice=["旧建议"],
+            images=["old.png"],
+            preview={"path": "old"},
+            calibrated=1,
+        )
+        db.commit()
+        first_report_id = db.query(Report).filter_by(scan_id=scan.id).one().id
+
+        _upsert_report(
+            db,
+            scan_id=scan.id,
+            score=88,
+            risks=[{"code": "new"}],
+            measures={"door_width_m": 0.9},
+            advice=["新建议"],
+            images=["new.png"],
+            preview={"path": "new"},
+            calibrated=2,
+        )
+        db.commit()
+
+        reports = db.query(Report).filter_by(scan_id=scan.id).all()
+        assert len(reports) == 1
+        assert reports[0].id == first_report_id
+        assert reports[0].score == 88
+        assert reports[0].risks == [{"code": "new"}]
+        assert reports[0].measures == {"door_width_m": 0.9}
+        assert reports[0].advice == ["新建议"]
+        assert reports[0].images == ["new.png"]
+        assert reports[0].preview == {"path": "new"}
+        assert reports[0].calibrated == 2
+    finally:
+        db.close()
+
+
+def test_report_write_recovers_from_concurrent_unique_conflict():
+    existing = Report(scan_id=9, score=40, risks=[])
+
+    class QueryResult:
+        def __init__(self, value):
+            self.value = value
+
+        def filter(self, *_args):
+            return self
+
+        def one_or_none(self):
+            return self.value
+
+    class ConcurrentSession:
+        def __init__(self):
+            self.query_results = iter([None, existing])
+            self.rolled_back = False
+
+        def query(self, _model):
+            return QueryResult(next(self.query_results))
+
+        def add(self, _report):
+            pass
+
+        def flush(self):
+            raise IntegrityError("insert report", {}, Exception("unique"))
+
+        def rollback(self):
+            self.rolled_back = True
+
+    db = ConcurrentSession()
+
+    report = _upsert_report(
+        db,
+        scan_id=9,
+        score=91,
+        risks=[{"code": "updated"}],
+        measures={"door_width_m": 1.0},
+        advice=["更新建议"],
+        images=["updated.png"],
+        preview={"path": "updated"},
+        calibrated=2,
+    )
+
+    assert db.rolled_back is True
+    assert report is existing
+    assert report.score == 91
+    assert report.risks == [{"code": "updated"}]
