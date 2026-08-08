@@ -5,6 +5,11 @@ import '../api/models.dart';
 import '../widgets/risk_card.dart';
 import '../widgets/score_gauge.dart';
 
+NetworkImage authenticatedReportImage(ApiClient api, String path) => NetworkImage(
+      '${api.dio.options.baseUrl}$path',
+      headers: api.authorizationHeaders,
+    );
+
 class ReportPage extends StatefulWidget {
   final Scan scan;
   const ReportPage({super.key, required this.scan});
@@ -36,6 +41,7 @@ class _ReportPageState extends State<ReportPage> {
   @override
   Widget build(BuildContext context) {
     final r = _report;
+    final api = context.read<ApiClient>();
     return Scaffold(
       appBar: AppBar(title: const Text('评估报告')),
       body: _error != null
@@ -92,8 +98,8 @@ class _ReportPageState extends State<ReportPage> {
                     else
                       ...r.images.map((img) => Padding(
                         padding: const EdgeInsets.symmetric(vertical: 4),
-                        child: Image.network(
-                            '${context.read<ApiClient>().dio.options.baseUrl}$img',
+                        child: Image(
+                            image: authenticatedReportImage(api, img),
                             errorBuilder: (_, _, _) =>
                                 const Icon(Icons.broken_image, size: 48),
                           ),
