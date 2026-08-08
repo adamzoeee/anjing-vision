@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 import numpy as np
+from sqlalchemy.exc import IntegrityError
 
 from ..config import get_settings
 from ..db import SessionLocal
@@ -130,10 +131,17 @@ def run_pipeline(scan_id: int) -> None:
         images = render_annotation_images(points, risks, img_dir)
         preview = build_preview_assets(points, work / "preview", title=scan.project.name)
 
-        report = Report(scan_id=scan_id, score=score, risks=risks, measures=measures,
-                        advice=advice, images=[str(p) for p in images],
-                        preview=preview, calibrated=calibrated)
-        db.add(report)
+        _upsert_report(
+            db,
+            scan_id=scan_id,
+            score=score,
+            risks=risks,
+            measures=measures,
+            advice=advice,
+            images=[str(p) for p in images],
+            preview=preview,
+            calibrated=calibrated,
+        )
         _stage(db, scan, "done", 100, "评估完成")
     except Exception as e:  # noqa: BLE001 - 管道任一步失败都落到 failed
         db.rollback()
@@ -157,6 +165,45 @@ def _stage(db, scan, status, progress, message):
 def _fail(db, scan, message):
     scan.status, scan.progress, scan.message = "failed", 100, message
     db.commit()
+
+
+def _upsert_report(
+    db,
+    *,
+    scan_id: int,
+    score: float,
+    risks: list,
+    measures: dict,
+    advice: list,
+    images: list[str],
+    preview: dict,
+    calibrated: int,
+) -> Report:
+    """Create or replace a scan report so pipeline retries are idempotent."""
+    values = {
+        "score": score,
+        "risks": risks,
+        "measures": measures,
+        "advice": advice,
+        "images": images,
+        "preview": preview,
+        "calibrated": calibrated,
+    }
+    report = db.query(Report).filter(Report.scan_id == scan_id).one_or_none()
+    if report is None:
+        report = Report(scan_id=scan_id, **values)
+        db.add(report)
+        try:
+            db.flush()
+            return report
+        except IntegrityError:
+            db.rollback()
+            report = db.query(Report).filter(Report.scan_id == scan_id).one_or_none()
+            if report is None:
+                raise
+    for field, value in values.items():
+        setattr(report, field, value)
+    return report
 
 
 def _calibrate_with_a4(imgs, cams) -> float | None:
