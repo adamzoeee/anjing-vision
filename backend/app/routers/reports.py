@@ -1,12 +1,44 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pathlib import Path
 from sqlalchemy.orm import Session
 
+from ..config import Settings, get_settings
 from ..db import get_db
 from ..deps import get_org_scope
 from ..models import Scan
 
 router = APIRouter()
+assets_router = APIRouter()
+
+
+@assets_router.get("/{scan_id}/{filename}", response_class=FileResponse)
+def get_report_image(
+    scan_id: int,
+    filename: str,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    """Serve an annotation image only to a user in the scan's organization."""
+    scan = db.get(Scan, scan_id)
+    if scan is None or scan.project.org_id != org_id or scan.report is None:
+        raise HTTPException(404, "标注图片不存在")
+    if Path(filename).name != filename:
+        raise HTTPException(404, "标注图片不存在")
+    image_root = (Path(settings.data_dir) / "work" / str(scan_id) / "images").resolve()
+    image_path = next(
+        (
+            candidate
+            for item in scan.report.images
+            if (candidate := Path(item).resolve()).name == filename
+            and candidate.is_relative_to(image_root)
+        ),
+        None,
+    )
+    if image_path is None or not image_path.is_file():
+        raise HTTPException(404, "标注图片不存在")
+    return FileResponse(image_path)
 
 
 @router.get("/scans/{scan_id}")
