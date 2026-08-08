@@ -3,7 +3,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: anjing
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_PASSWORD: anjing
       POSTGRES_DB: anjing
     ports: ["5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
@@ -16,8 +16,8 @@ services:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set}
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     ports: ["9000:9000", "9001:9001"]
     volumes: [miniodata:/data]
 
@@ -25,20 +25,15 @@ services:
     build: .
     depends_on: [db, redis, minio]
     environment:
-      ENVIRONMENT: production
-      DATABASE_URL: postgresql+psycopg2://anjing:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/anjing
+      DATABASE_URL: postgresql+psycopg2://anjing:anjing@db:5432/anjing
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       STORAGE_BACKEND: minio
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set}
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
       DATA_DIR: /data
-      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set}
-      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set as a JSON array}
-      AUTO_CREATE_TABLES: "false"
-      ALLOW_SYNC_FALLBACK: "false"
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
     ports: ["8000:8000"]
     volumes: [./data:/data]
 
@@ -47,19 +42,15 @@ services:
     command: celery -A app.tasks.celery_app worker --loglevel=info
     depends_on: [db, redis, minio]
     environment:
-      ENVIRONMENT: production
-      DATABASE_URL: postgresql+psycopg2://anjing:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/anjing
+      DATABASE_URL: postgresql+psycopg2://anjing:anjing@db:5432/anjing
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       STORAGE_BACKEND: minio
       MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set}
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
       DATA_DIR: /data
-      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be set}
-      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be set as a JSON array}
-      AUTO_CREATE_TABLES: "false"
-      ALLOW_SYNC_FALLBACK: "false"
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
     volumes: [./data:/data]
     deploy:
       resources:
