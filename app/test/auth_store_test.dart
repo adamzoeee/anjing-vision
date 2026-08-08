@@ -31,6 +31,23 @@ class ControlledTokenStorage implements TokenStorage {
   }
 }
 
+class FailingWriteTokenStorage implements TokenStorage {
+  bool clearCalled = false;
+
+  @override
+  Future<void> clear() async {
+    clearCalled = true;
+  }
+
+  @override
+  Future<String?> read() async => null;
+
+  @override
+  Future<void> write(String value) async {
+    throw StateError('storage unavailable');
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -201,6 +218,62 @@ void main() {
     expect(store.loading, isFalse);
     expect(store.error, contains('登录失败'));
     expect(preferences.getString('token'), isNull);
+  });
+
+  test('登录 Token 保存失败时清除用户和 ApiClient 授权状态', () async {
+    final storage = FailingWriteTokenStorage();
+    final controlledStore = AuthStore(api, tokenStorage: storage);
+    adapter.onPost(
+      '/api/auth/login',
+      (server) => server.reply(200, {'token': 'unsaved-token', 'user': userJson}),
+      data: {'email': 'li@example.com', 'password': 'secret123'},
+    );
+    adapter.onGet(
+      '/api/projects',
+      (server) => server.reply(200, <Map<String, dynamic>>[]),
+    );
+
+    final success = await controlledStore.login('li@example.com', 'secret123');
+    await api.projects();
+
+    expect(success, isFalse);
+    expect(controlledStore.user, isNull);
+    expect(controlledStore.status, AuthStatus.unauthenticated);
+    expect(storage.clearCalled, isTrue);
+    expect(lastRequest?.headers['Authorization'], isNull);
+  });
+
+  test('注册 Token 保存失败时清除用户和 ApiClient 授权状态', () async {
+    final storage = FailingWriteTokenStorage();
+    final controlledStore = AuthStore(api, tokenStorage: storage);
+    adapter.onPost(
+      '/api/auth/register',
+      (server) => server.reply(200, {'token': 'unsaved-token', 'user': userJson}),
+      data: {
+        'org_name': '安心养老',
+        'name': '李阿姨',
+        'email': 'li@example.com',
+        'password': 'secret123',
+      },
+    );
+    adapter.onGet(
+      '/api/projects',
+      (server) => server.reply(200, <Map<String, dynamic>>[]),
+    );
+
+    final success = await controlledStore.register(
+      '安心养老',
+      '李阿姨',
+      'li@example.com',
+      'secret123',
+    );
+    await api.projects();
+
+    expect(success, isFalse);
+    expect(controlledStore.user, isNull);
+    expect(controlledStore.status, AuthStatus.unauthenticated);
+    expect(storage.clearCalled, isTrue);
+    expect(lastRequest?.headers['Authorization'], isNull);
   });
 
   test('退出登录清除持久化 Token 和 Authorization', () async {
