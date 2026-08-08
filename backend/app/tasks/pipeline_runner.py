@@ -2,6 +2,7 @@
 
 每个阶段更新 Scan.status/progress；失败置 failed 并记录 message。
 """
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,8 @@ from ..config import get_settings
 from ..db import SessionLocal
 from ..models import Report, Scan
 from ..storage import media_path
+
+logger = logging.getLogger("anjing.pipeline")
 
 STAGES = [
     ("extracting", 5, "抽帧中"), ("sfm", 25, "相机位姿估计中"),
@@ -134,9 +137,14 @@ def run_pipeline(scan_id: int) -> None:
         _stage(db, scan, "done", 100, "评估完成")
     except Exception as e:  # noqa: BLE001 - 管道任一步失败都落到 failed
         db.rollback()
+        logger.error(
+            "pipeline_failed scan_id=%s exception_type=%s",
+            scan_id,
+            type(e).__name__,
+        )
         scan = db.get(Scan, scan_id)
         if scan:
-            _fail(db, scan, f"管道失败: {e}")
+            _fail(db, scan, "管道处理失败，请稍后重试")
     finally:
         db.close()
 
