@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
@@ -22,11 +22,13 @@ def _page_bounds(
 
 @router.get("", response_model=list[ProjectOut])
 def list_projects(
+    response: Response,
     page: tuple[int, int] = Depends(_page_bounds),
     db: Session = Depends(get_db),
     org_id: int = Depends(get_org_scope),
 ):
     offset, limit = page
+    response.headers["X-Page-Size"] = str(limit)
     return (
         db.query(Project)
         .filter(Project.org_id == org_id)
@@ -70,6 +72,7 @@ def create_scan(project_id: int, data: ScanIn, db: Session = Depends(get_db),
 @router.get("/{project_id}/scans", response_model=list[ScanOut])
 def list_scans(
     project_id: int,
+    response: Response,
     page: tuple[int, int] = Depends(_page_bounds),
     db: Session = Depends(get_db),
     org_id: int = Depends(get_org_scope),
@@ -78,6 +81,7 @@ def list_scans(
     if p is None or p.org_id != org_id:
         raise HTTPException(404, "项目不存在")
     offset, limit = page
+    response.headers["X-Page-Size"] = str(limit)
     return (
         db.query(Scan)
         .filter(Scan.project_id == project_id)

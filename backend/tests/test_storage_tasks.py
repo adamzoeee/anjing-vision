@@ -1,4 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from pathlib import Path
+from threading import Barrier, Lock
 from types import SimpleNamespace
 
 from app.storage import media_path, save_media_stream
@@ -49,6 +52,57 @@ def test_photo_upload_enforces_total_limit_and_cleans_partial_files(
     assert response.json()["error"]["code"] == "payload_too_large"
     directory = media_path(f"media/{scan_id}")
     assert not directory.exists() or list(directory.iterdir()) == []
+
+
+def test_concurrent_local_uploads_atomically_reserve_distinct_names(
+    monkeypatch,
+    tmp_path,
+):
+    from app import storage
+
+    monkeypatch.setattr(
+        storage,
+        "s",
+        SimpleNamespace(storage_backend="local", data_dir=str(tmp_path)),
+    )
+    original_open = Path.open
+    barrier = Barrier(2)
+    counter_lock = Lock()
+    open_count = 0
+
+    def synchronized_open(path, mode="r", *args, **kwargs):
+        nonlocal open_count
+        should_wait = False
+        if mode == "xb":
+            with counter_lock:
+                open_count += 1
+                should_wait = open_count <= 2
+        if should_wait:
+            barrier.wait(timeout=5)
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", synchronized_open)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(
+                save_media_stream,
+                11,
+                "room.mp4",
+                BytesIO(content),
+                1024,
+            )
+            for content in (b"first", b"second")
+        ]
+        stored = [future.result(timeout=5) for future in futures]
+
+    assert {item.path for item in stored} == {
+        "media/11/room.mp4",
+        "media/11/room_1.mp4",
+    }
+    assert {
+        (tmp_path / item.path).read_bytes()
+        for item in stored
+    } == {b"first", b"second"}
 
 
 def test_minio_upload_sanitizes_object_name(monkeypatch, tmp_path):

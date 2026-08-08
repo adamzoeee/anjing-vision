@@ -1,10 +1,10 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
 
 import 'models.dart';
 
 class ApiClient {
-  static const int _pageSize = 100;
-
   final Dio dio;
   String? _token;
   ApiClient({String? baseUrl, Dio? dio})
@@ -31,6 +31,10 @@ class ApiClient {
   }
 
   void setToken(String? t) => _token = t;
+
+  Map<String, String> get authorizationHeaders => _token == null
+      ? const {}
+      : {'Authorization': 'Bearer $_token'};
 
   Future<AuthUser> me() async =>
       AuthUser.fromJson((await dio.get('/api/auth/me')).data);
@@ -124,14 +128,27 @@ class ApiClient {
   ) async {
     final result = <T>[];
     var offset = 0;
+    int? observedPageSize;
+    String? previousPageSignature;
     while (true) {
       final response = await dio.get(
         path,
-        queryParameters: {'offset': offset, 'limit': _pageSize},
+        queryParameters: {'offset': offset},
       );
-      final page = (response.data as List).map<T>(parse).toList();
+      final rawPage = response.data as List;
+      if (rawPage.isEmpty) return result;
+      final pageSignature = jsonEncode(rawPage);
+      if (pageSignature == previousPageSignature) return result;
+      previousPageSignature = pageSignature;
+      final page = rawPage.map<T>(parse).toList();
       result.addAll(page);
-      if (page.length < _pageSize) return result;
+      final serverPageSize = int.tryParse(
+        response.headers.value('x-page-size') ?? '',
+      );
+      observedPageSize ??= serverPageSize ?? page.length;
+      if (page.length < observedPageSize) {
+        return result;
+      }
       offset += page.length;
     }
   }

@@ -170,6 +170,7 @@ def test_project_and_scan_lists_apply_pagination(client):
 
     page = client.get("/api/projects?offset=1&limit=2", headers=headers)
     assert page.status_code == 200
+    assert page.headers["x-page-size"] == "2"
     assert [item["id"] for item in page.json()] == list(reversed(project_ids))[1:3]
 
     project_id = project_ids[0]
@@ -185,6 +186,7 @@ def test_project_and_scan_lists_apply_pagination(client):
         f"/api/projects/{project_id}/scans?offset=1&limit=1",
         headers=headers,
     )
+    assert scan_page.headers["x-page-size"] == "1"
     assert [item["id"] for item in scan_page.json()] == list(reversed(scan_ids))[1:2]
 
 
