@@ -1,3 +1,11 @@
+from fastapi.testclient import TestClient
+
+from app.db import SessionLocal
+from app.main import app
+from app.models import Scan
+from app.tasks.pipeline_tasks import TaskDispatchError
+
+
 def _auth(client):
     client.post("/api/auth/register", json={
         "org_name": "养老院A", "name": "甲", "email": "a1@x.com", "password": "secret123"})
@@ -32,6 +40,138 @@ def test_scan_ownership_enforced(client):
     r2 = client.post("/api/auth/login", json={"email": "b1@x.com", "password": "secret123"})
     h2 = {"Authorization": f"Bearer {r2.json()['token']}"}
     assert client.get(f"/api/scans/{sid}", headers=h2).status_code == 404
+
+
+def test_upload_rejects_missing_and_cross_organization_scan(client):
+    h = _auth(client)
+    missing = client.post(
+        "/api/scans/999999/upload",
+        headers=h,
+        files={"files": ("small.bin", b"x", "application/octet-stream")},
+    )
+
+    client.post("/api/auth/register", json={
+        "org_name": "养老院B", "name": "乙", "email": "b1@x.com", "password": "secret123"})
+    login = client.post(
+        "/api/auth/login",
+        json={"email": "b1@x.com", "password": "secret123"},
+    )
+    outsider = {"Authorization": f"Bearer {login.json()['token']}"}
+    project_id = client.post(
+        "/api/projects",
+        json={"name": "乙的项目"},
+        headers=outsider,
+    ).json()["id"]
+    scan_id = client.post(
+        f"/api/projects/{project_id}/scans",
+        json={"capture_type": "video"},
+        headers=outsider,
+    ).json()["id"]
+    cross_org = client.post(
+        f"/api/scans/{scan_id}/upload",
+        headers=h,
+        files={"files": ("small.bin", b"x", "application/octet-stream")},
+    )
+
+    assert missing.status_code == 404
+    assert cross_org.status_code == 404
+
+
+def test_video_mode_rejects_multiple_files(client):
+    h = _auth(client)
+    project_id = client.post(
+        "/api/projects",
+        json={"name": "单视频限制"},
+        headers=h,
+    ).json()["id"]
+    scan_id = client.post(
+        f"/api/projects/{project_id}/scans",
+        json={"capture_type": "video"},
+        headers=h,
+    ).json()["id"]
+
+    response = client.post(
+        f"/api/scans/{scan_id}/upload",
+        headers=h,
+        files=[
+            ("files", ("one.bin", b"1", "application/octet-stream")),
+            ("files", ("two.bin", b"2", "application/octet-stream")),
+        ],
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "视频模式仅接受单个文件"
+
+
+def test_upload_save_failure_rolls_back_database_state(client, monkeypatch):
+    from app.routers import scans as scans_module
+
+    h = _auth(client)
+    project_id = client.post(
+        "/api/projects",
+        json={"name": "保存失败"},
+        headers=h,
+    ).json()["id"]
+    scan_id = client.post(
+        f"/api/projects/{project_id}/scans",
+        json={"capture_type": "video"},
+        headers=h,
+    ).json()["id"]
+
+    def fail_save(*_args, **_kwargs):
+        raise OSError("disk path and secret must not leak")
+
+    monkeypatch.setattr(scans_module, "save_media_stream", fail_save)
+    with TestClient(app, raise_server_exceptions=False) as safe_client:
+        response = safe_client.post(
+            f"/api/scans/{scan_id}/upload",
+            headers=h,
+            files={"files": ("small.bin", b"x", "application/octet-stream")},
+        )
+
+    db = SessionLocal()
+    try:
+        scan = db.get(Scan, scan_id)
+        assert scan.media_path == ""
+        assert scan.status == "uploading"
+    finally:
+        db.close()
+
+    assert response.status_code == 500
+    assert response.json()["error"]["message"] == "服务器内部错误"
+    assert "disk path" not in response.text
+
+
+def test_dispatch_failure_marks_scan_failed_without_leaking_error(client, monkeypatch):
+    from app.routers import scans as scans_module
+
+    h = _auth(client)
+    project_id = client.post(
+        "/api/projects",
+        json={"name": "队列失败"},
+        headers=h,
+    ).json()["id"]
+    scan_id = client.post(
+        f"/api/projects/{project_id}/scans",
+        json={"capture_type": "video"},
+        headers=h,
+    ).json()["id"]
+
+    def fail_dispatch(_):
+        raise TaskDispatchError("broker password=hidden")
+
+    monkeypatch.setattr(scans_module, "dispatch_scan", fail_dispatch)
+    response = client.post(
+        f"/api/scans/{scan_id}/upload",
+        headers=h,
+        files={"files": ("small.bin", b"x", "application/octet-stream")},
+    )
+    status = client.get(f"/api/scans/{scan_id}", headers=h)
+
+    assert response.status_code == 200
+    assert status.json()["status"] == "failed"
+    assert status.json()["message"] == "任务队列暂不可用，请稍后重试"
+    assert "password=hidden" not in status.text
 
 
 def test_upload_sanitizes_filename(client, tmp_path):
