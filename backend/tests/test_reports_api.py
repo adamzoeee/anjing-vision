@@ -1,5 +1,6 @@
 """reports API 测试：报告查询与跨机构对比越权防护。"""
 import os
+from pathlib import Path
 
 
 def _auth(client, org="养老院A", email="a1@x.com"):
@@ -39,6 +40,53 @@ def test_get_report(client):
     assert body["score"] == 62.5
     assert body["risks"][0]["level"] == "red"
     assert body["calibrated"] == 1
+
+
+def test_report_annotation_image_is_served_with_organization_auth(client, tmp_path):
+    from app.config import get_settings
+    from app.db import SessionLocal
+    from app.models import Report
+
+    headers = _auth(client)
+    _pid, scan_id, report_id = _make_report(client, headers)
+    image_path = (
+        Path(get_settings().data_dir)
+        / "work"
+        / str(scan_id)
+        / "images"
+        / "view_0.png"
+    )
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.write_bytes(b"annotation-image")
+    db = SessionLocal()
+    report = db.get(Report, report_id)
+    report.images = [str(image_path)]
+    db.commit()
+    db.close()
+
+    response = client.get(f"/api/reports/scans/{scan_id}", headers=headers)
+    image_url = response.json()["images"][0]
+    assert image_url == f"/static/{scan_id}/view_0.png"
+    assert client.get(image_url).status_code == 401
+
+    image_response = client.get(image_url, headers=headers)
+    assert image_response.status_code == 200
+    assert image_response.content == b"annotation-image"
+
+    other_headers = _auth(client, org="养老院B", email="images-b@x.com")
+    assert client.get(image_url, headers=other_headers).status_code == 404
+
+    outside_path = tmp_path / "outside.png"
+    outside_path.write_bytes(b"must-not-be-served")
+    db = SessionLocal()
+    report = db.get(Report, report_id)
+    report.images = [str(outside_path)]
+    db.commit()
+    db.close()
+    assert client.get(
+        f"/static/{scan_id}/outside.png",
+        headers=headers,
+    ).status_code == 404
 
 
 def test_get_report_requires_ownership(client):

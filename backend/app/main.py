@@ -59,7 +59,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_origins=app_settings.cors_origins,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
-        expose_headers=["X-Request-ID"],
+        expose_headers=["X-Request-ID", "X-Page-Size"],
         allow_credentials=False,
     )
 
@@ -151,6 +151,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(projects.router, prefix="/api/projects", tags=["projects"])
     application.include_router(scans.router, prefix="/api/scans", tags=["scans"])
     application.include_router(reports.router, prefix="/api/reports", tags=["reports"])
+    application.include_router(
+        reports.assets_router,
+        prefix="/static",
+        tags=["report-assets"],
+    )
 
     @application.get("/api/health")
     def health():
