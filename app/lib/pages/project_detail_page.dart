@@ -53,7 +53,7 @@ class _ProjectDetailPageState extends State<ProjectDetailPage> {
     if (done.length < 2) return;
     // 最近两次完成的扫描：旧→新
     Navigator.push(context, MaterialPageRoute(builder: (_) =>
-        ComparePage(scanA: done[1].id, scanB: done[0].id)));
+        ComparePage(beforeScanId: done[1].id, afterScanId: done[0].id)));
   }
 
   @override
