@@ -3,9 +3,13 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 
 class ComparePage extends StatefulWidget {
-  final int scanA;
-  final int scanB;
-  const ComparePage({super.key, required this.scanA, required this.scanB});
+  final int beforeScanId;
+  final int afterScanId;
+  const ComparePage({
+    super.key,
+    required this.beforeScanId,
+    required this.afterScanId,
+  });
   @override
   State<ComparePage> createState() => _ComparePageState();
 }
@@ -23,7 +27,7 @@ class _ComparePageState extends State<ComparePage> {
   Future<void> _load() async {
     try {
       final d = await context.read<ApiClient>()
-          .compare(widget.scanA, widget.scanB);
+          .compare(widget.beforeScanId, widget.afterScanId);
       if (!mounted) return;
       setState(() { _data = d; _error = null; });
     } catch (e) {
