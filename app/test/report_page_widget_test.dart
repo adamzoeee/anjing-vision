@@ -147,4 +147,11 @@ void main() {
     );
     expect(find.text('暂无标注图'), findsOneWidget);
   });
+
+  test('标注图片使用后端资源地址并携带认证请求头', () {
+    api.setToken('image-token');
+    final provider = authenticatedReportImage(api, '/static/12/view_0.png');
+    expect(provider.url, 'https://api.test.invalid/static/12/view_0.png');
+    expect(provider.headers, {'Authorization': 'Bearer image-token'});
+  });
 }
