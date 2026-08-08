@@ -1,5 +1,7 @@
 import numpy as np
 import open3d as o3d
+import pytest
+from pipeline import geometry
 from pipeline.geometry import fit_ground_plane, measure_door_width, measure_step_height, measure_floor_slope
 
 
@@ -57,3 +59,13 @@ def test_measure_floor_slope():
     pts[:, 2] += 0.05 * pts[:, 0]  # 5% 坡度
     slope = measure_floor_slope(pts)
     assert abs(slope - 0.05) < 0.02
+
+
+def test_measure_door_width_does_not_swallow_programming_errors(monkeypatch):
+    def programming_error(_):
+        raise TypeError("programming error")
+
+    monkeypatch.setattr(geometry, "fit_ground_plane", programming_error)
+
+    with pytest.raises(TypeError, match="programming error"):
+        geometry.measure_door_width(np.zeros((10, 3)), wall_x=0)
