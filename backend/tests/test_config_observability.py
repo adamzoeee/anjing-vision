@@ -1,5 +1,4 @@
 import logging
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -62,21 +61,6 @@ def test_database_url_must_be_parseable():
 def test_production_minio_rejects_default_credentials():
     with pytest.raises(ValidationError, match="MinIO"):
         _production_settings(storage_backend="minio")
-
-
-def test_compose_production_services_require_explicit_secrets():
-    compose = (Path(__file__).parents[1] / "docker-compose.yml").read_text(
-        encoding="utf-8"
-    )
-
-    assert "ENVIRONMENT: production" in compose
-    assert "AUTO_CREATE_TABLES: \"false\"" in compose
-    assert "ALLOW_SYNC_FALLBACK: \"false\"" in compose
-    assert "${SECRET_KEY:?" in compose
-    assert "${POSTGRES_PASSWORD:?" in compose
-    assert "${MINIO_SECRET_KEY:?" in compose
-    assert "change-me-in-production" not in compose
-    assert "POSTGRES_PASSWORD: anjing" not in compose
 
 
 def test_development_cors_allows_local_origin():

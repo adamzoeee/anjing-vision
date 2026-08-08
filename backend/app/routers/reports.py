@@ -1,36 +1,12 @@
-import hashlib
-import hmac
-import time
-from pathlib import Path
-from urllib.parse import quote
-
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from pathlib import Path
 from sqlalchemy.orm import Session
 
-from ..config import get_settings
 from ..db import get_db
 from ..deps import get_org_scope
-from ..models import Report, Scan
+from ..models import Scan
 
 router = APIRouter()
-_ASSET_TTL_SECONDS = 15 * 60
-
-
-def _asset_signature(scan_id: int, filename: str, expires: int) -> str:
-    secret = get_settings().secret_key.encode("utf-8")
-    message = f"{scan_id}:{filename}:{expires}".encode("utf-8")
-    return hmac.new(secret, message, hashlib.sha256).hexdigest()
-
-
-def _asset_url(scan_id: int, image: str) -> str:
-    filename = Path(image).name
-    expires = int(time.time()) + _ASSET_TTL_SECONDS
-    signature = _asset_signature(scan_id, filename, expires)
-    return (
-        f"/api/reports/assets/{scan_id}/{quote(filename)}"
-        f"?expires={expires}&signature={signature}"
-    )
 
 
 @router.get("/scans/{scan_id}")
@@ -46,65 +22,72 @@ def get_report(scan_id: int, db: Session = Depends(get_db), org_id: int = Depend
         "risks": scan.report.risks,
         "measures": scan.report.measures,
         "advice": scan.report.advice,
-        "images": [_asset_url(scan_id, image) for image in scan.report.images],
+        "images": [f"/static/{scan_id}/{Path(img).name}" for img in scan.report.images],
         "preview": scan.report.preview,
         "calibrated": scan.report.calibrated,
         "created_at": scan.report.created_at.isoformat(),
     }
 
 
-@router.get("/assets/{scan_id}/{filename}")
-def get_report_asset(
-    scan_id: int,
-    filename: str,
-    expires: int = Query(..., ge=1),
-    signature: str = Query(..., min_length=64, max_length=64),
-    db: Session = Depends(get_db),
-):
-    if expires < int(time.time()):
-        raise HTTPException(401, "资源链接已过期")
-    expected = _asset_signature(scan_id, filename, expires)
-    if not hmac.compare_digest(signature, expected):
-        raise HTTPException(401, "资源签名无效")
-
-    scan = db.get(Scan, scan_id)
-    if scan is None or scan.report is None:
-        raise HTTPException(404, "报告资源不存在")
-    matched = next(
-        (
-            Path(image)
-            for image in scan.report.images
-            if Path(image).name == Path(filename).name
-        ),
-        None,
-    )
-    if matched is None or not matched.is_file():
-        raise HTTPException(404, "报告资源不存在")
-    return FileResponse(matched)
-
-
 @router.get("/compare")
 def compare(
-    a: int = Query(..., ge=1, description="改造前扫描 ID"),
-    b: int = Query(..., ge=1, description="改造后扫描 ID"),
+    before_scan_id: int | None = Query(default=None, ge=1),
+    after_scan_id: int | None = Query(default=None, ge=1),
+    legacy_before_scan_id: int | None = Query(
+        default=None,
+        alias="a",
+        ge=1,
+        include_in_schema=False,
+    ),
+    legacy_after_scan_id: int | None = Query(
+        default=None,
+        alias="b",
+        ge=1,
+        include_in_schema=False,
+    ),
     db: Session = Depends(get_db),
     org_id: int = Depends(get_org_scope),
 ):
-    """按 Flutter 使用的 Scan ID 对比同一项目下两次报告。"""
-    scan_a, scan_b = db.get(Scan, a), db.get(Scan, b)
-    if scan_a is None or scan_b is None:
+    """按扫描 ID 对比；a/b 仅作为现有 Flutter 的兼容参数。"""
+    if (
+        before_scan_id is not None
+        and legacy_before_scan_id is not None
+        and before_scan_id != legacy_before_scan_id
+    ) or (
+        after_scan_id is not None
+        and legacy_after_scan_id is not None
+        and after_scan_id != legacy_after_scan_id
+    ):
+        raise HTTPException(422, "新旧对比参数不能互相冲突")
+    before_scan_id = before_scan_id or legacy_before_scan_id
+    after_scan_id = after_scan_id or legacy_after_scan_id
+    if before_scan_id is None or after_scan_id is None:
+        raise HTTPException(422, "必须提供 before_scan_id 和 after_scan_id")
+
+    before_scan = db.get(Scan, before_scan_id)
+    after_scan = db.get(Scan, after_scan_id)
+    if before_scan is None or after_scan is None:
         raise HTTPException(404, "扫描任务不存在")
     if (
-        scan_a.project.org_id != org_id
-        or scan_b.project.org_id != org_id
-        or scan_a.project_id != scan_b.project_id
+        before_scan.project.org_id != org_id
+        or after_scan.project.org_id != org_id
+        or before_scan.project_id != after_scan.project_id
     ):
         raise HTTPException(404, "对比对象无效或不属于同一项目")
-    ra, rb = scan_a.report, scan_b.report
-    if ra is None or rb is None:
+    before_report = before_scan.report
+    after_report = after_scan.report
+    if before_report is None or after_report is None:
         raise HTTPException(404, "报告不存在")
     return {
-        "before": {"scan_id": ra.scan_id, "score": ra.score, "risks": ra.risks},
-        "after": {"scan_id": rb.scan_id, "score": rb.score, "risks": rb.risks},
-        "score_delta": round(rb.score - ra.score, 1),
+        "before": {
+            "scan_id": before_report.scan_id,
+            "score": before_report.score,
+            "risks": before_report.risks,
+        },
+        "after": {
+            "scan_id": after_report.scan_id,
+            "score": after_report.score,
+            "risks": after_report.risks,
+        },
+        "score_delta": round(after_report.score - before_report.score, 1),
     }

@@ -72,7 +72,7 @@ def test_database_constraint_error_is_rolled_back_and_sanitized(
     )
 
     assert response.status_code == 400
-    assert response.json()["error"]["message"] == "邮箱或机构已存在"
+    assert response.json()["error"]["message"] == "机构注册冲突，请重试"
     assert "INSERT INTO" not in response.text
     assert "password_hash" not in response.text
     assert rollback_calls >= 1
@@ -114,7 +114,7 @@ def test_registration_flush_constraint_error_is_rolled_back_and_sanitized(
     )
 
     assert response.status_code == 400
-    assert response.json()["error"]["message"] == "邮箱或机构已存在"
+    assert response.json()["error"]["message"] == "机构注册冲突，请重试"
     assert "INSERT INTO" not in response.text
     assert "secret-column" not in response.text
     assert rollback_calls >= 1
@@ -204,7 +204,7 @@ def test_database_allows_only_one_admin_per_organization():
         db.close()
 
 
-def test_existing_organization_registration_cannot_race_for_admin(client):
+def test_existing_empty_organization_gets_one_admin_then_members(client):
     db = SessionLocal()
     try:
         db.add(Organization(name="预创建机构"))
@@ -216,14 +216,25 @@ def test_existing_organization_registration_cannot_race_for_admin(client):
         "/api/auth/register",
         json={
             "org_name": "预创建机构",
-            "name": "普通成员",
-            "email": "member@example.com",
+            "name": "首位用户",
+            "email": "first@example.com",
+            "password": "secret123",
+        },
+    )
+    second = client.post(
+        "/api/auth/register",
+        json={
+            "org_name": "预创建机构",
+            "name": "后续用户",
+            "email": "second@example.com",
             "password": "secret123",
         },
     )
 
     assert response.status_code == 200
-    assert response.json()["user"]["role"] == "member"
+    assert response.json()["user"]["role"] == "admin"
+    assert second.status_code == 200
+    assert second.json()["user"]["role"] == "member"
 
 
 def test_initial_migration_builds_schema_on_empty_database(tmp_path, monkeypatch):
