@@ -49,16 +49,24 @@ def _ensure_bucket(client) -> None:
         client.make_bucket(s.minio_bucket)
 
 
-def _local_unique_name(directory: Path, filename: str) -> str:
-    candidate = filename
+def _reserve_local_file(directory: Path, filename: str) -> tuple[str, Path, BinaryIO]:
+    """Atomically reserve a unique local filename and return its open stream."""
     stem, suffix = (
         filename.rsplit(".", 1) if "." in filename else (filename, "")
     )
-    index = 1
-    while (directory / candidate).exists():
-        candidate = f"{stem}_{index}{'.' + suffix if suffix else ''}"
+    index = 0
+    while True:
+        candidate = (
+            filename
+            if index == 0
+            else f"{stem}_{index}{'.' + suffix if suffix else ''}"
+        )
+        target = directory / candidate
+        try:
+            return candidate, target, target.open("xb")
+        except FileExistsError:
+            pass
         index += 1
-    return candidate
 
 
 def save_media_stream(
@@ -81,12 +89,11 @@ def _save_local_stream(
 ) -> StoredMedia:
     destination = _local_root() / "media" / str(scan_id)
     destination.mkdir(parents=True, exist_ok=True)
-    safe_name = _local_unique_name(destination, filename)
-    target = destination / safe_name
+    safe_name, target, output = _reserve_local_file(destination, filename)
     size = 0
     completed = False
     try:
-        with target.open("xb") as output:
+        with output:
             while chunk := stream.read(min(_CHUNK_SIZE, max_bytes - size + 1)):
                 size += len(chunk)
                 if size > max_bytes:
