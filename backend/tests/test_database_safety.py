@@ -270,6 +270,83 @@ def test_initial_migration_builds_schema_on_empty_database(tmp_path, monkeypatch
     )
 
 
+def test_legacy_database_migration_preserves_data_and_adds_constraints(
+    tmp_path,
+    monkeypatch,
+):
+    database = tmp_path / "legacy.db"
+    database_url = f"sqlite:///{database.as_posix()}"
+    legacy_engine = create_engine(database_url)
+    with legacy_engine.begin() as connection:
+        for statement in (
+            "CREATE TABLE organizations (id INTEGER PRIMARY KEY, name VARCHAR(120) "
+            "NOT NULL UNIQUE, created_at DATETIME)",
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, org_id INTEGER NOT NULL "
+            "REFERENCES organizations(id), name VARCHAR(80) NOT NULL, "
+            "email VARCHAR(120) NOT NULL UNIQUE, password_hash VARCHAR(128) NOT NULL, "
+            "role VARCHAR(20), created_at DATETIME)",
+            "CREATE TABLE projects (id INTEGER PRIMARY KEY, org_id INTEGER NOT NULL "
+            "REFERENCES organizations(id), name VARCHAR(120) NOT NULL, "
+            "address VARCHAR(200), created_at DATETIME)",
+            "CREATE TABLE scans (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL "
+            "REFERENCES projects(id), status VARCHAR(20), progress INTEGER, "
+            "message VARCHAR(200), capture_type VARCHAR(20), media_path VARCHAR(300), "
+            "created_at DATETIME)",
+            "CREATE TABLE reports (id INTEGER PRIMARY KEY, scan_id INTEGER NOT NULL "
+            "REFERENCES scans(id), score FLOAT, risks JSON, measures JSON, advice JSON, "
+            "images JSON, preview JSON, calibrated INTEGER, created_at DATETIME)",
+            "INSERT INTO organizations (id, name) VALUES (1, '历史机构')",
+            "INSERT INTO users (id, org_id, name, email, password_hash, role) "
+            "VALUES (1, 1, '历史管理员', 'legacy@example.com', 'hash', 'admin')",
+            "INSERT INTO projects (id, org_id, name) VALUES (1, 1, '历史项目')",
+            "INSERT INTO scans (id, project_id, status) VALUES (1, 1, 'done')",
+            "INSERT INTO reports (id, scan_id, score) VALUES (1, 1, 86.5)",
+        ):
+            connection.exec_driver_sql(statement)
+    legacy_engine.dispose()
+
+    previous_url = os.environ.get("DATABASE_URL")
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    get_settings.cache_clear()
+    try:
+        config = Config("alembic.ini")
+        command.stamp(config, "20260807_0001")
+        command.upgrade(config, "head")
+    finally:
+        if previous_url is None:
+            monkeypatch.delenv("DATABASE_URL", raising=False)
+        else:
+            monkeypatch.setenv("DATABASE_URL", previous_url)
+        get_settings.cache_clear()
+
+    migrated_engine = create_engine(database_url)
+    schema = inspect(migrated_engine)
+    assert any(
+        item["column_names"] == ["org_id"] for item in schema.get_indexes("users")
+    )
+    assert any(
+        item["column_names"] == ["org_id"]
+        for item in schema.get_indexes("projects")
+    )
+    assert any(
+        item["column_names"] == ["project_id"]
+        for item in schema.get_indexes("scans")
+    )
+    assert any(
+        item["column_names"] == ["scan_id"]
+        for item in schema.get_unique_constraints("reports")
+    )
+    with migrated_engine.connect() as connection:
+        assert connection.execute(text("SELECT name FROM organizations")).scalar_one() == "历史机构"
+        assert connection.execute(text("SELECT score FROM reports")).scalar_one() == 86.5
+    with pytest.raises(IntegrityError):
+        with migrated_engine.begin() as connection:
+            connection.execute(
+                text("INSERT INTO reports (id, scan_id, score) VALUES (2, 1, 70)")
+            )
+    migrated_engine.dispose()
+
+
 def test_database_readiness_failure_returns_503(client):
     class BrokenSession:
         def execute(self, _):

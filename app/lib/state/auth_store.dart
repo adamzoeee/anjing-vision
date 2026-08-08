@@ -19,12 +19,19 @@ class SharedPreferencesTokenStorage implements TokenStorage {
 
   @override
   Future<void> write(String token) async {
-    await (await SharedPreferences.getInstance()).setString('token', token);
+    final stored = await (await SharedPreferences.getInstance()).setString(
+      'token',
+      token,
+    );
+    if (!stored) throw StateError('Token persistence failed');
   }
 
   @override
   Future<void> clear() async {
-    await (await SharedPreferences.getInstance()).remove('token');
+    final removed = await (await SharedPreferences.getInstance()).remove(
+      'token',
+    );
+    if (!removed) throw StateError('Token removal failed');
   }
 }
 
@@ -50,11 +57,12 @@ class AuthStore extends ChangeNotifier {
     notifyListeners();
     try {
       final r = await api.login(email: email, password: password);
-      user = r.user;
       await _persist(r.token);
+      user = r.user;
       status = AuthStatus.authenticated;
       return true;
     } catch (e) {
+      await _discardFailedAuthentication();
       status = AuthStatus.unauthenticated;
       error = '登录失败: $e';
       return false;
@@ -80,11 +88,12 @@ class AuthStore extends ChangeNotifier {
         email: email,
         password: password,
       );
-      user = r.user;
       await _persist(r.token);
+      user = r.user;
       status = AuthStatus.authenticated;
       return true;
     } catch (e) {
+      await _discardFailedAuthentication();
       status = AuthStatus.unauthenticated;
       error = '注册失败: $e';
       return false;
@@ -97,6 +106,16 @@ class AuthStore extends ChangeNotifier {
   Future<void> _persist(String token) async {
     await _tokenStorage.write(token);
     api.setToken(token);
+  }
+
+  Future<void> _discardFailedAuthentication() async {
+    user = null;
+    api.setToken(null);
+    try {
+      await _tokenStorage.clear();
+    } catch (_) {
+      // Preserve the original login/register error while keeping memory logged out.
+    }
   }
 
   Future<void> restore() async {
