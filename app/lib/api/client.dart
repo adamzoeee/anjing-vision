@@ -3,6 +3,8 @@ import 'package:dio/dio.dart';
 import 'models.dart';
 
 class ApiClient {
+  static const int _pageSize = 100;
+
   final Dio dio;
   String? _token;
   ApiClient({String? baseUrl, Dio? dio})
@@ -64,9 +66,8 @@ class ApiClient {
     return (token: _token!, user: AuthUser.fromJson(r.data['user']));
   }
 
-  Future<List<Project>> projects() async => (await dio.get(
-    '/api/projects',
-  )).data.map<Project>((e) => Project.fromJson(e)).toList();
+  Future<List<Project>> projects() =>
+      _allPages('/api/projects', (json) => Project.fromJson(json));
 
   Future<Project> createProject(String name, String address) async =>
       Project.fromJson(
@@ -84,9 +85,10 @@ class ApiClient {
         )).data,
       );
 
-  Future<List<Scan>> listScans(int projectId) async => (await dio.get(
+  Future<List<Scan>> listScans(int projectId) => _allPages(
     '/api/projects/$projectId/scans',
-  )).data.map<Scan>((e) => Scan.fromJson(e)).toList();
+    (json) => Scan.fromJson(json),
+  );
 
   Future<void> uploadVideo(int scanId, String filePath, String filename) async {
     // 流式上传（不整文件读入内存）
@@ -105,8 +107,32 @@ class ApiClient {
   Future<Report> report(int scanId) async =>
       Report.fromJson((await dio.get('/api/reports/scans/$scanId')).data);
 
-  Future<Map<String, dynamic>> compare(int a, int b) async => (await dio.get(
+  Future<Map<String, dynamic>> compare(
+    int beforeScanId,
+    int afterScanId,
+  ) async => (await dio.get(
     '/api/reports/compare',
-    queryParameters: {'a': a, 'b': b},
+    queryParameters: {
+      'before_scan_id': beforeScanId,
+      'after_scan_id': afterScanId,
+    },
   )).data;
+
+  Future<List<T>> _allPages<T>(
+    String path,
+    T Function(dynamic json) parse,
+  ) async {
+    final result = <T>[];
+    var offset = 0;
+    while (true) {
+      final response = await dio.get(
+        path,
+        queryParameters: {'offset': offset, 'limit': _pageSize},
+      );
+      final page = (response.data as List).map<T>(parse).toList();
+      result.addAll(page);
+      if (page.length < _pageSize) return result;
+      offset += page.length;
+    }
+  }
 }
