@@ -120,7 +120,10 @@ void main() {
         (server) => server.reply(200, [
           {'id': 1, 'name': '王奶奶家', 'address': '幸福路 1 号'},
           {'id': 2, 'name': '李爷爷家'},
-        ]),
+        ], headers: {
+          Headers.contentTypeHeader: [Headers.jsonContentType],
+          'x-page-size': ['20'],
+        }),
       );
 
       final projects = await client.projects();
@@ -137,25 +140,32 @@ void main() {
         (server) => server.reply(
           200,
           List.generate(
-            100,
+            50,
             (index) => {'id': index + 1, 'name': '项目 ${index + 1}'},
           ),
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+            'x-page-size': ['50'],
+          },
         ),
-        queryParameters: {'offset': 0, 'limit': 100},
+        queryParameters: {'offset': 0},
       );
       adapter.onGet(
         '/api/projects',
         (server) => server.reply(200, [
-          {'id': 101, 'name': '项目 101'},
-        ]),
-        queryParameters: {'offset': 100, 'limit': 100},
+          {'id': 51, 'name': '项目 51'},
+        ], headers: {
+          Headers.contentTypeHeader: [Headers.jsonContentType],
+          'x-page-size': ['50'],
+        }),
+        queryParameters: {'offset': 50},
       );
 
       final projects = await client.projects();
 
-      expect(projects, hasLength(101));
-      expect(projects.last.id, 101);
-      expect(lastRequest?.queryParameters, {'offset': 100, 'limit': 100});
+      expect(projects, hasLength(51));
+      expect(projects.last.id, 51);
+      expect(lastRequest?.queryParameters, {'offset': 50});
     });
 
     test('创建项目发送名称地址并解析项目', () async {
@@ -235,7 +245,10 @@ void main() {
             'message': '重建失败',
             'capture_type': 'video',
           },
-        ]),
+        ], headers: {
+          Headers.contentTypeHeader: [Headers.jsonContentType],
+          'x-page-size': ['20'],
+        }),
       );
 
       final scans = await client.listScans(3);
@@ -259,21 +272,32 @@ void main() {
         '/api/projects/3/scans',
         (server) => server.reply(
           200,
-          List.generate(100, (index) => scanJson(index + 1)),
+          List.generate(50, (index) => scanJson(index + 1)),
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+            'x-page-size': ['50'],
+          },
         ),
-        queryParameters: {'offset': 0, 'limit': 100},
+        queryParameters: {'offset': 0},
       );
       adapter.onGet(
         '/api/projects/3/scans',
-        (server) => server.reply(200, [scanJson(101)]),
-        queryParameters: {'offset': 100, 'limit': 100},
+        (server) => server.reply(
+          200,
+          [scanJson(51)],
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+            'x-page-size': ['50'],
+          },
+        ),
+        queryParameters: {'offset': 50},
       );
 
       final scans = await client.listScans(3);
 
-      expect(scans, hasLength(101));
-      expect(scans.last.id, 101);
-      expect(lastRequest?.queryParameters, {'offset': 100, 'limit': 100});
+      expect(scans, hasLength(51));
+      expect(scans.last.id, 51);
+      expect(lastRequest?.queryParameters, {'offset': 50});
     });
 
     test('获取报告并解析评分、风险和建议', () async {
