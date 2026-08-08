@@ -131,6 +131,33 @@ void main() {
       expect(projects.last.address, '');
     });
 
+    test('项目列表自动翻页并返回超过单页上限的全部数据', () async {
+      adapter.onGet(
+        '/api/projects',
+        (server) => server.reply(
+          200,
+          List.generate(
+            100,
+            (index) => {'id': index + 1, 'name': '项目 ${index + 1}'},
+          ),
+        ),
+        queryParameters: {'offset': 0, 'limit': 100},
+      );
+      adapter.onGet(
+        '/api/projects',
+        (server) => server.reply(200, [
+          {'id': 101, 'name': '项目 101'},
+        ]),
+        queryParameters: {'offset': 100, 'limit': 100},
+      );
+
+      final projects = await client.projects();
+
+      expect(projects, hasLength(101));
+      expect(projects.last.id, 101);
+      expect(lastRequest?.queryParameters, {'offset': 100, 'limit': 100});
+    });
+
     test('创建项目发送名称地址并解析项目', () async {
       adapter.onPost(
         '/api/projects',
@@ -218,6 +245,37 @@ void main() {
       expect(scans.last.failed, isTrue);
     });
 
+    test('扫描列表自动翻页并返回超过单页上限的全部数据', () async {
+      Map<String, dynamic> scanJson(int id) => {
+        'id': id,
+        'project_id': 3,
+        'status': 'done',
+        'progress': 100,
+        'message': '已完成',
+        'capture_type': 'video',
+      };
+
+      adapter.onGet(
+        '/api/projects/3/scans',
+        (server) => server.reply(
+          200,
+          List.generate(100, (index) => scanJson(index + 1)),
+        ),
+        queryParameters: {'offset': 0, 'limit': 100},
+      );
+      adapter.onGet(
+        '/api/projects/3/scans',
+        (server) => server.reply(200, [scanJson(101)]),
+        queryParameters: {'offset': 100, 'limit': 100},
+      );
+
+      final scans = await client.listScans(3);
+
+      expect(scans, hasLength(101));
+      expect(scans.last.id, 101);
+      expect(lastRequest?.queryParameters, {'offset': 100, 'limit': 100});
+    });
+
     test('获取报告并解析评分、风险和建议', () async {
       adapter.onGet(
         '/api/reports/scans/12',
@@ -255,7 +313,7 @@ void main() {
           'after': {'score': 86, 'risks': []},
           'score_delta': 24,
         }),
-        queryParameters: {'a': 10, 'b': 12},
+        queryParameters: {'before_scan_id': 10, 'after_scan_id': 12},
       );
 
       final comparison = await client.compare(10, 12);
