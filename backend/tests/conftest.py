@@ -1,6 +1,7 @@
 import os
 os.environ["DATABASE_URL"] = "sqlite:///./test.db"
-os.environ["SECRET_KEY"] = "test-secret"
+os.environ["ENVIRONMENT"] = "test"
+os.environ["SECRET_KEY"] = "test-secret-key-with-at-least-32-bytes"
 os.environ["STORAGE_BACKEND"] = "local"
 os.environ["TASK_SYNC"] = "true"  # 测试环境管道同步执行，避免 Redis/Celery 依赖
 

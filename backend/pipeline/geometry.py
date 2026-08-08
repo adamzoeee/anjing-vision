@@ -40,7 +40,7 @@ def measure_door_width(
         a, b, c, d = plane
         if abs(c) > 0.8 and len(inliers) > 0.1 * len(points):
             keep[inliers] = False  # 地面平面可靠（法向接近 z 轴、内点占比合理）时才剔除
-    except Exception:
+    except (RuntimeError, ValueError):
         pass  # 拟合失败时退化为不过滤
     sel = points[
         (np.abs(points[:, 0] - wall_x) < 0.1) & (points[:, 2] >= z_min) & (points[:, 2] <= z_max) & keep

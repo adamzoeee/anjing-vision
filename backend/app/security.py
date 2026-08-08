@@ -21,10 +21,25 @@ def verify_password(pw: str, hashed: str) -> bool:
 
 def create_token(user_id: int, org_id: int) -> str:
     s = get_settings()
-    payload = {"sub": str(user_id), "org": org_id,
-               "exp": dt.datetime.utcnow() + dt.timedelta(minutes=s.token_expire_minutes)}
+    now = dt.datetime.now(dt.UTC)
+    payload = {
+        "sub": str(user_id),
+        "org": org_id,
+        "iat": now,
+        "exp": now + dt.timedelta(minutes=s.token_expire_minutes),
+    }
     return jwt.encode(payload, s.secret_key, algorithm=ALGO)
 
 
 def decode_token(token: str) -> dict:
-    return jwt.decode(token, get_settings().secret_key, algorithms=[ALGO])
+    payload = jwt.decode(
+        token,
+        get_settings().secret_key,
+        algorithms=[ALGO],
+        options={"require": ["exp", "sub", "org"]},
+    )
+    if not isinstance(payload.get("sub"), str) or not payload["sub"].isdigit():
+        raise jwt.InvalidTokenError("subject 无效")
+    if not isinstance(payload.get("org"), int):
+        raise jwt.InvalidTokenError("organization 无效")
+    return payload

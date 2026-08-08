@@ -1,5 +1,6 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import jwt
 from sqlalchemy.orm import Session
 
 from .db import get_db
@@ -18,10 +19,12 @@ def get_current_user(
     try:
         payload = decode_token(cred.credentials)
         user = db.get(User, int(payload["sub"]))
-    except Exception:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "凭证无效")
+    except (jwt.InvalidTokenError, KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "凭证无效") from exc
     if user is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户不存在")
+    if payload["org"] != user.org_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "凭证组织与用户不一致")
     return user
 
 
