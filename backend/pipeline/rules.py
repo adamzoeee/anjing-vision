@@ -73,7 +73,7 @@ def evaluate_risks(measures: dict) -> list[dict]:
 
 
 def compute_score(measures: dict) -> tuple[float, dict]:
-    """加权评分：每类取最差风险扣分。返回 (总分 0~100, 明细)。"""
+    """只按已确认风险加权评分；未知项单独计入评估完整度。"""
     risks = evaluate_risks(measures)
     cat_map = {
         "door_width": "通行性", "passage_width": "通行性", "bathroom_door": "通行性",
@@ -83,8 +83,20 @@ def compute_score(measures: dict) -> tuple[float, dict]:
     parts = {}
     for cat, w in WEIGHTS.items():
         cat_risks = [r for r in risks if cat_map.get(r["code"]) == cat]
-        worst = min(({"red": 0, "yellow": 0.5, "green": 1.0, "unknown": 0.6}.get(r["level"], 0.6)
-                     for r in cat_risks), default=1.0)
+        confirmed_risks = [r for r in cat_risks if r["level"] != "unknown"]
+        worst = min(({"red": 0, "yellow": 0.5, "green": 1.0}[r["level"]]
+                     for r in confirmed_risks), default=1.0)
         parts[cat] = round(worst * 100, 1)
     score = round(sum(parts[c] * WEIGHTS[c] for c in parts), 1)
-    return score, {"parts": parts, "risks": risks}
+    unknown_count = sum(r["level"] == "unknown" for r in risks)
+    known_count = len(risks) - unknown_count
+    completeness = round(known_count / len(risks) * 100, 1) if risks else 100.0
+    return score, {
+        "parts": parts,
+        "risks": risks,
+        "assessment_completeness": {
+            "known_count": known_count,
+            "unknown_count": unknown_count,
+            "percent": completeness,
+        },
+    }

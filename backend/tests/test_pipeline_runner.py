@@ -9,9 +9,17 @@ from app.tasks.pipeline_runner import (
     _calibrate_with_a4,
     _find_obstacles,
     _pixel_ray,
+    _step_measurements,
     _triangulate,
     _upsert_report,
 )
+
+
+def test_no_detected_step_remains_confirmed_zero_threshold():
+    assert _step_measurements(0.0) == {
+        "threshold_m": 0.0,
+        "stairs_exist": False,
+    }
 
 
 def _cam(center, look_at, focal=600.0, w=640, h=480):
