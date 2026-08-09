@@ -1,6 +1,7 @@
 .worktrees/
 backend/.venv/
 backend/data/
+task4_local/
 backend/.env
 backend/.env.*
 !backend/.env.example

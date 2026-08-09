@@ -85,6 +85,8 @@ def run_pipeline(scan_id: int) -> None:
         if len(points) < 100:
             _fail(db, scan, "重建点云过少，评估失败")
             return
+        # 相机外参仍处于原始 SFM 坐标系；语义 mask 投影必须使用未缩放点云。
+        semantic_points = points.copy()
 
         _stage(db, scan, "calibrating", 65, "尺度标定中")
         from pipeline.calibrator import scale_from_door_prior
@@ -99,7 +101,7 @@ def run_pipeline(scan_id: int) -> None:
         points = points * scale
 
         _stage(db, scan, "segmenting", 75, "语义分割中")
-        obstacles = _find_obstacles(imgs, cams)
+        semantic_result = _find_obstacles(imgs, cams, semantic_points)
 
         _stage(db, scan, "analyzing", 85, "几何分析中")
         from pipeline.geometry import (fit_ground_plane, measure_door_width,
@@ -115,7 +117,10 @@ def run_pipeline(scan_id: int) -> None:
             "stairs_exist": step >= 0.3,
             "slope": slope,
             "uneven_m": _unevenness(points, inliers),
-            "obstacles_in_passage": obstacles,
+            # 2D 检测不是通道风险。只有后续空间判定确认位于通道内时才填入此字段。
+            "obstacles_in_passage": semantic_result["obstacles_in_passage"],
+            "detected_objects": semantic_result["detected_objects"],
+            "semantic_point_counts": semantic_result["semantic_point_counts"],
             "bathroom_door_m": None,
         }
 
@@ -300,12 +305,74 @@ def _unevenness(points, inliers) -> float | None:
     return float(np.std(floor[:, 2]))
 
 
-def _find_obstacles(imgs, cams) -> list[dict]:
-    """GroundingDINO 检测常见杂物/家具（每 10 帧抽 1 帧），按标签统计计数。"""
-    from pipeline.semantic import detect_objects
-    seen = {}
-    for img, cam in zip(imgs[::10], cams[::10]):
-        for det in detect_objects(img):
-            seen.setdefault(det["label"], 0)
-            seen[det["label"]] += 1
-    return [{"label": k, "count": v} for k, v in seen.items() if v > 0]
+def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 10) -> dict:
+    """生成可供空间判断使用的语义结果，不把普通家具检测直接判为通道风险。
+
+    每个采样帧真实执行 GroundingDINO bbox → SAM mask。若提供未缩放的 SFM 点云，
+    mask 会按相机 ``K/R/t`` 投影并跨帧投票；报告只保存汇总，不保存庞大 mask/点索引。
+    """
+    from collections import Counter, defaultdict
+
+    from pipeline.semantic import analyze_image, merge_votes, project_mask_to_points
+
+    if frame_stride <= 0:
+        raise ValueError("frame_stride must be positive")
+    summaries = {}
+    votes = defaultdict(lambda: defaultdict(int))
+    sampled = list(zip(imgs[::frame_stride], cams[::frame_stride]))
+    for frame_index, (img, cam) in enumerate(sampled):
+        for detection in analyze_image(img):
+            label = detection["label"]
+            summary = summaries.setdefault(
+                label,
+                {
+                    "label": label,
+                    "count": 0,
+                    "segmented_count": 0,
+                    "frames": set(),
+                    "mask_area_ratio_sum": 0.0,
+                },
+            )
+            summary["count"] += 1
+            summary["frames"].add(frame_index)
+            if not detection.get("mask_valid"):
+                continue
+            summary["segmented_count"] += 1
+            summary["mask_area_ratio_sum"] += float(detection["mask_area_ratio"])
+            if points is None:
+                continue
+            hits = project_mask_to_points(
+                points,
+                detection["mask"],
+                cam["K"],
+                cam["R"],
+                cam["t"],
+            )
+            for point_id in hits:
+                votes[point_id][label] += 1
+
+    point_labels = merge_votes(votes)
+    point_counts = Counter(point_labels.values())
+    objects = []
+    for label, summary in sorted(summaries.items()):
+        segmented_count = summary["segmented_count"]
+        objects.append(
+            {
+                "label": label,
+                "count": summary["count"],
+                "segmented_count": segmented_count,
+                "frame_count": len(summary["frames"]),
+                "mean_mask_area_ratio": round(
+                    summary["mask_area_ratio_sum"] / segmented_count, 6
+                )
+                if segmented_count
+                else 0.0,
+                "projected_point_count": int(point_counts.get(label, 0)),
+            }
+        )
+    return {
+        "detected_objects": objects,
+        "semantic_point_counts": dict(sorted(point_counts.items())),
+        # 独立 2D 图像无法证明物体位于真实通道；后续端到端空间判定负责填充。
+        "obstacles_in_passage": [],
+    }
