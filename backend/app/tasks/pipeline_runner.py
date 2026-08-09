@@ -23,6 +23,14 @@ STAGES = [
 ]
 
 
+def _step_measurements(step: float) -> dict:
+    """保留“确认未检测到门槛”的 0.0；台阶高度不再重复作为门槛评分。"""
+    return {
+        "threshold_m": step if 0.0 <= step < 0.3 else None,
+        "stairs_exist": step >= 0.3,
+    }
+
+
 def run_pipeline(scan_id: int) -> None:
     s = get_settings()
     db = SessionLocal()
@@ -113,8 +121,7 @@ def run_pipeline(scan_id: int) -> None:
         measures = {
             "door_width_m": door_w,
             "passage_width_m": _passage_width(points, inliers),
-            "threshold_m": step if 0 < step < 0.3 else None,
-            "stairs_exist": step >= 0.3,
+            **_step_measurements(step),
             "slope": slope,
             "uneven_m": _unevenness(points, inliers),
             # 2D 检测不是通道风险。只有后续空间判定确认位于通道内时才填入此字段。
@@ -129,6 +136,7 @@ def run_pipeline(scan_id: int) -> None:
         from pipeline.rules import compute_score, evaluate_risks
         risks = evaluate_risks(measures)
         score, detail = compute_score(measures)
+        measures["assessment_completeness"] = detail["assessment_completeness"]
         advice = [r["advice"] for r in risks if r["level"] in ("red", "yellow")]
 
         _stage(db, scan, "reporting", 95, "生成报告中")
