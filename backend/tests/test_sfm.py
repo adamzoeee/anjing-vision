@@ -74,25 +74,30 @@ class _FakeRecon:
 
 def _patch_pycolmap(monkeypatch, return_value):
     import pycolmap
-    monkeypatch.setattr(pycolmap, "extract_features", lambda *a, **k: None)
+    captured = {}
+    monkeypatch.setattr(pycolmap, "extract_features", lambda *a, **k: captured.update(k))
     monkeypatch.setattr(pycolmap, "match_exhaustive", lambda *a, **k: None)
     monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **k: return_value)
+    return captured
 
 
 def _make_image_dir(tmp_path):
     img_dir = tmp_path / "imgs"
     img_dir.mkdir()
-    (img_dir / "a.jpg").write_bytes(b"x")
+    import cv2
+    cv2.imwrite(str(img_dir / "a.jpg"), np.zeros((24, 32, 3), dtype=np.uint8))
     return img_dir
 
 
 def test_run_sfm_accepts_dict_return(tmp_path, monkeypatch):
     """pycolmap 4.x dict 返回形态：{model_index: Reconstruction}，取注册帧最多的主模型。"""
-    _patch_pycolmap(monkeypatch, {0: _FakeRecon(2), 1: _FakeRecon(1)})
+    captured = _patch_pycolmap(monkeypatch, {0: _FakeRecon(2), 1: _FakeRecon(1)})
     out = run_sfm(_make_image_dir(tmp_path), tmp_path / "work")
     assert len(out["cameras"]) == 2  # 取 2 帧的主模型而非 1 帧的次模型
     assert out["cameras"][0]["name"] == "a0.jpg"
     assert out["points3D"].shape == (0, 3)
+    import pycolmap
+    assert captured["camera_mode"] == pycolmap.CameraMode.SINGLE
 
 
 def test_run_sfm_accepts_list_return(tmp_path, monkeypatch):

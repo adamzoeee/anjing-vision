@@ -1,5 +1,5 @@
 import numpy as np
-from pipeline.calibrator import compute_scale_from_pixel, scale_from_door_prior
+from pipeline.calibrator import compute_scale_from_pixel, estimate_scale_from_references, scale_from_door_prior
 
 
 def test_compute_scale_from_pixel():
@@ -29,3 +29,36 @@ def test_compute_scale_invalid_inputs():
         compute_scale_from_pixel(pixel_len=0, physical_len=0.297, distance=2.0, focal=600.0)
     with pytest.raises(ValueError):
         scale_from_door_prior(door_height_units=0)
+
+
+def test_known_object_references_produce_consistent_scale():
+    rng = np.random.default_rng(7)
+    door = rng.uniform([-0.5, -0.02, 0], [0.5, 0.02, 2.0], (300, 3))
+    bed = rng.uniform([2, 0, 0], [4, 1.5, 0.5], (400, 3))
+    scale, details = estimate_scale_from_references(
+        np.concatenate([door, bed]),
+        {"门": list(range(300)), "床": list(range(300, 700))},
+        [
+            {"object_type": "door", "dimension": "height", "meters": 2.0},
+            {"object_type": "bed", "dimension": "length", "meters": 2.0},
+        ],
+    )
+    assert scale is not None
+    assert 0.9 < scale < 1.2
+    assert details["used_count"] == 2
+
+
+def test_known_object_references_reject_disagreement():
+    rng = np.random.default_rng(8)
+    door = rng.uniform([-0.5, 0, 0], [0.5, 0.02, 2], (300, 3))
+    bed = rng.uniform([2, 0, 0], [4, 1.5, 0.5], (400, 3))
+    scale, details = estimate_scale_from_references(
+        np.concatenate([door, bed]),
+        {"门": list(range(300)), "床": list(range(300, 700))},
+        [
+            {"object_type": "door", "dimension": "height", "meters": 2.0},
+            {"object_type": "bed", "dimension": "length", "meters": 4.0},
+        ],
+    )
+    assert scale is None
+    assert "不一致" in details["reason"]
