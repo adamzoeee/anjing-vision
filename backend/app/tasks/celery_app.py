@@ -9,3 +9,7 @@ celery.conf.update(
     broker_connection_timeout=2,
     broker_connection_retry_on_startup=False,
 )
+
+# 注册任务模块，否则 worker 收到任务会报 unregistered task
+from . import pipeline_tasks  # noqa: E402,F401
+
