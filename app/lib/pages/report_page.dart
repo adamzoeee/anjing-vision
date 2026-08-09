@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/models.dart';
 import '../widgets/risk_card.dart';
 import '../widgets/score_gauge.dart';
+import 'preview_launcher.dart';
 
 NetworkImage authenticatedReportImage(ApiClient api, String path) => NetworkImage(
       '${api.dio.options.baseUrl}$path',
@@ -79,15 +81,33 @@ class _ReportPageState extends State<ReportPage> {
                       ...r.advice.map((a) =>
                           ListTile(leading: const Icon(Icons.build), title: Text(a))),
                     const SizedBox(height: 16),
-                    Text('3D 场景预览（B8 实现）',
+                    Text('3D 场景预览',
                         style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 8),
                     Container(
                       height: 200,
+                      width: double.infinity,
                       color: Colors.black,
                       alignment: Alignment.center,
-                      child: const Text('3D 预览加载中…',
-                          style: TextStyle(color: Colors.white54)),
+                      child: r.previewPly == null
+                          ? const Text('暂无 3D 预览',
+                              style: TextStyle(color: Colors.white54))
+                          : kIsWeb
+                              ? ElevatedButton.icon(
+                                  onPressed: () {
+                                    final ply = Uri.encodeComponent(
+                                        '/static/${r.scanId}/preview/'
+                                        '${r.previewPly}');
+                                    final token = Uri.encodeComponent(
+                                        api.token ?? '');
+                                    openPreview('${api.dio.options.baseUrl}'
+                                        '/preview/?ply=$ply&token=$token');
+                                  },
+                                  icon: const Icon(Icons.view_in_ar),
+                                  label: const Text('打开 3D 预览'),
+                                )
+                              : const Text('3D 预览请在网页版查看',
+                                  style: TextStyle(color: Colors.white54)),
                     ),
                     const SizedBox(height: 16),
                     Text('标注视图', style: Theme.of(context).textTheme.titleMedium),

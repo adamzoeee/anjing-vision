@@ -269,14 +269,16 @@ document.getElementById('size').addEventListener('input', function (e) { pointSi
 /* ================= 加载流程 ================= */
 var params = new URLSearchParams(location.search);
 var plyUrl = params.get('ply');
+var token = params.get('token') || '';
 var name = plyUrl ? plyUrl.split('/').pop() : '';
+var fetchOpts = token ? { headers: { 'Authorization': 'Bearer ' + token } } : {};
 if (!gl) {
   // 已在上方提示
 } else if (!plyUrl) {
   setStatus('错误：缺少 ?ply= 参数\n示例：?ply=/static/xxx/scene.ply', true);
 } else {
   setStatus('正在加载 ' + name + ' …');
-  fetch(plyUrl).then(function (r) {
+  fetch(plyUrl, fetchOpts).then(function (r) {
     if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 404 ? '（文件不存在）' : ''));
     return r.arrayBuffer();
   }).then(function (buf) {
