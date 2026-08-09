@@ -23,8 +23,7 @@ class CapturePage extends StatelessWidget {
     if (video == null) return;
     if (!context.mounted) return;
     Navigator.push(context, MaterialPageRoute(builder: (_) =>
-        UploadPage(scan: scan, filePath: video.path,
-            filename: video.name.isEmpty ? 'clip.mp4' : video.name)));
+        UploadPage(scan: scan, file: video)));
   }
 
   @override

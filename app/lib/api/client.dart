@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'models.dart';
 
@@ -12,7 +13,8 @@ class ApiClient {
           dio ??
           Dio(
             BaseOptions(
-              baseUrl: baseUrl ?? 'http://10.0.2.2:8000',
+              // web 端无模拟器概念，直连本机；移动端默认模拟器宿主机地址
+              baseUrl: baseUrl ?? (kIsWeb ? 'http://localhost:8000' : 'http://10.0.2.2:8000'),
               connectTimeout: const Duration(seconds: 15),
               receiveTimeout: const Duration(seconds: 60),
             ),
@@ -31,6 +33,8 @@ class ApiClient {
   }
 
   void setToken(String? t) => _token = t;
+
+  String? get token => _token;
 
   Map<String, String> get authorizationHeaders => _token == null
       ? const {}
@@ -94,8 +98,19 @@ class ApiClient {
     (json) => Scan.fromJson(json),
   );
 
-  Future<void> uploadVideo(int scanId, String filePath, String filename) async {
-    // 流式上传（不整文件读入内存）
+  Future<void> uploadVideo(int scanId, List<int> fileBytes, String filename) async {
+    // web 端无 dart:io：MultipartFile.fromBytes 为纯 Dart 实现
+    await dio.post(
+      '/api/scans/$scanId/upload',
+      data: FormData.fromMap({
+        'files': MultipartFile.fromBytes(fileBytes, filename: filename),
+      }),
+      options: Options(contentType: 'multipart/form-data'),
+    );
+  }
+
+  Future<void> uploadVideoFile(int scanId, String filePath, String filename) async {
+    // 移动端：流式上传（不整文件读入内存），避免大视频 OOM
     await dio.post(
       '/api/scans/$scanId/upload',
       data: FormData.fromMap({
