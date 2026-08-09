@@ -1,11 +1,101 @@
 """3DGS 训练：gsplat 1.5.x 光栅化 + Adam 优化，输入 SFM 相机位姿与图片。"""
+import math
+import importlib.util
+import os
+import sys
+from pathlib import Path
+
 import numpy as np
 import torch
 import torch.nn.functional as F
+from scipy.spatial import cKDTree
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-NUM_ITER = 7000          # RTX 5080 上约 5~15 分钟
+NUM_ITER = 7000          # 生产默认；实际耗时取决于帧数、分辨率、GPU 与 densification
 SH_DEGREE = 3
+SH_C0 = 0.28209479177387814
+_DLL_HANDLES: list[object] = []
+
+
+def _reuse_cached_gsplat_extension() -> None:
+    """Windows 下优先复用已编译的 gsplat 扩展，避免每次任务重复 JIT。"""
+    if os.name != "nt":
+        return
+    loaded_backend = sys.modules.get("gsplat.cuda._backend")
+    if loaded_backend is not None and getattr(loaded_backend, "_C", None) is not None:
+        return
+    cache_root = os.getenv("TORCH_EXTENSIONS_DIR")
+    if not cache_root:
+        return
+    extension = Path(cache_root) / "gsplat_cuda" / "gsplat_cuda.pyd"
+    if not extension.is_file():
+        return
+    cuda_home = os.getenv("CUDA_HOME")
+    if cuda_home and hasattr(os, "add_dll_directory"):
+        _DLL_HANDLES.append(os.add_dll_directory(str(Path(cuda_home) / "bin")))
+    spec = importlib.util.spec_from_file_location("gsplat_cuda", extension)
+    if spec is None or spec.loader is None:
+        return
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    import gsplat
+    gsplat.csrc = module
+
+
+def ensure_3dgs_runtime() -> None:
+    """在读取全部训练图之前验证 GPU 与 gsplat 扩展，给出可操作的错误。"""
+    if DEVICE != "cuda":
+        raise RuntimeError("3DGS 训练需要 NVIDIA CUDA GPU，当前 PyTorch 未检测到 CUDA")
+    # Windows 的 JIT 扩展需要能找到当前虚拟环境中的 ninja 和 CUDA nvcc。
+    # 这里仅补齐当前进程 PATH，不写入系统环境，也不依赖任何个人绝对路径。
+    path_entries = [str(Path(sys.executable).resolve().parent)]
+    cuda_home = os.getenv("CUDA_HOME")
+    if cuda_home:
+        path_entries.append(str(Path(cuda_home) / "bin"))
+    current_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = os.pathsep.join(path_entries + [current_path])
+    try:
+        _reuse_cached_gsplat_extension()
+        from gsplat.cuda._backend import _C
+        if _C is None:
+            raise ImportError("gsplat CUDA extension was not loaded")
+    except (AttributeError, ImportError, RuntimeError) as exc:
+        raise RuntimeError(
+            "gsplat CUDA 扩展不可用；请安装与 PyTorch 匹配的 CUDA Toolkit、"
+            "Visual C++ Build Tools，并为中文用户目录配置纯英文 TEMP/TORCH_EXTENSIONS_DIR"
+        ) from exc
+
+
+def normalize_scene(cameras: list[dict], points: np.ndarray) -> tuple[list[dict], np.ndarray, dict]:
+    """把任意 SFM 尺度归一化到稳定训练范围，并返回可逆变换。"""
+    centers = np.stack([np.asarray(c["center"], dtype=np.float64) for c in cameras])
+    origin = np.median(centers, axis=0)
+    radius = float(np.percentile(np.linalg.norm(centers - origin, axis=1), 90))
+    if not np.isfinite(radius) or radius < 1e-6:
+        radius = float(np.percentile(np.linalg.norm(points - np.median(points, axis=0), axis=1), 90))
+    if not np.isfinite(radius) or radius < 1e-6:
+        raise ValueError("SFM 场景尺度退化，无法训练")
+    scale = 1.0 / radius
+    normalized_points = (np.asarray(points, dtype=np.float64) - origin) * scale
+    normalized_cameras = []
+    for camera in cameras:
+        item = dict(camera)
+        R = np.asarray(camera["R"], dtype=np.float64)
+        t = np.asarray(camera["t"], dtype=np.float64)
+        item["t"] = scale * (R @ origin + t)
+        item["center"] = (np.asarray(camera["center"], dtype=np.float64) - origin) * scale
+        normalized_cameras.append(item)
+    return normalized_cameras, normalized_points, {"origin": origin, "scale": scale}
+
+
+def denormalize_gaussians(gaussians: dict, transform: dict) -> dict:
+    """将训练结果恢复到原始 SFM 坐标系。"""
+    result = dict(gaussians)
+    scale = float(transform["scale"])
+    origin = torch.as_tensor(transform["origin"], dtype=result["means"].dtype)
+    result["means"] = result["means"] / scale + origin
+    result["scales"] = result["scales"] - math.log(scale)
+    return result
 
 
 def prepare_tensors(cameras: list[dict], images: list[np.ndarray]) -> dict:
@@ -33,41 +123,105 @@ def prepare_tensors(cameras: list[dict], images: list[np.ndarray]) -> dict:
     }
 
 
-def train_gaussians(gt: dict, init_points: np.ndarray | None = None,
-                    num_iter: int = NUM_ITER) -> dict:
+def train_gaussians(
+    gt: dict,
+    init_points: np.ndarray | None = None,
+    init_colors: np.ndarray | None = None,
+    num_iter: int = NUM_ITER,
+) -> dict:
     """训练高斯场，返回 {means, scales, quats, opacities, sh0, sh_rest}（CPU 张量）。
 
     scales 返回 log 尺度（与 exporter 的 exp() 约定一致），opacities 返回 (N,)。
     """
-    from gsplat import rasterization
+    ensure_3dgs_runtime()
+    from gsplat import DefaultStrategy, rasterization
 
     n = len(gt["imgs"])
     if init_points is None or len(init_points) < 100:
         init_points = np.random.randn(5000, 3).astype(np.float32)
+        init_colors = np.full((len(init_points), 3), 0.5, dtype=np.float32)
+    elif init_colors is None or len(init_colors) != len(init_points):
+        init_colors = np.full((len(init_points), 3), 0.5, dtype=np.float32)
+    init_colors = np.clip(np.asarray(init_colors, dtype=np.float32), 0.0, 1.0)
     means = torch.nn.Parameter(torch.from_numpy(init_points.astype(np.float32)).to(DEVICE))
-    scales = torch.nn.Parameter(torch.log(torch.full((len(means), 3), 0.02, device=DEVICE)))
-    quats = torch.nn.Parameter(torch.randn(len(means), 4, device=DEVICE))
-    quats.data = quats.data / quats.data.norm(dim=1, keepdim=True)
-    opacities = torch.nn.Parameter(torch.full((len(means),), 1.0, device=DEVICE))
-    sh0 = torch.nn.Parameter(torch.zeros(len(means), 1, 3, device=DEVICE))
+    distances, _ = cKDTree(init_points).query(init_points, k=min(4, len(init_points)))
+    nearest = np.maximum(np.mean(distances[:, 1:], axis=1), 1e-4)
+    scales = torch.nn.Parameter(
+        torch.log(torch.from_numpy(nearest.astype(np.float32))).to(DEVICE)[:, None].repeat(1, 3)
+    )
+    quats = torch.nn.Parameter(torch.zeros(len(means), 4, device=DEVICE))
+    quats.data[:, 0] = 1.0
+    opacities = torch.nn.Parameter(torch.full((len(means),), torch.logit(torch.tensor(0.1)).item(), device=DEVICE))
+    rgb = torch.from_numpy(init_colors).to(DEVICE)
+    sh0 = torch.nn.Parameter(((rgb - 0.5) / SH_C0)[:, None, :])
     sh_rest = torch.nn.Parameter(torch.zeros(len(means), (SH_DEGREE + 1) ** 2 - 1, 3, device=DEVICE))
-    params = [means, scales, quats, opacities, sh0, sh_rest]
-    opt = torch.optim.Adam(params, lr=1e-2)
+    params = torch.nn.ParameterDict({
+        "means": means,
+        "scales": scales,
+        "quats": quats,
+        "opacities": opacities,
+        "sh0": sh0,
+        "sh_rest": sh_rest,
+    })
+    learning_rates = {
+        "means": 1.6e-4,
+        "scales": 5e-3,
+        "quats": 1e-3,
+        "opacities": 5e-2,
+        "sh0": 2.5e-3,
+        "sh_rest": 2.5e-3 / 20,
+    }
+    optimizers = {
+        name: torch.optim.Adam(
+            [{"params": [parameter], "lr": learning_rates[name], "name": name}],
+            eps=1e-15,
+        )
+        for name, parameter in params.items()
+    }
+    means_decay = 0.01 ** (1.0 / max(num_iter, 1))
+    means_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        optimizers["means"], gamma=means_decay
+    )
+    strategy = None
+    strategy_state = None
+    if num_iter > 600:
+        strategy = DefaultStrategy(refine_stop_iter=max(601, num_iter - 100))
+        strategy.check_sanity(params, optimizers)
+        strategy_state = strategy.initialize_state(scene_scale=1.0)
 
     H, W = gt["imgs"].shape[1], gt["imgs"].shape[2]
     for step in range(num_iter):
         idx = torch.randint(0, n, (1,), device=DEVICE)
         K, c2w, img = gt["K"][idx], gt["c2w"][idx], gt["imgs"][idx]
-        colors = torch.cat([sh0, sh_rest], dim=1)
+        colors = torch.cat([params["sh0"], params["sh_rest"]], dim=1)
         viewmats = torch.linalg.inv(c2w)
-        render, alpha, _ = rasterization(
-            means, quats, torch.exp(scales), opacities, colors,
-            viewmats, K, W, H, sh_degree=SH_DEGREE, packed=False,
+        render, _alpha, info = rasterization(
+            params["means"], params["quats"], torch.exp(params["scales"]),
+            torch.sigmoid(params["opacities"]), colors,
+            viewmats, K, W, H, sh_degree=min(step // 1000, SH_DEGREE), packed=False,
         )
-        loss = F.mse_loss(render, img) + 0.01 * (1 - alpha).mean()
-        opt.zero_grad()
+        if strategy is not None:
+            strategy.step_pre_backward(params, optimizers, strategy_state, step, info)
+        loss = F.l1_loss(render, img)
+        for optimizer in optimizers.values():
+            optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        opt.step()
-        means.data.clamp_(-5, 5)
-    return {k: v.detach().cpu() for k, v in
-            zip(["means", "scales", "quats", "opacities", "sh0", "sh_rest"], params)}
+        for optimizer in optimizers.values():
+            optimizer.step()
+        means_scheduler.step()
+        if strategy is not None:
+            strategy.step_post_backward(
+                params, optimizers, strategy_state, step, info, packed=False
+            )
+        if not torch.isfinite(loss):
+            raise RuntimeError("3DGS 训练数值发散")
+    result = {name: value.detach().cpu() for name, value in params.items()}
+    result["opacity_logits"] = True
+    result["training_metrics"] = {
+        "final_loss": float(loss.detach().cpu()),
+        "iterations": num_iter,
+        "gaussian_count": len(result["means"]),
+        "densification": strategy is not None,
+    }
+    torch.cuda.empty_cache()
+    return result

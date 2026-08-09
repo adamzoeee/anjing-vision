@@ -58,6 +58,7 @@ class Scan(Base):
     message = Column(String(200), default="")
     capture_type = Column(String(20), default="video")  # video | photos
     media_path = Column(String(300), default="")
+    reference_measurements = Column(JSON, default=list, nullable=False, server_default=text("'[]'"))
     created_at = Column(DateTime(timezone=True), default=_now)
     project = relationship("Project", back_populates="scans")
     report = relationship(

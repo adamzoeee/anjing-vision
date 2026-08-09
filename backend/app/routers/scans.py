@@ -7,7 +7,7 @@ from ..config import get_settings
 from ..db import get_db
 from ..deps import get_org_scope
 from ..models import Scan
-from ..schemas import ScanOut
+from ..schemas import ReferenceMeasurementsIn, ScanOut
 from ..storage import (
     MediaTooLargeError,
     delete_media,
@@ -89,3 +89,20 @@ def get_scan(
     org_id: int = Depends(get_org_scope),
 ):
     return _own_scan(scan_id, db, org_id)
+
+
+@router.put("/{scan_id}/references", response_model=ScanOut)
+def set_reference_measurements(
+    scan_id: int,
+    data: ReferenceMeasurementsIn,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+):
+    """在上传前保存用户提供的真实尺寸，供统一三维尺度标定。"""
+    scan = _own_scan(scan_id, db, org_id)
+    if scan.status not in ("uploading", "failed"):
+        raise HTTPException(409, "扫描已经开始处理，不能修改参考尺寸")
+    scan.reference_measurements = [item.model_dump() for item in data.measurements]
+    db.commit()
+    db.refresh(scan)
+    return scan
