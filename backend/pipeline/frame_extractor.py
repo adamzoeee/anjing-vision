@@ -47,7 +47,8 @@ def extract_frames(video: Path, out_dir: Path, target_count: int = TARGET_COUNT)
     fps = max(target_count / duration, 0.5)
     subprocess.run([
         _ffmpeg_bin(), "-y", "-i", str(video),
-        "-vf", f"fps={fps},scale=1600:-2",
+        # 只缩小不放大：低分辨率输入放大后插值模糊，会误伤清晰度过滤
+        "-vf", f"fps={fps},scale='min(1600,iw)':-2",
         "-q:v", "2", str(out_dir / "frame_%05d.jpg"),
     ], check=True, capture_output=True)
     return sorted(out_dir.glob("frame_*.jpg"))

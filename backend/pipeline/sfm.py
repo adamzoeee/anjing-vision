@@ -44,12 +44,38 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
 
     import pycolmap
 
-    pycolmap.extract_features(db_path, str(image_dir))
+    # 限制 SIFT 线程与输入尺寸：Windows 上默认 24 线程提取 1080p 大图
+    # 易触发 pycolmap C++ 访问冲突（0xc0000005）拖垮整个 solo worker
+    options = pycolmap.FeatureExtractionOptions()
+    options.num_threads = 8
+    options.max_image_size = 1600
+    # 指定相机内参：视频帧无 EXIF 焦距，默认 1.2×max(w,h) 对手机广角视频偏长焦，
+    # 几何验证不会产生 CALIBRATED 对，初始图像对永远找不到（No good initial pair）。
+    # 按广角先验取 0.75×max(w,h)，后续 A4 标定/门高先验会修正尺度。
+    sample = next(iter(image_dir.glob("*.jpg")))
+    import cv2
+    probe = cv2.imread(str(sample))
+    reader = None
+    if probe is not None:
+        h, w = probe.shape[:2]
+        reader = pycolmap.ImageReaderOptions()
+        reader.camera_model = "SIMPLE_RADIAL"
+        reader.camera_params = f"{0.75 * max(w, h):.1f},{w / 2:.1f},{h / 2:.1f},0"
+    if reader is None:
+        # 无法读取参考帧（异常输入/测试环境）：回退默认，由 pycolmap 自行估计内参
+        pycolmap.extract_features(db_path, str(image_dir), extraction_options=options)
+    else:
+        pycolmap.extract_features(
+            db_path, str(image_dir),
+            reader_options=reader, extraction_options=options,
+        )
     pycolmap.match_exhaustive(db_path)
     maps = pycolmap.incremental_mapping(db_path, str(image_dir), str(model_path))
-    # 4.x 返回 dict（失败时空 dict）；兼容旧版本返回列表/元组或 None 的情况
+    # 4.x 返回 {model_index: Reconstruction}（失败为空 dict）；
+    # 多模型时取注册帧最多的主模型；兼容旧版本返回列表/元组或 None
     if isinstance(maps, dict):
-        recon = maps.get("reconstruction")
+        recons = [m for m in maps.values() if m is not None]
+        recon = max(recons, key=lambda r: len(r.images)) if recons else None
     elif isinstance(maps, (list, tuple)):
         recon = maps[0] if maps else None
     else:
@@ -60,13 +86,14 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
     for img_id in recon.images:
         img = recon.images[img_id]
         cam = recon.cameras[img.camera_id]
-        pose = img.cam_from_world  # pycolmap 4.x: Rigid3d（世界→相机）
-        R = np.asarray(pose.rotation().matrix(), dtype=np.float64)  # 3x3
-        t = np.asarray(pose.translation(), dtype=np.float64).reshape(3)
+        pose = img.cam_from_world()  # pycolmap 4.x: 方法，返回 Rigid3d（世界→相机）
+        R = np.asarray(pose.rotation.matrix(), dtype=np.float64)  # 3x3
+        t = np.asarray(pose.translation, dtype=np.float64).reshape(3)
         c = -R.T @ t
-        fx = cam.focal_length_x()
-        fy = cam.focal_length_y()
-        cx, cy = cam.principal_point_x(), cam.principal_point_y()
+        fx = cam.focal_length_x
+        fy = cam.focal_length_y
+        cx = cam.principal_point_x
+        cy = cam.principal_point_y
         K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1.0]])
         cameras.append({"name": img.name, "R": R, "t": t, "K": K, "center": c})
     for pid in recon.points3D:

@@ -164,6 +164,7 @@ def run_pipeline(scan_id: int) -> None:
             scan_id,
             type(e).__name__,
         )
+        logger.exception("pipeline_failed traceback scan_id=%s", scan_id)
         scan = db.get(Scan, scan_id)
         if scan:
             _fail(db, scan, "管道处理失败，请稍后重试")

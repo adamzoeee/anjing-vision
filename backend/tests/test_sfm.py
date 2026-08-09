@@ -36,6 +36,7 @@ def test_run_sfm_accepts_minimal_inputs(tmp_path):
 
 
 class _FakePose:
+    @property
     def rotation(self):
         class _R:
             @staticmethod
@@ -43,6 +44,7 @@ class _FakePose:
                 return np.eye(3)
         return _R()
 
+    @property
     def translation(self):
         return np.zeros(3)
 
@@ -51,26 +53,21 @@ class _FakeImage:
     def __init__(self, name):
         self.name = name
         self.camera_id = 0
-        self.cam_from_world = _FakePose()
+
+    def cam_from_world(self):
+        return _FakePose()
 
 
 class _FakeCam:
-    def focal_length_x(self):
-        return 500.0
-
-    def focal_length_y(self):
-        return 500.0
-
-    def principal_point_x(self):
-        return 320.0
-
-    def principal_point_y(self):
-        return 240.0
+    focal_length_x = 500.0
+    focal_length_y = 500.0
+    principal_point_x = 320.0
+    principal_point_y = 240.0
 
 
 class _FakeRecon:
-    def __init__(self):
-        self.images = {0: _FakeImage("a.jpg")}
+    def __init__(self, n_images=1):
+        self.images = {i: _FakeImage(f"a{i}.jpg") for i in range(n_images)}
         self.cameras = {0: _FakeCam()}
         self.points3D = {}
 
@@ -90,11 +87,11 @@ def _make_image_dir(tmp_path):
 
 
 def test_run_sfm_accepts_dict_return(tmp_path, monkeypatch):
-    """pycolmap 4.x dict 返回形态（成功路径）。"""
-    _patch_pycolmap(monkeypatch, {"reconstruction": _FakeRecon()})
+    """pycolmap 4.x dict 返回形态：{model_index: Reconstruction}，取注册帧最多的主模型。"""
+    _patch_pycolmap(monkeypatch, {0: _FakeRecon(2), 1: _FakeRecon(1)})
     out = run_sfm(_make_image_dir(tmp_path), tmp_path / "work")
-    assert len(out["cameras"]) == 1
-    assert out["cameras"][0]["name"] == "a.jpg"
+    assert len(out["cameras"]) == 2  # 取 2 帧的主模型而非 1 帧的次模型
+    assert out["cameras"][0]["name"] == "a0.jpg"
     assert out["points3D"].shape == (0, 3)
 
 
