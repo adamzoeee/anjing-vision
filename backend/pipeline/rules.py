@@ -83,7 +83,7 @@ def compute_score(measures: dict) -> tuple[float, dict]:
     parts = {}
     for cat, w in WEIGHTS.items():
         cat_risks = [r for r in risks if cat_map.get(r["code"]) == cat]
-        worst = max(({"red": 0, "yellow": 0.5, "green": 1.0, "unknown": 0.6}.get(r["level"], 0.6)
+        worst = min(({"red": 0, "yellow": 0.5, "green": 1.0, "unknown": 0.6}.get(r["level"], 0.6)
                      for r in cat_risks), default=1.0)
         parts[cat] = round(worst * 100, 1)
     score = round(sum(parts[c] * WEIGHTS[c] for c in parts), 1)
