@@ -148,6 +148,34 @@ void main() {
     expect(find.text('暂无标注图'), findsOneWidget);
   });
 
+  testWidgets('未知风险状态使用帮助图标而不是正常图标', (tester) async {
+    adapter.onGet(
+      '/api/reports/scans/12',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 84,
+        'risks': [
+          {
+            'code': 'obstacle',
+            'name': '通道障碍物',
+            'level': 'unknown',
+            'measure': null,
+          },
+        ],
+        'advice': [],
+        'images': [],
+        'calibrated': 1,
+      }),
+    );
+
+    await tester.pumpWidget(reportApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('未知'), findsOneWidget);
+    expect(find.byIcon(Icons.help_outline), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle), findsNothing);
+  });
+
   test('标注图片使用后端资源地址并携带认证请求头', () {
     api.setToken('image-token');
     final provider = authenticatedReportImage(api, '/static/12/view_0.png');

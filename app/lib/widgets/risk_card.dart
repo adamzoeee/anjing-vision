@@ -24,7 +24,8 @@ class RiskCard extends StatelessWidget {
         leading: Icon(switch (risk.level) {
           'red' => Icons.dangerous,
           'yellow' => Icons.warning_amber,
-          _ => Icons.check_circle,
+          'green' => Icons.check_circle,
+          _ => Icons.help_outline,
         }, color: color),
         title: Text(risk.name),
         subtitle: Text(risk.measure?.toString() ?? ''),
