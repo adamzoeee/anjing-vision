@@ -67,6 +67,9 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
     else:
         pycolmap.extract_features(
             db_path, str(image_dir),
+            # 同一视频的所有帧来自同一个手机镜头，必须共享相机内参；AUTO 会在
+            # 无 EXIF 的抽帧图片上为每帧创建独立 Camera，导致位姿恢复严重不稳。
+            camera_mode=pycolmap.CameraMode.SINGLE,
             reader_options=reader, extraction_options=options,
         )
     pycolmap.match_exhaustive(db_path)
@@ -82,7 +85,7 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
         recon = maps
     if recon is None:
         raise RuntimeError("SFM 失败：无法恢复相机位姿（图片过少或纹理不足）")
-    cameras, points = [], []
+    cameras, points, colors, errors, track_lengths = [], [], [], [], []
     for img_id in recon.images:
         img = recon.images[img_id]
         cam = recon.cameras[img.camera_id]
@@ -97,9 +100,23 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
         K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1.0]])
         cameras.append({"name": img.name, "R": R, "t": t, "K": K, "center": c})
     for pid in recon.points3D:
-        points.append(recon.points3D[pid].xyz)
+        point = recon.points3D[pid]
+        points.append(point.xyz)
+        colors.append(getattr(point, "color", [128, 128, 128]))
+        errors.append(float(getattr(point, "error", np.nan)))
+        track = getattr(point, "track", None)
+        track_lengths.append(len(track.elements) if track is not None and hasattr(track, "elements") else 0)
+    finite_errors = np.asarray(errors, dtype=np.float64)
+    finite_errors = finite_errors[np.isfinite(finite_errors)]
     return {
         "cameras": cameras,
         "points3D": np.asarray(points, dtype=np.float64).reshape(-1, 3),
+        "colors3D": np.asarray(colors, dtype=np.uint8).reshape(-1, 3),
+        "quality": {
+            "registered_images": len(cameras),
+            "points3D": len(points),
+            "median_reprojection_error": float(np.median(finite_errors)) if len(finite_errors) else None,
+            "mean_track_length": float(np.mean(track_lengths)) if track_lengths else 0.0,
+        },
         "model_path": model_path,
     }

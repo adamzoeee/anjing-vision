@@ -65,12 +65,21 @@ def run_pipeline(scan_id: int) -> None:
         for p in kept:
             shutil.copy(p, frames_clean / p.name)
         sfm_out = run_sfm(frames_clean, work / "sfm")
-        if len(sfm_out["cameras"]) < 5:
-            _fail(db, scan, "SFM 恢复的相机过少，请重录（保证画面重叠、纹理充足）")
+        from pipeline.quality import assess_sfm
+        sfm_quality = assess_sfm(
+            sfm_out["cameras"], sfm_out["points3D"], len(kept), sfm_out.get("quality")
+        )
+        if not sfm_quality.ok:
+            _fail(db, scan, sfm_quality.reason)
             return
 
         _stage(db, scan, "training", 45, "3D 重建训练中")
-        from pipeline.trainer import prepare_tensors, train_gaussians
+        from pipeline.trainer import (
+            denormalize_gaussians,
+            normalize_scene,
+            prepare_tensors,
+            train_gaussians,
+        )
         from PIL import Image
         # 对齐：相机与图像按文件名排序后一一对应（SFM 可能漏注册部分帧，过滤掉）
         name_to_cam = {c["name"]: c for c in sfm_out["cameras"]}
@@ -80,8 +89,23 @@ def run_pipeline(scan_id: int) -> None:
             return
         imgs = [np.asarray(Image.open(p).convert("RGB")) for p, _ in paired]
         cams = [c for _, c in paired]
-        gt = prepare_tensors(cams, imgs)
-        gaussians = train_gaussians(gt, sfm_out["points3D"])
+        normalized_cams, normalized_points, scene_transform = normalize_scene(
+            cams, sfm_out["points3D"]
+        )
+        gt = prepare_tensors(normalized_cams, imgs)
+        init_colors = sfm_out.get("colors3D")
+        if init_colors is not None:
+            init_colors = np.asarray(init_colors, dtype=np.float32) / 255.0
+        gaussians = train_gaussians(gt, normalized_points, init_colors)
+        gaussians = denormalize_gaussians(gaussians, scene_transform)
+
+        from pipeline.quality import assess_gaussians
+        gaussian_quality = assess_gaussians(
+            gaussians["means"].numpy(), sfm_out["points3D"]
+        )
+        if not gaussian_quality.ok:
+            _fail(db, scan, gaussian_quality.reason)
+            return
 
         from pipeline.exporter import export_pointcloud, statistical_filter
         import open3d as o3d
@@ -90,40 +114,57 @@ def run_pipeline(scan_id: int) -> None:
         pcd = statistical_filter(o3d.io.read_point_cloud(str(pcd_path)))
         o3d.io.write_point_cloud(str(pcd_path), pcd)
         points = np.asarray(pcd.points)
+        point_colors = np.asarray(pcd.colors)
         if len(points) < 100:
             _fail(db, scan, "重建点云过少，评估失败")
             return
         # 相机外参仍处于原始 SFM 坐标系；语义 mask 投影必须使用未缩放点云。
         semantic_points = points.copy()
 
-        _stage(db, scan, "calibrating", 65, "尺度标定中")
-        from pipeline.calibrator import scale_from_door_prior
-        scale, calibrated = 1.0, 0
-        a4_scale = _calibrate_with_a4(imgs, cams)
-        if a4_scale:
-            scale, calibrated = a4_scale, 1
-        else:
-            door_h = _measure_door_height(points)
-            if door_h and door_h > 1.0:
-                scale, calibrated = scale_from_door_prior(door_h), 2
-        points = points * scale
-
-        _stage(db, scan, "segmenting", 75, "语义分割中")
+        _stage(db, scan, "segmenting", 65, "语义分割与参考物识别中")
         semantic_result = _find_obstacles(imgs, cams, semantic_points)
 
+        _stage(db, scan, "calibrating", 75, "多参考物尺度标定中")
+        from pipeline.calibrator import estimate_scale_from_references
+        from pipeline.quality import assess_metric_scene
+        scale, calibration_details = estimate_scale_from_references(
+            points,
+            semantic_result["semantic_point_ids"],
+            scan.reference_measurements or [],
+        )
+        calibration_quality = {"method": "known_objects", **calibration_details}
+        calibrated_flag = 0
+        if scale is not None:
+            metric_quality = assess_metric_scene(points * scale, calibrated=1)
+            if metric_quality.ok:
+                calibrated_flag = 3
+            else:
+                calibration_quality["reason"] = metric_quality.reason
+                scale = None
+        scale = scale or 1.0
+        points = points * scale
+        if calibrated_flag:
+            gaussians["means"] = gaussians["means"] * scale
+            gaussians["scales"] = gaussians["scales"] + np.log(scale)
+
         _stage(db, scan, "analyzing", 85, "几何分析中")
-        from pipeline.geometry import (fit_ground_plane, measure_door_width,
-                                       measure_floor_slope, measure_step_height)
-        slope = measure_floor_slope(points)
-        step = measure_step_height(points)
-        door_w = measure_door_width(points, wall_x=_dominant_wall_x(points))
-        plane, inliers = fit_ground_plane(points)
+        # COLMAP 世界坐标没有天然“向上”方向，且稀疏点云不能可靠推断自由通道。
+        # 在真实地面/墙面空间判定接入前，不能把点云包围盒或最大空隙冒充门宽、通道宽。
+        references = scan.reference_measurements or []
+        door_w = _known_reference_value(references, "door", "width")
+        room_extent = _robust_scene_extents(points) if calibrated_flag else None
         measures = {
             "door_width_m": door_w,
-            "passage_width_m": _passage_width(points, inliers),
-            **_step_measurements(step),
-            "slope": slope,
-            "uneven_m": _unevenness(points, inliers),
+            "passage_width_m": None,
+            "threshold_m": None,
+            "stairs_exist": None,
+            "slope": None,
+            "uneven_m": None,
+            "scale_status": "metric_references" if calibrated_flag else "relative",
+            "calibration_quality": calibration_quality,
+            "reference_measurements": references,
+            "reconstruction_extent_m": room_extent,
+            "geometry_assessment_status": "pending_spatial_validation",
             # 2D 检测不是通道风险。只有后续空间判定确认位于通道内时才填入此字段。
             "obstacles_in_passage": semantic_result["obstacles_in_passage"],
             "obstacle_assessment_status": semantic_result["obstacle_assessment_status"],
@@ -140,10 +181,30 @@ def run_pipeline(scan_id: int) -> None:
         advice = [r["advice"] for r in risks if r["level"] in ("red", "yellow")]
 
         _stage(db, scan, "reporting", 95, "生成报告中")
+        from pipeline.exporter import export_gaussian_ply
         from pipeline.report_builder import build_preview_assets, render_annotation_images
         img_dir = work / "images"
         images = render_annotation_images(points, risks, img_dir)
-        preview = build_preview_assets(points, work / "preview", title=scan.project.name)
+        preview_dir = work / "preview"
+        gaussian_filename = "scene_gaussian.ply"
+        export_gaussian_ply(gaussians, preview_dir / gaussian_filename)
+        preview = build_preview_assets(
+            points,
+            preview_dir,
+            title=scan.project.name,
+            colors=point_colors,
+            gaussian_filename=gaussian_filename,
+            scale_status="metric_references" if calibrated_flag else "relative",
+            cameras=cams,
+            image_shapes=[image.shape[:2] for image in imgs],
+            camera_scale=scale,
+            quality={
+                "sfm": sfm_quality.metrics,
+                "gaussian": gaussian_quality.metrics,
+                "training": gaussians.get("training_metrics", {}),
+                "calibration": calibration_quality,
+            },
+        )
 
         _upsert_report(
             db,
@@ -154,7 +215,7 @@ def run_pipeline(scan_id: int) -> None:
             advice=advice,
             images=[str(p) for p in images],
             preview=preview,
-            calibrated=calibrated,
+            calibrated=calibrated_flag,
         )
         _stage(db, scan, "done", 100, "评估完成")
     except Exception as e:  # noqa: BLE001 - 管道任一步失败都落到 failed
@@ -288,31 +349,26 @@ def _triangulate(C_i, d_i, C_j, d_j) -> np.ndarray | None:
     return (C_i + s * d_i + C_j + t * d_j) / 2.0
 
 
-def _measure_door_height(points) -> float | None:
-    z = points[:, 2]
-    z = z[z > 0.5]
-    if len(z) < 50:
+def _known_reference_value(measurements: list[dict], object_type: str, dimension: str) -> float | None:
+    """只把用户明确提供的尺寸作为已确认测量值。"""
+    for item in measurements:
+        if item.get("object_type") == object_type and item.get("dimension") == dimension:
+            return float(item["meters"])
+    return None
+
+
+def _robust_scene_extents(points: np.ndarray) -> list[float] | None:
+    """返回 PCA 主轴下的稳健场景范围；仅在米制标定成功后对外提供。"""
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    if len(points) < 100:
         return None
-    return float(np.percentile(z, 98))
-
-
-def _dominant_wall_x(points) -> float:
-    x = points[:, 0]
-    return float(x[np.abs(x - np.median(x)).argsort()[-1]])
-
-
-def _passage_width(points, inliers) -> float | None:
-    floor = points[inliers]
-    if len(floor) < 100:
+    center = np.median(points, axis=0)
+    _, _, axes = np.linalg.svd(points - center, full_matrices=False)
+    projected = (points - center) @ axes.T
+    extents = np.percentile(projected, 99, axis=0) - np.percentile(projected, 1, axis=0)
+    if not np.isfinite(extents).all():
         return None
-    return float(np.percentile(floor[:, 1], 95) - np.percentile(floor[:, 1], 5))
-
-
-def _unevenness(points, inliers) -> float | None:
-    floor = points[inliers]
-    if len(floor) < 100:
-        return None
-    return float(np.std(floor[:, 2]))
+    return [float(value) for value in np.sort(extents)[::-1]]
 
 
 def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 10) -> dict:
@@ -383,6 +439,10 @@ def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 10) -> dict:
     return {
         "detected_objects": objects,
         "semantic_point_counts": dict(sorted(point_counts.items())),
+        "semantic_point_ids": {
+            label: sorted(point_id for point_id, point_label in point_labels.items() if point_label == label)
+            for label in sorted(point_counts)
+        },
         # None 表示尚未完成空间判定；[] 只保留给“已确认通道内无障碍”。
         "obstacles_in_passage": None,
         "obstacle_assessment_status": "pending_spatial_validation",

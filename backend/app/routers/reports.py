@@ -54,7 +54,12 @@ def get_preview_model(
     if scan is None or scan.project.org_id != org_id or scan.report is None:
         raise HTTPException(404, "预览模型不存在")
     preview = scan.report.preview or {}
-    if filename != preview.get("ply"):
+    allowed_files = {
+        preview.get("ply"),
+        preview.get("gaussian_ply"),
+        preview.get("cameras"),
+    }
+    if filename not in allowed_files:
         raise HTTPException(404, "预览模型不存在")
     if Path(filename).name != filename:
         raise HTTPException(404, "预览模型不存在")

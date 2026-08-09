@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 
 def _strip_required(value: str) -> str:
@@ -70,6 +70,36 @@ class ScanIn(BaseModel):
     capture_type: Literal["video", "photos"] = "video"
 
 
+class ReferenceMeasurement(BaseModel):
+    object_type: Literal["door", "bed", "sofa", "table", "cabinet"]
+    dimension: Literal["length", "width", "height"]
+    meters: float = Field(gt=0.1, le=20.0)
+
+    @model_validator(mode="after")
+    def _supported_dimension(self):
+        allowed = {
+            "door": {"width", "height"},
+            "bed": {"length", "width", "height"},
+            "sofa": {"length", "width", "height"},
+            "table": {"length", "width", "height"},
+            "cabinet": {"length", "width", "height"},
+        }
+        if self.dimension not in allowed[self.object_type]:
+            raise ValueError("该参考物不支持此尺寸方向")
+        return self
+
+
+class ReferenceMeasurementsIn(BaseModel):
+    measurements: list[ReferenceMeasurement] = Field(min_length=2, max_length=3)
+
+    @model_validator(mode="after")
+    def _distinct_references(self):
+        keys = {(item.object_type, item.dimension) for item in self.measurements}
+        if len(keys) != len(self.measurements):
+            raise ValueError("参考尺寸不能重复")
+        return self
+
+
 class ScanOut(BaseModel):
     id: int
     project_id: int
@@ -77,3 +107,4 @@ class ScanOut(BaseModel):
     progress: int
     message: str
     capture_type: Literal["video", "photos"]
+    reference_measurements: list[ReferenceMeasurement] = Field(default_factory=list)
