@@ -51,9 +51,15 @@ def evaluate_risks(measures: dict) -> list[dict]:
                 risks.append({**rule, "level": "red", "measure": None})
             continue
         if key == "obstacle":
-            obs = measures.get("obstacles_in_passage", [])
-            if obs:
+            if "obstacles_in_passage" not in measures:
+                continue
+            obs = measures["obstacles_in_passage"]
+            if obs is None:
+                risks.append({**rule, "level": "unknown", "measure": None})
+            elif obs:
                 risks.append({**rule, "level": "red", "measure": obs})
+            else:
+                risks.append({**rule, "level": "green", "measure": []})
             continue
         if key not in measures:
             alt = key + "_m"
