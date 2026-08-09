@@ -7,6 +7,7 @@ from app.db import SessionLocal
 from app.models import Organization, Project, Report, Scan
 from app.tasks.pipeline_runner import (
     _calibrate_with_a4,
+    _find_obstacles,
     _pixel_ray,
     _triangulate,
     _upsert_report,
@@ -177,3 +178,39 @@ def test_report_write_recovers_from_concurrent_unique_conflict():
     assert report is existing
     assert report.score == 91
     assert report.risks == [{"code": "updated"}]
+
+
+def test_find_obstacles_consumes_sam_masks_without_declaring_2d_furniture_a_risk(monkeypatch):
+    mask = np.zeros((20, 20), dtype=bool)
+    mask[8:13, 8:13] = True
+
+    def fake_analyze(_image):
+        return [{
+            "label": "椅子",
+            "score": 0.9,
+            "bbox": [8, 8, 12, 12],
+            "mask": mask,
+            "mask_valid": True,
+            "mask_area_ratio": float(mask.mean()),
+        }]
+
+    monkeypatch.setattr("pipeline.semantic.analyze_image", fake_analyze)
+    camera = {
+        "K": np.array([[10.0, 0, 10.0], [0, 10.0, 10.0], [0, 0, 1.0]]),
+        "R": np.eye(3),
+        "t": np.zeros(3),
+    }
+    points = np.array([[0.0, 0.0, 2.0], [10.0, 10.0, 2.0]])
+    result = _find_obstacles(
+        [np.zeros((20, 20, 3), dtype=np.uint8)], [camera], points, frame_stride=1
+    )
+    assert result["detected_objects"] == [{
+        "label": "椅子",
+        "count": 1,
+        "segmented_count": 1,
+        "frame_count": 1,
+        "mean_mask_area_ratio": 0.0625,
+        "projected_point_count": 1,
+    }]
+    assert result["semantic_point_counts"] == {"椅子": 1}
+    assert result["obstacles_in_passage"] == []
