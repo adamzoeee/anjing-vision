@@ -1,6 +1,8 @@
 .worktrees/
 backend/.venv/
 backend/data/
+backend/.test-data/
+/*_raw.mp4
 task4_local/
 backend/.env
 backend/.env.*
