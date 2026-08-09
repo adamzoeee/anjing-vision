@@ -1,9 +1,14 @@
 import os
+from pathlib import Path
+
 os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 os.environ["ENVIRONMENT"] = "test"
 os.environ["SECRET_KEY"] = "test-secret-key-with-at-least-32-bytes"
 os.environ["STORAGE_BACKEND"] = "local"
 os.environ["TASK_SYNC"] = "true"  # 测试环境管道同步执行，避免 Redis/Celery 依赖
+# 测试存储隔离到专用目录：否则 clean_db 的 rmtree 会删掉生产 backend/data/
+# 用绝对路径，避免从仓库根跑 pytest 时目录落错位置
+os.environ["DATA_DIR"] = str(Path(__file__).resolve().parent.parent / ".test-data")
 
 import pytest
 from fastapi.testclient import TestClient
