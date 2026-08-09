@@ -213,4 +213,5 @@ def test_find_obstacles_consumes_sam_masks_without_declaring_2d_furniture_a_risk
         "projected_point_count": 1,
     }]
     assert result["semantic_point_counts"] == {"椅子": 1}
-    assert result["obstacles_in_passage"] == []
+    assert result["obstacles_in_passage"] is None
+    assert result["obstacle_assessment_status"] == "pending_spatial_validation"

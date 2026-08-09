@@ -1,3 +1,6 @@
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
 import numpy as np
 import pytest
 import torch
@@ -164,6 +167,59 @@ def test_segment_detections_marks_empty_mask_invalid(monkeypatch):
     assert results[0]["mask"].shape == (8, 9)
     assert results[0]["mask_area_px"] == 0
     assert results[0]["mask_valid"] is False
+
+
+def test_shared_sam_predictor_serializes_stateful_image_inference(monkeypatch):
+    first_image_set = threading.Event()
+    release_first_image = threading.Event()
+    second_image_set = threading.Event()
+
+    class Transform:
+        @staticmethod
+        def apply_boxes_torch(boxes, _shape):
+            return boxes
+
+    class Predictor:
+        def __init__(self):
+            self.model = torch.nn.Linear(1, 1)
+            self.transform = Transform()
+            self.shape = None
+            self.marker = None
+            self.predicted_markers = []
+
+        def set_image(self, image):
+            self.shape = image.shape[:2]
+            self.marker = int(image[0, 0, 0])
+            if self.marker == 1:
+                first_image_set.set()
+                assert release_first_image.wait(timeout=2)
+            else:
+                second_image_set.set()
+
+        def predict_torch(self, *, boxes, **_kwargs):
+            self.predicted_markers.append(self.marker)
+            masks = torch.ones((len(boxes), 1, *self.shape), dtype=torch.bool)
+            return masks, torch.ones((len(boxes), 1)), None
+
+    predictor = Predictor()
+    monkeypatch.setattr("pipeline.semantic._load_sam", lambda: predictor)
+    detection = [{"bbox": [1, 1, 6, 6], "label": "椅子", "score": 0.9}]
+    first = np.full((8, 9, 3), 1, dtype=np.uint8)
+    second = np.full((8, 9, 3), 2, dtype=np.uint8)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(segment_detections, first, detection)
+        assert first_image_set.wait(timeout=1)
+        second_future = executor.submit(segment_detections, second, detection)
+        try:
+            assert not second_image_set.wait(timeout=0.1)
+        finally:
+            release_first_image.set()
+        first_future.result(timeout=2)
+        second_future.result(timeout=2)
+
+    assert second_image_set.is_set()
+    assert predictor.predicted_markers == [1, 2]
 
 
 def test_project_mask_validates_shapes_and_merge_votes_is_deterministic():

@@ -84,7 +84,7 @@ def main() -> int:
     local_data = backend.parent / "task4_local"
     parser = argparse.ArgumentParser()
     parser.add_argument("--samples", type=Path, default=local_data / "samples")
-    parser.add_argument("--results", type=Path, default=local_data / "results" / "full70")
+    parser.add_argument("--results", type=Path, default=local_data / "results" / "full")
     parser.add_argument("--phase", choices=("first", "full"), default="full")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--prompt", choices=("english", "chinese"), default="english")
