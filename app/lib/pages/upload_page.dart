@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/models.dart';
@@ -7,10 +9,8 @@ import 'report_page.dart';
 
 class UploadPage extends StatefulWidget {
   final Scan scan;
-  final String filePath;
-  final String filename;
-  const UploadPage({super.key, required this.scan,
-      required this.filePath, required this.filename});
+  final XFile file;
+  const UploadPage({super.key, required this.scan, required this.file});
   @override
   State<UploadPage> createState() => _UploadPageState();
 }
@@ -30,8 +30,15 @@ class _UploadPageState extends State<UploadPage> {
 
   Future<void> _upload() async {
     try {
-      await context.read<ApiClient>()
-          .uploadVideo(widget.scan.id, widget.filePath, widget.filename);
+      final api = context.read<ApiClient>();
+      final name = widget.file.name.isEmpty ? 'clip.mp4' : widget.file.name;
+      if (kIsWeb) {
+        final bytes = await widget.file.readAsBytes();
+        await api.uploadVideo(widget.scan.id, bytes, name);
+      } else {
+        await api.uploadVideoFile(widget.scan.id, widget.file.path, name);
+      }
+      if (mounted) setState(() => _uploadError = null);
     } catch (e) {
       if (!mounted) return;
       setState(() => _uploadError = '上传失败: $e');
