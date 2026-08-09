@@ -2,11 +2,13 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -156,6 +158,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         prefix="/static",
         tags=["report-assets"],
     )
+
+    # 3D 预览渲染器（自研 WebGL）：由后端托管，
+    # 避免 Flutter web 的 SPA fallback 劫持 /preview/ 目录请求
+    preview_dir = Path(__file__).resolve().parent.parent.parent / "app" / "web" / "preview"
+    if preview_dir.is_dir():
+        application.mount(
+            "/preview",
+            StaticFiles(directory=str(preview_dir), html=True),
+            name="preview",
+        )
 
     @application.get("/api/health")
     def health():

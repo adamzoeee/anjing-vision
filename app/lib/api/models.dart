@@ -54,12 +54,15 @@ class Report {
   final List<String> advice;
   final List<String> images;
   final int calibrated;
+  final String? previewPly;
   Report({required this.scanId, required this.score, required this.risks,
-      required this.advice, required this.images, required this.calibrated});
+      required this.advice, required this.images, required this.calibrated,
+      this.previewPly});
   factory Report.fromJson(Map<String, dynamic> j) => Report(
       scanId: j['scan_id'], score: (j['score'] ?? 0).toDouble(),
       risks: (j['risks'] as List? ?? []).map((e) => Risk.fromJson(e)).toList(),
       advice: (j['advice'] as List? ?? []).map((e) => e.toString()).toList(),
       images: (j['images'] as List? ?? []).map((e) => e.toString()).toList(),
-      calibrated: j['calibrated'] ?? 0);
+      calibrated: j['calibrated'] ?? 0,
+      previewPly: (j['preview'] as Map<String, dynamic>?)?['ply']?.toString());
 }

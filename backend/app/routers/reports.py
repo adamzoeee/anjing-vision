@@ -41,6 +41,32 @@ def get_report_image(
     return FileResponse(image_path)
 
 
+@assets_router.get("/{scan_id}/preview/{filename}", response_class=FileResponse)
+def get_preview_model(
+    scan_id: int,
+    filename: str,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    """Serve the 3D preview point cloud (scene.ply) to the scan's organization."""
+    scan = db.get(Scan, scan_id)
+    if scan is None or scan.project.org_id != org_id or scan.report is None:
+        raise HTTPException(404, "预览模型不存在")
+    preview = scan.report.preview or {}
+    if filename != preview.get("ply"):
+        raise HTTPException(404, "预览模型不存在")
+    if Path(filename).name != filename:
+        raise HTTPException(404, "预览模型不存在")
+    preview_root = (
+        Path(settings.data_dir) / "work" / str(scan_id) / "preview"
+    ).resolve()
+    model_path = (preview_root / filename).resolve()
+    if not model_path.is_relative_to(preview_root) or not model_path.is_file():
+        raise HTTPException(404, "预览模型不存在")
+    return FileResponse(model_path)
+
+
 @router.get("/scans/{scan_id}")
 def get_report(scan_id: int, db: Session = Depends(get_db), org_id: int = Depends(get_org_scope)):
     scan = db.get(Scan, scan_id)
