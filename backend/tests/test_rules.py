@@ -21,6 +21,18 @@ def test_detected_furniture_alone_is_not_a_passage_risk():
     assert all(r["code"] != "obstacle" for r in risks)
 
 
+def test_pending_and_confirmed_clear_obstacle_assessments_are_distinct():
+    pending = evaluate_risks({"obstacles_in_passage": None})
+    pending_obstacle = [risk for risk in pending if risk["code"] == "obstacle"][0]
+    assert pending_obstacle["level"] == "unknown"
+    assert pending_obstacle["measure"] is None
+
+    confirmed_clear = evaluate_risks({"obstacles_in_passage": []})
+    clear_obstacle = [risk for risk in confirmed_clear if risk["code"] == "obstacle"][0]
+    assert clear_obstacle["level"] == "green"
+    assert clear_obstacle["measure"] == []
+
+
 def test_evaluate_risks_stairs_and_missing():
     risks = evaluate_risks({"stairs_exist": True})
     assert any(r["code"] == "stairs" and r["level"] == "red" for r in risks)

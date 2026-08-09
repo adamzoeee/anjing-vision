@@ -119,6 +119,7 @@ def run_pipeline(scan_id: int) -> None:
             "uneven_m": _unevenness(points, inliers),
             # 2D 检测不是通道风险。只有后续空间判定确认位于通道内时才填入此字段。
             "obstacles_in_passage": semantic_result["obstacles_in_passage"],
+            "obstacle_assessment_status": semantic_result["obstacle_assessment_status"],
             "detected_objects": semantic_result["detected_objects"],
             "semantic_point_counts": semantic_result["semantic_point_counts"],
             "bathroom_door_m": None,
@@ -373,6 +374,7 @@ def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 10) -> dict:
     return {
         "detected_objects": objects,
         "semantic_point_counts": dict(sorted(point_counts.items())),
-        # 独立 2D 图像无法证明物体位于真实通道；后续端到端空间判定负责填充。
-        "obstacles_in_passage": [],
+        # None 表示尚未完成空间判定；[] 只保留给“已确认通道内无障碍”。
+        "obstacles_in_passage": None,
+        "obstacle_assessment_status": "pending_spatial_validation",
     }
