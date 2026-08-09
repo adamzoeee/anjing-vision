@@ -40,6 +40,7 @@ _sam_predictor = None
 _dino_model = None
 _dino_processor = None
 _model_lock = threading.Lock()
+_sam_inference_lock = threading.Lock()
 
 
 def build_prompt(texts: Iterable[str] | None = None) -> str:
@@ -244,7 +245,9 @@ def segment_detections(
     device = next(predictor.model.parameters()).device
     boxes = torch.as_tensor([item["bbox"] for item in prepared], dtype=torch.float32, device=device)
     segmented: list[dict] = []
-    with torch.inference_mode():
+    # SamPredictor 在 set_image() 中保存当前图像 embedding 和尺寸，属于有状态对象。
+    # 共享单例时必须让 set_image → predict_torch 成为一个不可交错的推理事务。
+    with _sam_inference_lock, torch.inference_mode():
         predictor.set_image(image)
         transformed = predictor.transform.apply_boxes_torch(boxes, image.shape[:2])
         for start in range(0, len(prepared), batch_size):
