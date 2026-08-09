@@ -42,6 +42,65 @@ def test_scan_ownership_enforced(client):
     assert client.get(f"/api/scans/{sid}", headers=h2).status_code == 404
 
 
+def test_reference_measurements_are_saved_before_upload(client):
+    h = _auth(client)
+    pid = client.post("/api/projects", json={"name": "尺寸标定房间"}, headers=h).json()["id"]
+    sid = client.post(
+        f"/api/projects/{pid}/scans", json={"capture_type": "video"}, headers=h
+    ).json()["id"]
+    response = client.put(
+        f"/api/scans/{sid}/references",
+        headers=h,
+        json={"measurements": [
+            {"object_type": "door", "dimension": "height", "meters": 2.05},
+            {"object_type": "bed", "dimension": "length", "meters": 2.0},
+        ]},
+    )
+    assert response.status_code == 200
+    assert response.json()["reference_measurements"][0]["meters"] == 2.05
+
+
+def test_reference_measurements_validate_bounds(client):
+    h = _auth(client)
+    pid = client.post("/api/projects", json={"name": "非法尺寸"}, headers=h).json()["id"]
+    sid = client.post(
+        f"/api/projects/{pid}/scans", json={"capture_type": "video"}, headers=h
+    ).json()["id"]
+    response = client.put(
+        f"/api/scans/{sid}/references",
+        headers=h,
+        json={"measurements": [
+            {"object_type": "door", "dimension": "height", "meters": 0.01},
+        ]},
+    )
+    assert response.status_code == 422
+
+
+def test_reference_measurements_require_two_distinct_supported_dimensions(client):
+    h = _auth(client)
+    pid = client.post("/api/projects", json={"name": "重复尺寸"}, headers=h).json()["id"]
+    sid = client.post(
+        f"/api/projects/{pid}/scans", json={"capture_type": "video"}, headers=h
+    ).json()["id"]
+    duplicate = {"object_type": "door", "dimension": "height", "meters": 2.05}
+    response = client.put(
+        f"/api/scans/{sid}/references",
+        headers=h,
+        json={"measurements": [duplicate, duplicate]},
+    )
+    assert response.status_code == 422
+
+    unsupported = client.put(
+        f"/api/scans/{sid}/references",
+        headers=h,
+        json={"measurements": [
+            {"object_type": "wall", "dimension": "length", "meters": 3.5},
+            {"object_type": "bed", "dimension": "length", "meters": 2.0},
+        ]},
+    )
+    assert unsupported.status_code == 422
+
+
 def test_upload_rejects_missing_and_cross_organization_scan(client):
     h = _auth(client)
     missing = client.post(

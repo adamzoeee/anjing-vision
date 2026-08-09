@@ -44,12 +44,20 @@ void main() {
         'advice': ['建议扩门'],
         'images': [],
         'calibrated': 1,
+        'preview': {
+          'ply': 'scene.ply',
+          'gaussian_ply': 'scene_gaussian.ply',
+          'cameras': 'cameras.json',
+        },
       });
       expect(r.score, 62.5);
       expect(r.risks.first.level, 'red');
       expect(r.risks.first.measure, 0.75);
       expect(r.advice, ['建议扩门']);
       expect(r.calibrated, 1);
+      expect(r.previewPly, 'scene.ply');
+      expect(r.previewGaussianPly, 'scene_gaussian.ply');
+      expect(r.previewCameras, 'cameras.json');
     });
 
     test('Project.fromJson 默认 address 空串', () {

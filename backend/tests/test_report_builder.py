@@ -13,11 +13,29 @@ def test_render_annotation_images(tmp_path):
 
 def test_build_preview_assets(tmp_path):
     pts = np.random.randn(500, 3).astype(np.float32)
-    manifest = build_preview_assets(pts, tmp_path, title="测试房间")
+    cameras = [{
+        "name": "frame.jpg",
+        "R": np.eye(3),
+        "t": np.array([1.0, 2.0, 3.0]),
+        "K": np.array([[600.0, 0, 320], [0, 610.0, 240], [0, 0, 1]]),
+    }]
+    manifest = build_preview_assets(
+        pts,
+        tmp_path,
+        title="测试房间",
+        cameras=cameras,
+        image_shapes=[(480, 640)],
+        camera_scale=2.0,
+    )
     assert (tmp_path / "scene.ply").exists()
     assert (tmp_path / "manifest.json").exists()
     assert manifest["title"] == "测试房间"
     assert manifest["point_count"] == 500
+    assert manifest["cameras"] == "cameras.json"
+    viewer_cameras = json.loads((tmp_path / "cameras.json").read_text(encoding="utf-8"))
+    assert viewer_cameras[0]["position"] == [2.0, 4.0, 6.0]
+    assert viewer_cameras[0]["width"] == 640
+    assert viewer_cameras[0]["fy"] == 610.0
 
 
 def test_render_annotation_images_multiple_risks(tmp_path):
