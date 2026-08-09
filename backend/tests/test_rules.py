@@ -68,3 +68,31 @@ def test_compute_score_uses_worst_risk_when_category_has_mixed_levels():
 
     assert detail["parts"]["通行性"] == 0.0
     assert score == 60.0
+
+
+def test_compute_score_excludes_unknown_and_reports_assessment_completeness():
+    measures = {
+        "door_width_m": 1.0,
+        "passage_width_m": 1.5,
+        "threshold_m": 0.0,
+        "stairs_exist": False,
+        "slope": 0.01,
+        "uneven_m": 0.005,
+        "obstacles_in_passage": None,
+        "obstacle_assessment_status": "pending_spatial_validation",
+        "bathroom_door_m": None,
+    }
+
+    score, detail = compute_score(measures)
+
+    assert score == 100.0
+    assert detail["parts"] == {"通行性": 100.0, "跌倒风险": 100.0, "无障碍": 100.0}
+    assert detail["assessment_completeness"] == {
+        "known_count": 5,
+        "unknown_count": 2,
+        "percent": 71.4,
+    }
+    assert {risk["code"] for risk in detail["risks"] if risk["level"] == "unknown"} == {
+        "bathroom_door",
+        "obstacle",
+    }
