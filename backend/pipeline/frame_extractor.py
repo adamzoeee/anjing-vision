@@ -18,6 +18,11 @@ _FFMPEG_CANDIDATES = (
 
 def _ffmpeg_bin() -> str:
     """探测 ffmpeg 可执行文件：PATH 优先，其次常见安装路径。"""
+    configured = os.getenv("FFMPEG_PATH")
+    if configured:
+        if os.path.isfile(configured):
+            return configured
+        raise FileNotFoundError(f"FFMPEG_PATH 指向的文件不存在: {configured}")
     p = shutil.which("ffmpeg")
     if p:
         return p

@@ -32,6 +32,10 @@ OBJECT_PROMPTS: tuple[tuple[str, str], ...] = (
     ("plastic bucket", "水桶"),
     ("suitcase", "行李箱"),
     ("storage box", "收纳箱"),
+    ("door frame", "门"),
+    ("bed", "床"),
+    ("sofa", "沙发"),
+    ("cabinet", "柜子"),
 )
 PROMPT_OBJECTS = [prompt for prompt, _label in OBJECT_PROMPTS]
 CHINESE_PROMPT_OBJECTS = [label for _prompt, label in OBJECT_PROMPTS]
