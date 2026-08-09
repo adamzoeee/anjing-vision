@@ -89,6 +89,32 @@ def test_report_annotation_image_is_served_with_organization_auth(client, tmp_pa
     ).status_code == 404
 
 
+def test_preview_serves_gaussian_model_and_camera_poses_with_auth(client):
+    from app.config import get_settings
+    from app.db import SessionLocal
+    from app.models import Report
+
+    headers = _auth(client, email="preview@x.com")
+    _pid, scan_id, report_id = _make_report(client, headers)
+    preview_dir = Path(get_settings().data_dir) / "work" / str(scan_id) / "preview"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    (preview_dir / "scene_gaussian.ply").write_bytes(b"ply\n")
+    (preview_dir / "cameras.json").write_text("[]", encoding="utf-8")
+    db = SessionLocal()
+    report = db.get(Report, report_id)
+    report.preview = {
+        "gaussian_ply": "scene_gaussian.ply",
+        "cameras": "cameras.json",
+    }
+    db.commit()
+    db.close()
+
+    base = f"/static/{scan_id}/preview"
+    assert client.get(f"{base}/scene_gaussian.ply", headers=headers).content == b"ply\n"
+    assert client.get(f"{base}/cameras.json", headers=headers).json() == []
+    assert client.get(f"{base}/not-allowed.ply", headers=headers).status_code == 404
+
+
 def test_get_report_requires_ownership(client):
     h = _auth(client)
     _pid, sid, _rid = _make_report(client, h)

@@ -8,7 +8,9 @@ from app.models import Organization, Project, Report, Scan
 from app.tasks.pipeline_runner import (
     _calibrate_with_a4,
     _find_obstacles,
+    _known_reference_value,
     _pixel_ray,
+    _robust_scene_extents,
     _step_measurements,
     _triangulate,
     _upsert_report,
@@ -20,6 +22,30 @@ def test_no_detected_step_remains_confirmed_zero_threshold():
         "threshold_m": 0.0,
         "stairs_exist": False,
     }
+
+
+def test_only_explicit_door_width_is_reported_as_confirmed_measurement():
+    refs = [
+        {"object_type": "door", "dimension": "height", "meters": 2.05},
+        {"object_type": "bed", "dimension": "length", "meters": 2.0},
+    ]
+    assert _known_reference_value(refs, "door", "width") is None
+    refs.append({"object_type": "door", "dimension": "width", "meters": 0.86})
+    assert _known_reference_value(refs, "door", "width") == 0.86
+
+
+def test_metric_scene_extent_uses_robust_pca_axes():
+    rng = np.random.default_rng(7)
+    points = rng.uniform([-2.0, -1.5, -1.0], [2.0, 1.5, 1.0], size=(2000, 3))
+    theta = np.deg2rad(31)
+    rotation = np.array([
+        [np.cos(theta), -np.sin(theta), 0.0],
+        [np.sin(theta), np.cos(theta), 0.0],
+        [0.0, 0.0, 1.0],
+    ])
+    extents = _robust_scene_extents(points @ rotation.T)
+    assert extents is not None
+    assert np.allclose(extents, [3.92, 2.94, 1.96], atol=0.15)
 
 
 def _cam(center, look_at, focal=600.0, w=640, h=480):
