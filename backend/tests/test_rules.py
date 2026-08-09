@@ -16,6 +16,11 @@ def test_evaluate_risks_obstacle_in_passage():
     assert any(r["code"] == "obstacle" and r["level"] == "red" for r in risks)
 
 
+def test_detected_furniture_alone_is_not_a_passage_risk():
+    risks = evaluate_risks({"detected_objects": [{"label": "椅子", "count": 1}]})
+    assert all(r["code"] != "obstacle" for r in risks)
+
+
 def test_evaluate_risks_stairs_and_missing():
     risks = evaluate_risks({"stairs_exist": True})
     assert any(r["code"] == "stairs" and r["level"] == "red" for r in risks)
