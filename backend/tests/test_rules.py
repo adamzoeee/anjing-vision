@@ -57,3 +57,14 @@ def test_compute_score_red_door_penalizes():
     score, detail = compute_score({"door_width_m": 0.7})
     assert score <= 60
     assert detail["parts"]["通行性"] <= 0.0 + 1e-6
+
+
+def test_compute_score_uses_worst_risk_when_category_has_mixed_levels():
+    score, detail = compute_score({
+        "door_width_m": 0.7,
+        "passage_width_m": 2.0,
+        "bathroom_door_m": None,
+    })
+
+    assert detail["parts"]["通行性"] == 0.0
+    assert score == 60.0
