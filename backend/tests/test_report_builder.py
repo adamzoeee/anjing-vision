@@ -13,9 +13,14 @@ def test_render_annotation_images(tmp_path):
 
 def test_build_preview_assets(tmp_path):
     pts = np.random.randn(500, 3).astype(np.float32)
+    world_to_camera = np.array([
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ])
     cameras = [{
         "name": "frame.jpg",
-        "R": np.eye(3),
+        "R": world_to_camera,
         "t": np.array([1.0, 2.0, 3.0]),
         "K": np.array([[600.0, 0, 320], [0, 610.0, 240], [0, 0, 1]]),
     }]
@@ -33,7 +38,16 @@ def test_build_preview_assets(tmp_path):
     assert manifest["point_count"] == 500
     assert manifest["cameras"] == "cameras.json"
     viewer_cameras = json.loads((tmp_path / "cameras.json").read_text(encoding="utf-8"))
-    assert viewer_cameras[0]["position"] == [2.0, 4.0, 6.0]
+    expected_center = -world_to_camera.T @ np.array([1.0, 2.0, 3.0])
+    assert np.allclose(viewer_cameras[0]["position"], expected_center * 2.0)
+    assert np.allclose(viewer_cameras[0]["rotation"], world_to_camera.T)
+    # 与查看器 getViewMatrix 的矩阵约定组合后必须恢复原始 COLMAP R,t。
+    viewer_rotation = np.asarray(viewer_cameras[0]["rotation"])
+    viewer_center = np.asarray(viewer_cameras[0]["position"]) / 2.0
+    recovered_world_to_camera = viewer_rotation.T
+    recovered_translation = -recovered_world_to_camera @ viewer_center
+    assert np.allclose(recovered_world_to_camera, world_to_camera)
+    assert np.allclose(recovered_translation, [1.0, 2.0, 3.0])
     assert viewer_cameras[0]["width"] == 640
     assert viewer_cameras[0]["fy"] == 610.0
 

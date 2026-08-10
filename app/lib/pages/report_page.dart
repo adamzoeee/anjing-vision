@@ -73,6 +73,9 @@ class _ReportPageState extends State<ReportPage> {
                     ),
                   ),
                   const SizedBox(height: 16),
+                  Text('尺寸信息', style: Theme.of(context).textTheme.titleMedium),
+                  ..._measurementTiles(r),
+                  const SizedBox(height: 16),
                   Text(
                     '风险项（${r.risks.length}）',
                     style: Theme.of(context).textTheme.titleMedium,
@@ -159,5 +162,53 @@ class _ReportPageState extends State<ReportPage> {
               ),
             ),
     );
+  }
+
+  List<Widget> _measurementTiles(Report report) {
+    final raw = report.measures['reference_measurements'] as List? ?? const [];
+    final labels = {'bed': '床', 'table': '桌子', 'door': '门', 'sofa': '沙发'};
+    final dimensions = {'length': '长', 'width': '宽', 'height': '高'};
+    final tiles = <Widget>[];
+    for (final item in raw.whereType<Map>()) {
+      final object = item['object_type']?.toString();
+      final dimension = item['dimension']?.toString();
+      final meters = item['meters'];
+      if (object == null || dimension == null || meters == null) continue;
+      tiles.add(
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.straighten),
+          title: Text(
+            '${labels[object] ?? object}${dimensions[dimension] ?? dimension}',
+          ),
+          trailing: Text('${(meters as num).toStringAsFixed(2)} m'),
+          subtitle: Text(
+            report.calibrated == 3 ? '用于米制比例标定' : '用户输入参考值（尚未完成统一米制标定）',
+          ),
+        ),
+      );
+    }
+    final extent = report.measures['reconstruction_extent_m'] as List?;
+    if (extent != null && extent.length >= 3 && report.calibrated == 3) {
+      tiles.add(
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.view_in_ar),
+          title: const Text('重建空间包围尺寸（长 × 宽 × 高）'),
+          trailing: Text(
+            extent
+                .take(3)
+                .map((v) => '${(v as num).toStringAsFixed(2)}m')
+                .join(' × '),
+          ),
+        ),
+      );
+    }
+    if (tiles.isEmpty) {
+      tiles.add(
+        const Padding(padding: EdgeInsets.all(8), child: Text('暂无可用尺寸信息')),
+      );
+    }
+    return tiles;
   }
 }

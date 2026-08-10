@@ -44,6 +44,11 @@ void main() {
         'advice': ['建议扩门'],
         'images': [],
         'calibrated': 1,
+        'measures': {
+          'reference_measurements': [
+            {'object_type': 'bed', 'dimension': 'width', 'meters': 1.5},
+          ],
+        },
         'preview': {
           'ply': 'scene.ply',
           'gaussian_ply': 'scene_gaussian.ply',
@@ -58,6 +63,7 @@ void main() {
       expect(r.previewPly, 'scene.ply');
       expect(r.previewGaussianPly, 'scene_gaussian.ply');
       expect(r.previewCameras, 'cameras.json');
+      expect(r.measures['reference_measurements'].first['dimension'], 'width');
     });
 
     test('Project.fromJson 默认 address 空串', () {

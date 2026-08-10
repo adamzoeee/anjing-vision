@@ -92,14 +92,21 @@ def build_preview_assets(
         for index, (camera, shape) in enumerate(zip(cameras, image_shapes)):
             height, width = shape
             K = np.asarray(camera["K"], dtype=np.float64)
+            world_to_camera = np.asarray(camera["R"], dtype=np.float64)
+            translation = np.asarray(camera["t"], dtype=np.float64)
+            camera_to_world = world_to_camera.T
+            camera_center = -camera_to_world @ translation
             viewer_cameras.append({
                 "id": index,
                 "img_name": camera.get("name", str(index)),
                 "width": int(width),
                 "height": int(height),
-                # antimatter15/splat 使用 COLMAP world→camera 的 R、t。
-                "position": (np.asarray(camera["t"], dtype=np.float64) * camera_scale).tolist(),
-                "rotation": np.asarray(camera["R"], dtype=np.float64).tolist(),
+                # antimatter15/splat 的 cameras.json 不是 COLMAP 原始 R,t：
+                # rotation 要求 camera→world，position 要求世界坐标中的相机中心 C。
+                # 查看器的 getViewMatrix() 再将二者求逆得到 world→camera。
+                # 直接写 COLMAP R,t 会把正确高斯场套上逆相机矩阵，出现大片拉丝/黑洞。
+                "position": (camera_center * camera_scale).tolist(),
+                "rotation": camera_to_world.tolist(),
                 "fx": float(K[0, 0]),
                 "fy": float(K[1, 1]),
             })

@@ -56,7 +56,7 @@ def run_pipeline(scan_id: int) -> None:
             return
 
         _stage(db, scan, "sfm", 25, "相机位姿估计中")
-        from pipeline.sfm import run_sfm
+        from pipeline.sfm import run_sfm, undistort_registered_view
         # SFM 只跑清晰帧（模糊帧会污染特征匹配），复制到独立目录保证位姿与图像一一对应
         frames_clean = work / "frames_clean"
         import shutil
@@ -87,21 +87,34 @@ def run_pipeline(scan_id: int) -> None:
         if len(paired) < 5:
             _fail(db, scan, "SFM 注册帧过少，无法训练")
             return
-        imgs = [np.asarray(Image.open(p).convert("RGB")) for p, _ in paired]
-        cams = [c for _, c in paired]
+        raw_imgs = [np.asarray(Image.open(p).convert("RGB")) for p, _ in paired]
+        rectified = [
+            undistort_registered_view(image, camera)
+            for image, (_, camera) in zip(raw_imgs, paired)
+        ]
+        imgs = [item[0] for item in rectified]
+        cams = [item[1] for item in rectified]
+        training_cams, training_imgs = _prepare_training_views(cams, imgs)
         normalized_cams, normalized_points, scene_transform = normalize_scene(
-            cams, sfm_out["points3D"]
+            training_cams, sfm_out["points3D"]
         )
-        gt = prepare_tensors(normalized_cams, imgs)
+        gt = prepare_tensors(normalized_cams, training_imgs)
         init_colors = sfm_out.get("colors3D")
         if init_colors is not None:
             init_colors = np.asarray(init_colors, dtype=np.float32) / 255.0
         gaussians = train_gaussians(gt, normalized_points, init_colors)
         gaussians = denormalize_gaussians(gaussians, scene_transform)
+        # 训练结果已经转回 CPU；语义阶段还要同时加载 GroundingDINO 与 SAM。
+        # 及时释放整批训练图像张量，避免 8GB 级显卡在模型切换时无谓 OOM。
+        del gt
+        import torch
+        torch.cuda.empty_cache()
 
         from pipeline.quality import assess_gaussians
         gaussian_quality = assess_gaussians(
-            gaussians["means"].numpy(), sfm_out["points3D"]
+            gaussians["means"].numpy(),
+            sfm_out["points3D"],
+            gaussians.get("training_metrics"),
         )
         if not gaussian_quality.ok:
             _fail(db, scan, gaussian_quality.reason)
@@ -371,7 +384,42 @@ def _robust_scene_extents(points: np.ndarray) -> list[float] | None:
     return [float(value) for value in np.sort(extents)[::-1]]
 
 
-def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 10) -> dict:
+def _prepare_training_views(
+    cams: list[dict],
+    imgs: list[np.ndarray],
+    *,
+    max_views: int = 80,
+    max_dimension: int = 1280,
+) -> tuple[list[dict], list[np.ndarray]]:
+    """均匀保留全轨迹代表视角，并同步缩放图像内参。"""
+    import cv2
+
+    if len(cams) != len(imgs) or not cams:
+        raise ValueError("训练相机与图片必须非空且一一对应")
+    count = min(len(imgs), max_views)
+    indices = np.linspace(0, len(imgs) - 1, count, dtype=int)
+    selected_cams, selected_imgs = [], []
+    for index in indices:
+        image = imgs[int(index)]
+        height, width = image.shape[:2]
+        scale = min(1.0, max_dimension / max(height, width))
+        camera = dict(cams[int(index)])
+        camera["K"] = np.asarray(camera["K"], dtype=np.float64).copy()
+        if scale < 1.0:
+            resized = cv2.resize(
+                image,
+                (round(width * scale), round(height * scale)),
+                interpolation=cv2.INTER_AREA,
+            )
+            camera["K"][0, :] *= resized.shape[1] / width
+            camera["K"][1, :] *= resized.shape[0] / height
+            image = resized
+        selected_cams.append(camera)
+        selected_imgs.append(image)
+    return selected_cams, selected_imgs
+
+
+def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 30) -> dict:
     """生成可供空间判断使用的语义结果，不把普通家具检测直接判为通道风险。
 
     每个采样帧真实执行 GroundingDINO bbox → SAM mask。若提供未缩放的 SFM 点云，

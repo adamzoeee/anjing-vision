@@ -62,3 +62,30 @@ def test_known_object_references_reject_disagreement():
     )
     assert scale is None
     assert "不一致" in details["reason"]
+
+
+def test_three_references_use_two_consistent_measurements_and_mark_outlier():
+    rng = np.random.default_rng(9)
+    door = rng.uniform([-0.5, -0.02, 0], [0.5, 0.02, 2.3], (300, 3))
+    table = rng.uniform([2, 0, 0], [3.7, 0.8, 0.75], (400, 3))
+    # 分割不完整的床会给出明显错误比例，不能否决门和桌的一致结果。
+    bed = rng.uniform([4, 0, 0], [4.8, 0.4, 0.3], (300, 3))
+    points = np.concatenate([door, table, bed])
+    scale, details = estimate_scale_from_references(
+        points,
+        {
+            "门": list(range(300)),
+            "桌子": list(range(300, 700)),
+            "床": list(range(700, 1000)),
+        },
+        [
+            {"object_type": "door", "dimension": "height", "meters": 2.3},
+            {"object_type": "table", "dimension": "length", "meters": 1.7},
+            {"object_type": "bed", "dimension": "width", "meters": 1.5},
+        ],
+    )
+    assert scale is not None
+    assert 0.85 < scale < 1.2
+    assert details["used_count"] == 2
+    assert details["candidate_count"] == 3
+    assert any(item["status"] == "outlier" for item in details["references"])

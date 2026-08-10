@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from pipeline.trainer import denormalize_gaussians, normalize_scene, prepare_tensors
+from pipeline.trainer import _ssim, denormalize_gaussians, normalize_scene, prepare_tensors
 
 
 def test_prepare_tensors_shapes():
@@ -13,6 +13,23 @@ def test_prepare_tensors_shapes():
     assert gt["K"].shape == (2, 3, 3)
     assert gt["c2w"].shape == (2, 4, 4)
     assert gt["imgs"].shape == (2, 480, 640, 3)
+    assert gt["images_undistorted"] is False
+
+
+def test_prepare_tensors_records_rectified_camera_contract():
+    camera = {
+        "R": np.eye(3), "t": np.zeros(3), "K": np.eye(3), "undistorted": True,
+    }
+    gt = prepare_tensors([camera], [np.zeros((4, 4, 3), dtype=np.uint8)])
+    assert gt["images_undistorted"] is True
+
+
+def test_ssim_prefers_identical_image():
+    image = torch.rand(1, 32, 32, 3)
+    identical = float(_ssim(image, image))
+    different = float(_ssim(image, 1.0 - image))
+    assert identical > 0.999
+    assert identical > different
 
 
 def test_prepare_tensors_c2w_consistency():

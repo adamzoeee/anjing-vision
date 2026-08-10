@@ -162,6 +162,24 @@
 				z-index: 999;
 				right: 10px;
 			}
+			#camera-controls {
+				position: absolute;
+				left: 50%;
+				bottom: 18px;
+				z-index: 1000;
+				display: flex;
+				gap: 8px;
+				transform: translateX(-50%);
+				text-shadow: none;
+			}
+			#camera-controls button {
+				border: 1px solid rgba(255,255,255,.65);
+				border-radius: 18px;
+				padding: 8px 14px;
+				color: white;
+				background: rgba(0,0,0,.65);
+				cursor: pointer;
+			}
 			#canvas {
 				display: block;
 				position: absolute;
@@ -203,7 +221,7 @@
 		</p>
 
 			<details>
-			<summary>Use mouse or arrow keys to navigate.</summary>
+			<summary>优先使用底部按钮沿真实拍摄轨迹查看</summary>
 
 <div id="instructions">movement (arrow keys)
 - left/right arrow keys to strafe side to side
@@ -250,6 +268,11 @@ other
 		<div id="progress"></div>
 
 		<div id="message"></div>
+		<div id="camera-controls">
+			<button id="previous-camera" type="button">上一视角</button>
+			<button id="reset-camera" type="button">复位</button>
+			<button id="next-camera" type="button">下一视角</button>
+		</div>
 		<div class="scene" id="spinner">
 			<div class="cube-wrapper">
 				<div class="cube">

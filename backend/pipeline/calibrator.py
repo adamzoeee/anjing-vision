@@ -61,13 +61,47 @@ def estimate_scale_from_references(
     if len(candidates) < 2:
         metrics["reason"] = "至少需要两个被模型成功识别的参考尺寸"
         return None, metrics
-    median = float(np.median(candidates))
-    relative_error = float(max(abs(value - median) / median for value in candidates))
-    metrics.update({"scale": median, "max_relative_disagreement": relative_error})
-    if relative_error > 0.25:
-        metrics["reason"] = "多个参考尺寸推导的比例不一致"
+    # 三个参考中一个分割边界不完整时，不应让单个离群值否决另外两个一致参考。
+    # 寻找容差 25% 内的最大共识簇；仍要求至少两个参考达成一致。
+    tolerance = 0.25
+    best_indices: list[int] = []
+    for center in candidates:
+        indices = [
+            index for index, value in enumerate(candidates)
+            if abs(value - center) / max(center, 1e-9) <= tolerance
+        ]
+        if len(indices) > len(best_indices):
+            best_indices = indices
+    if len(best_indices) < 2:
+        median = float(np.median(candidates))
+        metrics.update({
+            "scale": median,
+            "max_relative_disagreement": float(
+                max(abs(value - median) / median for value in candidates)
+            ),
+            "reason": "多个参考尺寸推导的比例不一致",
+        })
         return None, metrics
-    return median, metrics
+
+    inliers = [candidates[index] for index in best_indices]
+    scale = float(np.median(inliers))
+    for candidate_index, detail in enumerate(details):
+        if detail.get("status") != "used":
+            continue
+        used_index = sum(
+            1 for previous in details[:candidate_index]
+            if previous.get("status") == "used"
+        )
+        if used_index not in best_indices:
+            detail["status"] = "outlier"
+    relative_error = float(max(abs(value - scale) / scale for value in inliers))
+    metrics.update({
+        "scale": scale,
+        "used_count": len(inliers),
+        "candidate_count": len(candidates),
+        "max_relative_disagreement": relative_error,
+    })
+    return scale, metrics
 
 
 def compute_scale_from_pixel(pixel_len: float, physical_len: float, distance: float, focal: float) -> float:

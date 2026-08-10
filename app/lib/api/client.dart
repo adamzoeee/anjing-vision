@@ -110,7 +110,11 @@ class ApiClient {
       data: FormData.fromMap({
         'files': MultipartFile.fromBytes(fileBytes, filename: filename),
       }),
-      options: Options(contentType: 'multipart/form-data'),
+      options: Options(
+        contentType: 'multipart/form-data',
+        sendTimeout: const Duration(minutes: 15),
+        receiveTimeout: const Duration(hours: 2),
+      ),
     );
   }
 
@@ -125,7 +129,11 @@ class ApiClient {
       data: FormData.fromMap({
         'files': await MultipartFile.fromFile(filePath, filename: filename),
       }),
-      options: Options(contentType: 'multipart/form-data'),
+      options: Options(
+        contentType: 'multipart/form-data',
+        sendTimeout: const Duration(minutes: 15),
+        receiveTimeout: const Duration(hours: 2),
+      ),
     );
   }
 
