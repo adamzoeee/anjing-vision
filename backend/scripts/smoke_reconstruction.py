@@ -26,6 +26,11 @@ def main() -> int:
     parser.add_argument("output", type=Path)
     parser.add_argument("--frames", type=int, default=80)
     parser.add_argument("--iterations", type=int, default=500)
+    parser.add_argument(
+        "--sfm-only",
+        action="store_true",
+        help="只验证抽帧、相机位姿和稀疏点云，不启动 3DGS 训练",
+    )
     args = parser.parse_args()
     if not args.video.is_file():
         parser.error(f"video does not exist: {args.video}")
@@ -45,6 +50,19 @@ def main() -> int:
     paired = [(path, cameras_by_name[path.name]) for path in sorted(clean.glob("*.jpg")) if path.name in cameras_by_name]
     images = [np.asarray(Image.open(path).convert("RGB")) for path, _ in paired]
     cameras = [camera for _, camera in paired]
+    if args.sfm_only:
+        summary = {
+            "video": str(args.video),
+            "candidate_frames": len(frames),
+            "kept_frames": len(kept),
+            "registered_frames": len(cameras),
+            "sfm_quality": sfm_quality.metrics,
+        }
+        (args.output / "summary.json").write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
     normalized_cameras, normalized_points, transform = normalize_scene(cameras, sfm["points3D"])
     gt = prepare_tensors(normalized_cameras, images)
     colors = sfm["colors3D"].astype(np.float32) / 255.0

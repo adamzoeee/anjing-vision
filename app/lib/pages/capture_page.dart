@@ -188,6 +188,11 @@ class _CapturePageState extends State<CapturePage> {
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           const Text('系统会用多个参考物校准统一米制比例；无需放置 A4 纸。'),
+          const Text(
+            '尺寸含义：长＝物体最长边，宽＝与长垂直的较短边，高＝从地面到顶部。'
+            '例如床填长约 2.0 米、宽约 1.5 米；门通常填高和门洞宽。',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
           const SizedBox(height: 8),
           for (var index = 0; index < _references.length; index++)
             _referenceRow(index),
