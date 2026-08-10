@@ -737,7 +737,9 @@ let defaultViewMatrix = [
 ];
 let viewMatrix = defaultViewMatrix;
 async function main() {
-    let carousel = true;
+    // 默认停在真实 COLMAP 训练相机上。自动漫游会把相机带离已重建区域，
+    // 造成“过一会儿黑屏/大片拉丝”的假象；需要时用户仍可按 P 主动开启。
+    let carousel = false;
     const params = new URLSearchParams(location.search);
     const hashParams = location.hash.startsWith("#token=")
         ? new URLSearchParams(location.hash.slice(1))
@@ -870,11 +872,17 @@ async function main() {
     gl.vertexAttribDivisor(a_index, 1);
 
     const resize = () => {
-        gl.uniform2fv(u_focal, new Float32Array([camera.fx, camera.fy]));
+        // COLMAP 焦距以原始抽帧像素为单位。旧实现直接把该焦距用于浏览器
+        // 画布，尤其“竖屏视频 + 横屏浏览器”时会严重改变视场角，表现为
+        // 放大、拉丝和大片缺失。按源图尺寸缩放到当前 viewport，保持归一化
+        // 内参与训练时完全一致。
+        const focalX = camera.fx * (innerWidth / camera.width);
+        const focalY = camera.fy * (innerHeight / camera.height);
+        gl.uniform2fv(u_focal, new Float32Array([focalX, focalY]));
 
         projectionMatrix = getProjectionMatrix(
-            camera.fx,
-            camera.fy,
+            focalX,
+            focalY,
             innerWidth,
             innerHeight,
         );
@@ -945,25 +953,39 @@ async function main() {
     let activeKeys = [];
     let currentCameraIndex = 0;
 
+    const setCameraIndex = (index) => {
+        if (!cameras.length) return;
+        currentCameraIndex = (index + cameras.length) % cameras.length;
+        camera = cameras[currentCameraIndex];
+        viewMatrix = getViewMatrix(camera);
+        carousel = false;
+        resize();
+        camid.innerText = `真实视角 ${currentCameraIndex + 1}/${cameras.length}`;
+    };
+
+    document.getElementById("previous-camera")?.addEventListener("click", () =>
+        setCameraIndex(currentCameraIndex - 1),
+    );
+    document.getElementById("next-camera")?.addEventListener("click", () =>
+        setCameraIndex(currentCameraIndex + 1),
+    );
+    document.getElementById("reset-camera")?.addEventListener("click", () =>
+        setCameraIndex(0),
+    );
+
     window.addEventListener("keydown", (e) => {
         // if (document.activeElement != document.body) return;
         carousel = false;
         if (!activeKeys.includes(e.code)) activeKeys.push(e.code);
         if (/\d/.test(e.key)) {
-            currentCameraIndex = parseInt(e.key);
-            camera = cameras[currentCameraIndex];
-            viewMatrix = getViewMatrix(camera);
+            setCameraIndex(parseInt(e.key));
         }
         if (["-", "_"].includes(e.key)) {
-            currentCameraIndex =
-                (currentCameraIndex + cameras.length - 1) % cameras.length;
-            viewMatrix = getViewMatrix(cameras[currentCameraIndex]);
+            setCameraIndex(currentCameraIndex - 1);
         }
         if (["+", "="].includes(e.key)) {
-            currentCameraIndex = (currentCameraIndex + 1) % cameras.length;
-            viewMatrix = getViewMatrix(cameras[currentCameraIndex]);
+            setCameraIndex(currentCameraIndex + 1);
         }
-        camid.innerText = "cam  " + currentCameraIndex;
         if (e.code == "KeyV") {
             location.hash =
                 "#" +

@@ -8,6 +8,9 @@ import cv2
 
 TARGET_COUNT = 200       # 重建输入目标帧数
 MIN_VARIANCE = 60.0      # Laplacian 方差阈值（低于视为模糊）
+MIN_SAMPLE_FPS = 2.5     # 手机绕拍需要足够相邻重叠，不能只按总帧数稀疏抽样
+MAX_SAMPLE_FPS = 30.0    # 短视频仍允许按 target_count 获取足够帧
+MAX_RECONSTRUCTION_FRAMES = 240  # 限制显存/匹配开销，同时保留长视频连续性
 
 _FFMPEG_CANDIDATES = (
     "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
@@ -49,7 +52,14 @@ def extract_frames(video: Path, out_dir: Path, target_count: int = TARGET_COUNT)
             break
     if duration <= 0:
         raise ValueError(f"无法解析视频时长: {video}")
-    fps = max(target_count / duration, 0.5)
+    # 旧实现对 1～2 分钟视频通常只取约 2fps；实测相邻 ORB 特征重叠中位数
+    # 仅约 20%，会让快速转弯处的轨迹断裂。长视频按约 2.5fps 保留连续性，
+    # 但总候选帧限制在 240，避免一次把数百张 1080p 图片常驻 GPU。
+    desired_count = min(
+        max(float(target_count), duration * MIN_SAMPLE_FPS),
+        float(MAX_RECONSTRUCTION_FRAMES),
+    )
+    fps = min(desired_count / duration, MAX_SAMPLE_FPS)
     subprocess.run([
         _ffmpeg_bin(), "-y", "-i", str(video),
         # 只缩小不放大：低分辨率输入放大后插值模糊，会误伤清晰度过滤
