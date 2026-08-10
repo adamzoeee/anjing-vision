@@ -114,16 +114,46 @@ void main() {
   });
 
   group('项目、扫描与报告 API', () {
+    test('保存扫描参考尺寸并解析响应', () async {
+      const references = [
+        {'object_type': 'door', 'dimension': 'height', 'meters': 2.05},
+        {'object_type': 'bed', 'dimension': 'length', 'meters': 2.0},
+      ];
+      adapter.onPut(
+        '/api/scans/15/references',
+        (server) => server.reply(200, {
+          'id': 15,
+          'project_id': 3,
+          'status': 'uploading',
+          'progress': 0,
+          'message': '',
+          'capture_type': 'video',
+          'reference_measurements': references,
+        }),
+        data: {'measurements': references},
+      );
+
+      final scan = await client.setReferenceMeasurements(15, references);
+
+      expect(scan.id, 15);
+      expect(lastRequest?.method, 'PUT');
+      expect(lastRequest?.data, {'measurements': references});
+    });
+
     test('查询项目列表并解析正常响应', () async {
       adapter.onGet(
         '/api/projects',
-        (server) => server.reply(200, [
-          {'id': 1, 'name': '王奶奶家', 'address': '幸福路 1 号'},
-          {'id': 2, 'name': '李爷爷家'},
-        ], headers: {
-          Headers.contentTypeHeader: [Headers.jsonContentType],
-          'x-page-size': ['20'],
-        }),
+        (server) => server.reply(
+          200,
+          [
+            {'id': 1, 'name': '王奶奶家', 'address': '幸福路 1 号'},
+            {'id': 2, 'name': '李爷爷家'},
+          ],
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+            'x-page-size': ['20'],
+          },
+        ),
       );
 
       final projects = await client.projects();
@@ -152,12 +182,16 @@ void main() {
       );
       adapter.onGet(
         '/api/projects',
-        (server) => server.reply(200, [
-          {'id': 51, 'name': '项目 51'},
-        ], headers: {
-          Headers.contentTypeHeader: [Headers.jsonContentType],
-          'x-page-size': ['50'],
-        }),
+        (server) => server.reply(
+          200,
+          [
+            {'id': 51, 'name': '项目 51'},
+          ],
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+            'x-page-size': ['50'],
+          },
+        ),
         queryParameters: {'offset': 50},
       );
 
@@ -228,27 +262,31 @@ void main() {
     test('查询项目扫描列表并解析多个状态', () async {
       adapter.onGet(
         '/api/projects/3/scans',
-        (server) => server.reply(200, [
-          {
-            'id': 12,
-            'project_id': 3,
-            'status': 'done',
-            'progress': 100,
-            'message': '已完成',
-            'capture_type': 'video',
+        (server) => server.reply(
+          200,
+          [
+            {
+              'id': 12,
+              'project_id': 3,
+              'status': 'done',
+              'progress': 100,
+              'message': '已完成',
+              'capture_type': 'video',
+            },
+            {
+              'id': 13,
+              'project_id': 3,
+              'status': 'failed',
+              'progress': 40,
+              'message': '重建失败',
+              'capture_type': 'video',
+            },
+          ],
+          headers: {
+            Headers.contentTypeHeader: [Headers.jsonContentType],
+            'x-page-size': ['20'],
           },
-          {
-            'id': 13,
-            'project_id': 3,
-            'status': 'failed',
-            'progress': 40,
-            'message': '重建失败',
-            'capture_type': 'video',
-          },
-        ], headers: {
-          Headers.contentTypeHeader: [Headers.jsonContentType],
-          'x-page-size': ['20'],
-        }),
+        ),
       );
 
       final scans = await client.listScans(3);

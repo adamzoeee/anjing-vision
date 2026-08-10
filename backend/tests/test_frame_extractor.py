@@ -1,21 +1,15 @@
-import os
 import subprocess
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from pipeline.frame_extractor import extract_frames, filter_sharp_frames
-
-FFMPEG_DIR = "C:/Program Files/ffmpeg/bin"
-
-# 模块级设置 PATH，确保本进程内任何位置调用 ffmpeg 都能找到（不依赖测试运行顺序）
-os.environ["PATH"] = FFMPEG_DIR + ";" + os.environ.get("PATH", "")
+from pipeline.frame_extractor import _ffmpeg_bin, extract_frames, filter_sharp_frames
 
 
 def _make_test_video(path: Path, duration: float = 2.0, size: str = "320x240", rate: int = 30):
     subprocess.run([
-        "ffmpeg", "-y", "-f", "lavfi",
+        _ffmpeg_bin(), "-y", "-f", "lavfi",
         "-i", f"testsrc=duration={duration}:size={size}:rate={rate}",
         "-pix_fmt", "yuv420p", str(path),
     ], check=True, capture_output=True)
