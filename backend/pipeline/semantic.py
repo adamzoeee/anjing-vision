@@ -32,6 +32,10 @@ OBJECT_PROMPTS: tuple[tuple[str, str], ...] = (
     ("plastic bucket", "水桶"),
     ("suitcase", "行李箱"),
     ("storage box", "收纳箱"),
+    ("door frame", "门"),
+    ("bed", "床"),
+    ("sofa", "沙发"),
+    ("cabinet", "柜子"),
 )
 PROMPT_OBJECTS = [prompt for prompt, _label in OBJECT_PROMPTS]
 CHINESE_PROMPT_OBJECTS = [label for _prompt, label in OBJECT_PROMPTS]
@@ -326,8 +330,24 @@ def project_mask_to_points(
     x, y = np.rint(uv[:, 0]).astype(int), np.rint(uv[:, 1]).astype(int)
     height, width = mask.shape
     inside = (x >= 0) & (x < width) & (y >= 0) & (y < height)
-    hit_local = np.where(inside)[0][mask[y[inside], x[inside]].astype(bool)]
-    return idx[hit_local].tolist()
+    inside_local = np.where(inside)[0]
+    masked_local = inside_local[mask[y[inside], x[inside]].astype(bool)]
+    if len(masked_local) == 0:
+        return []
+
+    # 2D 实例 mask 只描述当前相机看见的物体表面。旧实现把同一像素射线后方
+    # 的墙、柜子和其他物体也全部投票给前景标签，导致床/桌的 3D 包围盒被背景
+    # 拉长，米制参考尺寸严重失真。使用轻量 z-buffer，仅保留每个像素最前方
+    # 3% 深度层内的点；相对容差适用于 COLMAP 的任意比例尺度。
+    candidate_ids = idx[masked_local]
+    candidate_x = x[masked_local]
+    candidate_y = y[masked_local]
+    candidate_depth = cam_pts[candidate_ids, 2]
+    pixel_ids = candidate_y * width + candidate_x
+    nearest_depth = np.full(height * width, np.inf, dtype=np.float64)
+    np.minimum.at(nearest_depth, pixel_ids, candidate_depth)
+    visible = candidate_depth <= nearest_depth[pixel_ids] * 1.03 + 1e-9
+    return candidate_ids[visible].tolist()
 
 
 def merge_votes(votes: dict[int, dict[str, int]]) -> dict[int, str]:

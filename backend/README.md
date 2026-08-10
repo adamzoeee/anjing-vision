@@ -25,7 +25,7 @@
 
 ```
 Flutter App → FastAPI (REST+JWT) → Celery → 管道：ffmpeg 抽帧 → pycolmap SFM
-→ gsplat 3DGS 训练 → 点云导出 → A4 纸标定 → SAM 语义 → 几何分析 → 规则评分 → 报告
+→ gsplat 3DGS 训练 → 点云导出 → 多参考物米制标定 → SAM 语义 → 几何分析 → 规则评分 → 报告
 存储：PostgreSQL（元数据）+ Redis（队列）+ MinIO（媒体/点云/报告）
 ```
 

@@ -46,6 +46,19 @@ def test_project_mask_negative_depth_ignored():
     assert hits == []
 
 
+def test_project_mask_keeps_front_surface_and_rejects_occluded_background():
+    """同一 mask 像素后的墙面点不能被错误标成前景物体。"""
+    K = np.array([[100, 0, 50], [0, 100, 50], [0, 0, 1.0]])
+    points = np.array([
+        [0.0, 0.0, 2.0],    # 前景表面
+        [0.0, 0.0, 2.04],   # 同一表面的少量厚度，3% 容差内
+        [0.0, 0.0, 5.0],    # 同像素后方墙面，必须剔除
+    ])
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    mask[50, 50] = 1
+    assert project_mask_to_points(points, mask, K, np.eye(3), np.zeros(3)) == [0, 1]
+
+
 def test_prompt_and_label_mapping_are_grounding_dino_compatible():
     prompt = build_prompt()
     assert prompt.endswith(".")
