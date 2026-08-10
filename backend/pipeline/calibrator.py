@@ -1,13 +1,107 @@
-"""尺度标定：A4 纸（0.21 x 0.297m）为参照物换算全局尺度；门高先验兜底。
+"""尺度标定：默认使用用户提供的 2～3 个已知物体尺寸恢复米制比例。
 
-相机模型: pixel_len = focal * physical_len / distance  →  distance = focal * physical / pixel。
-标定物到相机的距离由 SFM 位姿给出，故可从像素尺寸反推每单位长度对应的真实米数。
+文件末尾保留的 A4/门高函数仅用于旧扫描兼容，不参与当前默认管道。
 """
 import numpy as np
 
 A4_SHORT = 0.210  # m
 A4_LONG = 0.297   # m
 DOOR_STANDARD_HEIGHT = 2.0  # m
+
+REFERENCE_LABELS = {
+    "door": "门",
+    "bed": "床",
+    "sofa": "沙发",
+    "table": "桌子",
+    "cabinet": "柜子",
+}
+
+
+def _object_extents(points: np.ndarray) -> np.ndarray | None:
+    """以 PCA 主轴计算物体稳健包围盒，避免依赖 SFM 世界轴方向。"""
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    if len(points) < 20:
+        return None
+    center = np.median(points, axis=0)
+    _, _, axes = np.linalg.svd(points - center, full_matrices=False)
+    projected = (points - center) @ axes.T
+    extents = np.percentile(projected, 95, axis=0) - np.percentile(projected, 5, axis=0)
+    return np.sort(extents)[::-1]
+
+
+def estimate_scale_from_references(
+    points: np.ndarray,
+    semantic_point_ids: dict[str, list[int]],
+    measurements: list[dict],
+) -> tuple[float | None, dict]:
+    """由 2～3 个已知物体尺寸稳健估计米/模型单位比例。"""
+    candidates = []
+    details = []
+    rank_by_type = {
+        ("door", "height"): 0, ("door", "width"): 1,
+        ("bed", "length"): 0, ("bed", "width"): 1, ("bed", "height"): 2,
+        ("sofa", "length"): 0, ("sofa", "width"): 1, ("sofa", "height"): 2,
+        ("table", "length"): 0, ("table", "width"): 1, ("table", "height"): 2,
+        ("cabinet", "height"): 0, ("cabinet", "width"): 1, ("cabinet", "length"): 1,
+    }
+    for item in measurements:
+        object_type = item.get("object_type")
+        label = REFERENCE_LABELS.get(object_type)
+        ids = semantic_point_ids.get(label, []) if label else []
+        extents = _object_extents(points[np.asarray(ids, dtype=int)]) if ids else None
+        rank = rank_by_type.get((object_type, item.get("dimension")))
+        if extents is None or rank is None or rank >= len(extents) or extents[rank] <= 1e-6:
+            details.append({**item, "status": "not_detected"})
+            continue
+        scale = float(item["meters"]) / float(extents[rank])
+        if np.isfinite(scale) and 0.02 < scale < 20.0:
+            candidates.append(scale)
+            details.append({**item, "status": "used", "model_units": float(extents[rank]), "scale": scale})
+    metrics = {"references": details, "used_count": len(candidates)}
+    if len(candidates) < 2:
+        metrics["reason"] = "至少需要两个被模型成功识别的参考尺寸"
+        return None, metrics
+    # 三个参考中一个分割边界不完整时，不应让单个离群值否决另外两个一致参考。
+    # 寻找容差 25% 内的最大共识簇；仍要求至少两个参考达成一致。
+    tolerance = 0.25
+    best_indices: list[int] = []
+    for center in candidates:
+        indices = [
+            index for index, value in enumerate(candidates)
+            if abs(value - center) / max(center, 1e-9) <= tolerance
+        ]
+        if len(indices) > len(best_indices):
+            best_indices = indices
+    if len(best_indices) < 2:
+        median = float(np.median(candidates))
+        metrics.update({
+            "scale": median,
+            "max_relative_disagreement": float(
+                max(abs(value - median) / median for value in candidates)
+            ),
+            "reason": "多个参考尺寸推导的比例不一致",
+        })
+        return None, metrics
+
+    inliers = [candidates[index] for index in best_indices]
+    scale = float(np.median(inliers))
+    for candidate_index, detail in enumerate(details):
+        if detail.get("status") != "used":
+            continue
+        used_index = sum(
+            1 for previous in details[:candidate_index]
+            if previous.get("status") == "used"
+        )
+        if used_index not in best_indices:
+            detail["status"] = "outlier"
+    relative_error = float(max(abs(value - scale) / scale for value in inliers))
+    metrics.update({
+        "scale": scale,
+        "used_count": len(inliers),
+        "candidate_count": len(candidates),
+        "max_relative_disagreement": relative_error,
+    })
+    return scale, metrics
 
 
 def compute_scale_from_pixel(pixel_len: float, physical_len: float, distance: float, focal: float) -> float:

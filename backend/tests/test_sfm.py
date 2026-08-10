@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from pipeline.sfm import build_synthetic_cameras, run_sfm
+from pipeline.sfm import build_synthetic_cameras, run_sfm, undistort_registered_view
 
 
 def test_build_synthetic_cameras_circular():
@@ -63,6 +63,12 @@ class _FakeCam:
     focal_length_y = 500.0
     principal_point_x = 320.0
     principal_point_y = 240.0
+    width = 640
+    height = 480
+    params = np.array([500.0, 320.0, 240.0, 0.02])
+
+    class model:
+        name = "SIMPLE_RADIAL"
 
 
 class _FakeRecon:
@@ -74,25 +80,72 @@ class _FakeRecon:
 
 def _patch_pycolmap(monkeypatch, return_value):
     import pycolmap
-    monkeypatch.setattr(pycolmap, "extract_features", lambda *a, **k: None)
-    monkeypatch.setattr(pycolmap, "match_exhaustive", lambda *a, **k: None)
+    captured = {}
+    monkeypatch.setattr(pycolmap, "extract_features", lambda *a, **k: captured.update(k))
+    monkeypatch.setattr(
+        pycolmap,
+        "match_sequential",
+        lambda *a, **k: captured.update({"pairing_options": k["pairing_options"]}),
+    )
+    monkeypatch.setattr(
+        pycolmap,
+        "match_exhaustive",
+        lambda *a, **k: captured.update({"exhaustive_called": True}),
+    )
     monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **k: return_value)
+    return captured
 
 
-def _make_image_dir(tmp_path):
+def _make_image_dir(tmp_path, count=1):
     img_dir = tmp_path / "imgs"
     img_dir.mkdir()
-    (img_dir / "a.jpg").write_bytes(b"x")
+    import cv2
+    for index in range(count):
+        cv2.imwrite(str(img_dir / f"a{index}.jpg"), np.zeros((24, 32, 3), dtype=np.uint8))
     return img_dir
 
 
 def test_run_sfm_accepts_dict_return(tmp_path, monkeypatch):
     """pycolmap 4.x dict 返回形态：{model_index: Reconstruction}，取注册帧最多的主模型。"""
-    _patch_pycolmap(monkeypatch, {0: _FakeRecon(2), 1: _FakeRecon(1)})
+    captured = _patch_pycolmap(monkeypatch, {0: _FakeRecon(2), 1: _FakeRecon(1)})
     out = run_sfm(_make_image_dir(tmp_path), tmp_path / "work")
     assert len(out["cameras"]) == 2  # 取 2 帧的主模型而非 1 帧的次模型
     assert out["cameras"][0]["name"] == "a0.jpg"
     assert out["points3D"].shape == (0, 3)
+    import pycolmap
+    assert captured["camera_mode"] == pycolmap.CameraMode.SINGLE
+    assert captured["pairing_options"].overlap == 30
+    assert captured["pairing_options"].quadratic_overlap is True
+    assert out["cameras"][0]["camera_model"] == "SIMPLE_RADIAL"
+    assert out["cameras"][0]["radial_distortion"] == pytest.approx([0.02])
+    assert out["quality"]["component_count"] == 2
+    assert out["quality"]["component_registered_images"] == [2, 1]
+
+
+def test_undistort_registered_view_rectifies_radial_camera():
+    image = np.zeros((31, 41, 3), dtype=np.uint8)
+    image[5:26, 8:33] = 255
+    camera = {
+        "K": np.array([[35.0, 0, 20.0], [0, 35.0, 15.0], [0, 0, 1.0]]),
+        "camera_model": "SIMPLE_RADIAL",
+        "radial_distortion": np.array([0.1]),
+    }
+    rectified, pinhole = undistort_registered_view(image, camera)
+    assert rectified.shape == image.shape
+    assert pinhole["camera_model"] == "PINHOLE"
+    assert pinhole["undistorted"] is True
+    assert pinhole["source_radial_distortion"] == pytest.approx([0.1])
+    assert np.array_equal(pinhole["K"], camera["K"])
+    assert not np.array_equal(rectified, image)
+
+
+def test_undistort_registered_view_is_noop_for_pinhole():
+    image = np.arange(75, dtype=np.uint8).reshape(5, 5, 3)
+    camera = {"K": np.eye(3), "camera_model": "PINHOLE"}
+    rectified, pinhole = undistort_registered_view(image, camera)
+    assert np.array_equal(rectified, image)
+    assert rectified is not image
+    assert pinhole["undistorted"] is True
 
 
 def test_run_sfm_accepts_list_return(tmp_path, monkeypatch):
@@ -107,3 +160,39 @@ def test_run_sfm_rejects_empty_dict(tmp_path, monkeypatch):
     _patch_pycolmap(monkeypatch, {})
     with pytest.raises(RuntimeError):
         run_sfm(_make_image_dir(tmp_path), tmp_path / "work")
+
+
+def test_run_sfm_falls_back_to_exhaustive_when_main_track_is_incomplete(tmp_path, monkeypatch):
+    """两轮顺序匹配的主轨迹不足70%时，必须用全量匹配兜底。"""
+    import pycolmap
+
+    captured = _patch_pycolmap(monkeypatch, {0: _FakeRecon(6), 1: _FakeRecon(3)})
+    calls = iter([
+        {0: _FakeRecon(6), 1: _FakeRecon(3)},
+        {0: _FakeRecon(6), 1: _FakeRecon(3)},
+        {0: _FakeRecon(9)},
+    ])
+    monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **k: next(calls))
+
+    out = run_sfm(_make_image_dir(tmp_path, count=10), tmp_path / "work")
+
+    assert captured["exhaustive_called"] is True
+    assert len(out["cameras"]) == 9
+
+
+def test_run_sfm_falls_back_to_exhaustive_for_significant_second_component(tmp_path, monkeypatch):
+    """主模型超过70%但仍有显著第二片段时，不能静默丢弃第二片段。"""
+    import pycolmap
+
+    captured = _patch_pycolmap(monkeypatch, {0: _FakeRecon(80), 1: _FakeRecon(15)})
+    calls = iter([
+        {0: _FakeRecon(80), 1: _FakeRecon(15)},
+        {0: _FakeRecon(80), 1: _FakeRecon(15)},
+        {0: _FakeRecon(96)},
+    ])
+    monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **k: next(calls))
+
+    out = run_sfm(_make_image_dir(tmp_path, count=100), tmp_path / "work")
+
+    assert captured["exhaustive_called"] is True
+    assert len(out["cameras"]) == 96

@@ -1,2 +1,9 @@
-/// 移动端：无 dart:html，3D 预览请在网页版查看（UI 层自行提示）。
-void openPreview(String url) {}
+import 'package:flutter/material.dart';
+import 'preview_page.dart';
+
+/// 移动端：在 App 内打开受控 WebView，不再显示黑色占位。
+void openPreview(BuildContext context, String url) {
+  Navigator.of(
+    context,
+  ).push(MaterialPageRoute(builder: (_) => PreviewPage(url: url)));
+}
