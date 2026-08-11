@@ -238,6 +238,7 @@ def train_gaussians(
     result["training_metrics"] = {
         "final_loss": float(loss.detach().cpu()),
         "iterations": num_iter,
+        "training_view_count": n,
         "gaussian_count": len(result["means"]),
         "densification": strategy is not None,
         "training_profile": profile,
