@@ -1,10 +1,13 @@
 """SFM：pycolmap 从图片集恢复相机位姿与稀疏点云。"""
+import logging
 import shutil
 from pathlib import Path
 
 import numpy as np
 
 OUTPUT_DIR = "sfm"
+MAX_EXHAUSTIVE_IMAGES = 240
+logger = logging.getLogger("anjing.pipeline")
 
 
 def undistort_registered_view(image: np.ndarray, camera: dict) -> tuple[np.ndarray, dict]:
@@ -126,8 +129,8 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
         maps = pycolmap.incremental_mapping(db_path, str(image_dir), str(model_path))
     # 两轮顺序匹配仍可能在快速转向或短暂模糊处把同一房间切成多个局部模型。
     # 不能因为最大局部模型碰巧存在就直接宣告失败：仅当主模型注册率不足质量
-    # 门槛时，追加全量匹配并重新建图。视频帧已限制为最多 240 张，因此该兜底
-    # 成本有上界；正常连续视频仍只走较快的顺序匹配。
+    # 门槛时，小数据集追加全量匹配；高密度抽帧可能超过 240 张，此时全量匹配
+    # 会平方级增长，因此改为扩大顺序窗口，避免为提高视角密度而耗尽内存/磁盘。
     models_after_sequential = _reconstructions(maps)
     component_sizes = sorted(
         (len(model.images) for model in models_after_sequential), reverse=True
@@ -138,7 +141,17 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
     )
     if best_registered / max(image_count, 1) < 0.70 or significant_secondary:
         shutil.rmtree(model_path, ignore_errors=True)
-        pycolmap.match_exhaustive(db_path)
+        if image_count <= MAX_EXHAUSTIVE_IMAGES:
+            logger.info("sfm_fallback mode=exhaustive image_count=%d", image_count)
+            pycolmap.match_exhaustive(db_path)
+        else:
+            pairing.overlap = 60
+            logger.info(
+                "sfm_fallback mode=expanded_sequential image_count=%d overlap=%d",
+                image_count,
+                pairing.overlap,
+            )
+            pycolmap.match_sequential(db_path, pairing_options=pairing)
         maps = pycolmap.incremental_mapping(db_path, str(image_dir), str(model_path))
     # 4.x 返回 {model_index: Reconstruction}（失败为空 dict）；
     # 多模型时取注册帧最多的主模型；兼容旧版本返回列表/元组或 None

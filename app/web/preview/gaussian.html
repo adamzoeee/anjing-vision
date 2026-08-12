@@ -180,6 +180,19 @@
 				background: rgba(0,0,0,.65);
 				cursor: pointer;
 			}
+			#interaction-hint {
+				position: absolute;
+				left: 50%;
+				top: 14px;
+				z-index: 1000;
+				transform: translateX(-50%);
+				padding: 7px 12px;
+				border-radius: 16px;
+				background: rgba(0,0,0,.62);
+				font-size: 12px;
+				pointer-events: none;
+				text-shadow: none;
+			}
 			#canvas {
 				display: block;
 				position: absolute;
@@ -221,7 +234,7 @@
 		</p>
 
 			<details>
-			<summary>优先使用底部按钮沿真实拍摄轨迹查看</summary>
+			<summary>鼠标拖动自由旋转，滚轮缩放；底部按钮可回到拍摄视角</summary>
 
 <div id="instructions">movement (arrow keys)
 - left/right arrow keys to strafe side to side
@@ -273,6 +286,7 @@ other
 			<button id="reset-camera" type="button">复位</button>
 			<button id="next-camera" type="button">下一视角</button>
 		</div>
+		<div id="interaction-hint">拖动旋转 · 滚轮缩放 · 右键拖动平移</div>
 		<div class="scene" id="spinner">
 			<div class="cube-wrapper">
 				<div class="cube">
