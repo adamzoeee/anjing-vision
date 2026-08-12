@@ -1,5 +1,6 @@
 """SFM：pycolmap 从图片集恢复相机位姿与稀疏点云。"""
 import logging
+import math
 import shutil
 from pathlib import Path
 
@@ -7,6 +8,14 @@ import numpy as np
 
 OUTPUT_DIR = "sfm"
 MAX_EXHAUSTIVE_IMAGES = 240
+SIFT_MAX_NUM_FEATURES = 12_000
+SIFT_PEAK_THRESHOLD = 0.004
+LONG_RANGE_MAX_ANCHORS = 60
+LONG_RANGE_CANDIDATES_PER_ANCHOR = 3
+LONG_RANGE_MAX_PAIRS = 600
+LONG_RANGE_MIN_GOOD_MATCHES = 12
+LONG_RANGE_ORB_FEATURES = 400
+LONG_RANGE_THUMBNAIL_SIZE = 320
 logger = logging.getLogger("anjing.pipeline")
 
 
@@ -83,6 +92,8 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
     options = pycolmap.FeatureExtractionOptions()
     options.num_threads = 8
     options.max_image_size = 1600
+    options.sift.max_num_features = SIFT_MAX_NUM_FEATURES
+    options.sift.peak_threshold = SIFT_PEAK_THRESHOLD
     # 指定相机内参：视频帧无 EXIF 焦距，默认 1.2×max(w,h) 对手机广角视频偏长焦，
     # 几何验证不会产生 CALIBRATED 对，初始图像对永远找不到（No good initial pair）。
     # 按广角先验取 0.75×max(w,h)，后续 A4 标定/门高先验会修正尺度。
@@ -107,6 +118,8 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
             reader_options=reader, extraction_options=options,
         )
     image_count = len(list(image_dir.glob("*.jpg")))
+    matching = pycolmap.FeatureMatchingOptions()
+    matching.guided_matching = True
     # 输入来自按时间排序的单段视频。全量两两匹配会随帧数平方增长，并容易让
     # 室内重复纹理/窗外画面产生远距离误匹配。先覆盖相邻 15 帧；若轨迹仍被
     # 分成多个局部模型，再扩大到 30 帧重试，避免所有视频都承担高匹配开销。
@@ -115,7 +128,35 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
     pairing.overlap = 15
     pairing.quadratic_overlap = True
     pairing.num_threads = 8
-    pycolmap.match_sequential(db_path, pairing_options=pairing)
+    pycolmap.match_sequential(
+        db_path,
+        matching_options=matching,
+        pairing_options=pairing,
+    )
+    long_range_pairs = _build_long_range_pairs(image_dir)
+    if long_range_pairs:
+        pair_list_path = work_dir / "long_range_pairs.txt"
+        pair_list_path.write_text(
+            "".join(f"{left} {right}\n" for left, right in long_range_pairs),
+            encoding="utf-8",
+        )
+        imported = pycolmap.ImportedPairingOptions()
+        imported.match_list_path = pair_list_path
+        pycolmap.match_image_pairs(
+            db_path,
+            matching_options=matching,
+            pairing_options=imported,
+        )
+    logger.info(
+        "sfm_matching image_count=%d sift_max_num_features=%d sift_peak_threshold=%.4f "
+        "guided_matching=%s sequential_overlap=%d long_range_pairs=%d",
+        image_count,
+        SIFT_MAX_NUM_FEATURES,
+        SIFT_PEAK_THRESHOLD,
+        matching.guided_matching,
+        pairing.overlap,
+        len(long_range_pairs),
+    )
     maps = pycolmap.incremental_mapping(db_path, str(image_dir), str(model_path))
     initial_models = (
         [model for model in maps.values() if model is not None]
@@ -125,7 +166,11 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
     if len(initial_models) > 1:
         shutil.rmtree(model_path, ignore_errors=True)
         pairing.overlap = 30
-        pycolmap.match_sequential(db_path, pairing_options=pairing)
+        pycolmap.match_sequential(
+            db_path,
+            matching_options=matching,
+            pairing_options=pairing,
+        )
         maps = pycolmap.incremental_mapping(db_path, str(image_dir), str(model_path))
     # 两轮顺序匹配仍可能在快速转向或短暂模糊处把同一房间切成多个局部模型。
     # 不能因为最大局部模型碰巧存在就直接宣告失败：仅当主模型注册率不足质量
@@ -143,7 +188,7 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
         shutil.rmtree(model_path, ignore_errors=True)
         if image_count <= MAX_EXHAUSTIVE_IMAGES:
             logger.info("sfm_fallback mode=exhaustive image_count=%d", image_count)
-            pycolmap.match_exhaustive(db_path)
+            pycolmap.match_exhaustive(db_path, matching_options=matching)
         else:
             pairing.overlap = 60
             logger.info(
@@ -151,7 +196,11 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
                 image_count,
                 pairing.overlap,
             )
-            pycolmap.match_sequential(db_path, pairing_options=pairing)
+            pycolmap.match_sequential(
+                db_path,
+                matching_options=matching,
+                pairing_options=pairing,
+            )
         maps = pycolmap.incremental_mapping(db_path, str(image_dir), str(model_path))
     # 4.x 返回 {model_index: Reconstruction}（失败为空 dict）；
     # 多模型时取注册帧最多的主模型；兼容旧版本返回列表/元组或 None
@@ -228,3 +277,86 @@ def _reconstructions(maps) -> list:
     if isinstance(maps, (list, tuple)):
         return [model for model in maps if model is not None]
     return [maps] if maps is not None else []
+
+
+def _build_long_range_pairs(
+    image_dir: Path,
+    *,
+    max_anchors: int = LONG_RANGE_MAX_ANCHORS,
+    candidates_per_anchor: int = LONG_RANGE_CANDIDATES_PER_ANCHOR,
+    max_pairs: int = LONG_RANGE_MAX_PAIRS,
+) -> list[tuple[str, str]]:
+    """用轻量 ORB 相似度提出有限非邻接候选，最终连接仍由 COLMAP 验证。"""
+    paths = sorted(Path(image_dir).glob("*.jpg"))
+    if len(paths) < 4 or max_anchors < 2 or candidates_per_anchor < 1 or max_pairs < 1:
+        return []
+    anchor_stride = max(1, math.ceil(len(paths) / max_anchors))
+    anchor_indices = list(range(0, len(paths), anchor_stride))
+    if anchor_indices[-1] != len(paths) - 1:
+        anchor_indices.append(len(paths) - 1)
+    signatures = {
+        index: _orb_signature(paths[index])
+        for index in anchor_indices
+    }
+    min_separation = max(15, len(paths) // 20)
+    proposals: dict[int, list[tuple[int, int]]] = {index: [] for index in anchor_indices}
+    for left_offset, left_index in enumerate(anchor_indices):
+        left_descriptor = signatures[left_index]
+        if left_descriptor is None:
+            continue
+        for right_index in anchor_indices[left_offset + 1:]:
+            if right_index - left_index < min_separation:
+                continue
+            right_descriptor = signatures[right_index]
+            if right_descriptor is None:
+                continue
+            score = _orb_match_score(left_descriptor, right_descriptor)
+            if score < LONG_RANGE_MIN_GOOD_MATCHES:
+                continue
+            proposals[left_index].append((score, right_index))
+            proposals[right_index].append((score, left_index))
+
+    selected: set[tuple[int, int]] = set()
+    for anchor_index, candidates in proposals.items():
+        for _score, other_index in sorted(candidates, reverse=True)[:candidates_per_anchor]:
+            selected.add(tuple(sorted((anchor_index, other_index))))
+    ranked = sorted(
+        selected,
+        key=lambda pair: (
+            -_orb_match_score(signatures[pair[0]], signatures[pair[1]]),
+            pair,
+        ),
+    )[:max_pairs]
+    return [(paths[left].name, paths[right].name) for left, right in ranked]
+
+
+def _orb_signature(path: Path) -> np.ndarray | None:
+    import cv2
+
+    image = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+    if image is None:
+        return None
+    height, width = image.shape[:2]
+    scale = min(1.0, LONG_RANGE_THUMBNAIL_SIZE / max(height, width))
+    if scale < 1.0:
+        image = cv2.resize(
+            image,
+            (max(1, round(width * scale)), max(1, round(height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    detector = cv2.ORB_create(nfeatures=LONG_RANGE_ORB_FEATURES)
+    _keypoints, descriptors = detector.detectAndCompute(image, None)
+    return descriptors
+
+
+def _orb_match_score(left: np.ndarray, right: np.ndarray) -> int:
+    import cv2
+
+    if left is None or right is None or len(left) < 2 or len(right) < 2:
+        return 0
+    matches = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(left, right, k=2)
+    return sum(
+        1
+        for pair in matches
+        if len(pair) == 2 and pair[0].distance < 0.75 * pair[1].distance
+    )
