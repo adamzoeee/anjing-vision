@@ -10,6 +10,7 @@ from app.tasks.pipeline_runner import (
     _configured_training_view_limit,
     _find_obstacles,
     _known_reference_value,
+    _pair_registered_training_frames,
     _pixel_ray,
     _prepare_training_views,
     _robust_scene_extents,
@@ -17,6 +18,25 @@ from app.tasks.pipeline_runner import (
     _triangulate,
     _upsert_report,
 )
+
+
+def test_training_pairs_exclude_registered_sfm_bridge_frames(tmp_path):
+    sharp = [
+        tmp_path / "frame_00001.jpg",
+        tmp_path / "frame_00003.jpg",
+        tmp_path / "frame_00005.jpg",
+    ]
+    cameras = [
+        {"name": "frame_00001.jpg", "id": 1},
+        {"name": "frame_00002.jpg", "id": 2},  # SfM bridge: must not train.
+        {"name": "frame_00003.jpg", "id": 3},
+        {"name": "frame_00004.jpg", "id": 4},  # SfM bridge: must not train.
+    ]
+
+    paired = _pair_registered_training_frames(sharp, cameras)
+
+    assert [path.name for path, _ in paired] == ["frame_00001.jpg", "frame_00003.jpg"]
+    assert [camera["id"] for _, camera in paired] == [1, 3]
 
 
 def test_prepare_training_views_samples_trajectory_and_scales_intrinsics():
