@@ -7,6 +7,7 @@ from app.db import SessionLocal
 from app.models import Organization, Project, Report, Scan
 from app.tasks.pipeline_runner import (
     _calibrate_with_a4,
+    _configured_training_iterations,
     _configured_training_view_limit,
     _find_obstacles,
     _known_reference_value,
@@ -14,6 +15,7 @@ from app.tasks.pipeline_runner import (
     _pixel_ray,
     _prepare_training_views,
     _robust_scene_extents,
+    _sample_ordered_items,
     _step_measurements,
     _triangulate,
     _upsert_report,
@@ -63,12 +65,34 @@ def test_prepare_training_views_scales_intrinsics_with_image():
 
 
 def test_training_view_limit_is_configurable_but_bounded(monkeypatch):
+    monkeypatch.delenv("TEST_MODE", raising=False)
     monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "160")
     assert _configured_training_view_limit() == 160
     monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "999")
     assert _configured_training_view_limit() == 240
     monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "invalid")
     assert _configured_training_view_limit() == 120
+
+
+def test_fast_test_mode_limits_sfm_views_and_iterations(monkeypatch):
+    monkeypatch.setenv("TEST_MODE", "True")
+    monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "200")
+    monkeypatch.setenv("GAUSSIAN_TRAIN_ITERATIONS", "30000")
+
+    selected = _sample_ordered_items(list(range(283)), 140)
+
+    assert len(selected) == 140
+    assert selected[0] == 0
+    assert selected[-1] == 282
+    assert selected == sorted(selected)
+    assert _configured_training_view_limit() == 50
+    assert _configured_training_iterations() == 2000
+
+
+def test_production_training_iterations_remain_unchanged(monkeypatch):
+    monkeypatch.delenv("TEST_MODE", raising=False)
+    monkeypatch.delenv("GAUSSIAN_TRAIN_ITERATIONS", raising=False)
+    assert _configured_training_iterations() == 30000
 
 
 def test_no_detected_step_remains_confirmed_zero_threshold():

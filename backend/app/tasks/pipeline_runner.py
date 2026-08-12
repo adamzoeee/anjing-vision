@@ -4,6 +4,8 @@
 """
 import logging
 import os
+import re
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +19,9 @@ from ..storage import media_path
 logger = logging.getLogger("anjing.pipeline")
 DEFAULT_MAX_TRAINING_VIEWS = 120  # 8GB 显存下约 1.3GB Float32 训练图像，给高斯优化保留余量
 MAX_CONFIGURED_TRAINING_VIEWS = 240
+TEST_MAX_SFM_FRAMES = 140
+TEST_MAX_TRAINING_VIEWS = 50
+TEST_GAUSSIAN_ITERATIONS = 2000
 
 STAGES = [
     ("extracting", 5, "抽帧中"), ("sfm", 25, "相机位姿估计中"),
@@ -37,6 +42,7 @@ def _step_measurements(step: float) -> dict:
 def run_pipeline(scan_id: int) -> None:
     s = get_settings()
     db = SessionLocal()
+    scan = None
     try:
         scan = db.get(Scan, scan_id)
         if scan is None:
@@ -62,6 +68,18 @@ def run_pipeline(scan_id: int) -> None:
             all_frames,
             sharp_frames,
         )
+        test_mode = _test_mode_enabled()
+        if test_mode:
+            sfm_frames = _sample_ordered_items(sfm_frames, TEST_MAX_SFM_FRAMES)
+            bridge_set = set(bridge_frames)
+            bridge_frames = [path for path in sfm_frames if path in bridge_set]
+            logger.info(
+                "TEST_MODE enabled sfm_input_limit=%d training_view_limit=%d "
+                "gaussian_iterations=%d",
+                TEST_MAX_SFM_FRAMES,
+                TEST_MAX_TRAINING_VIEWS,
+                TEST_GAUSSIAN_ITERATIONS,
+            )
         logger.info(
             "frame_filter scan_id=%s candidate_frames=%d sharp_frames=%d blurred_frames=%d "
             "sfm_bridge_frames_restored=%d sfm_input_frames=%d "
@@ -153,7 +171,20 @@ def run_pipeline(scan_id: int) -> None:
         init_colors = sfm_out.get("colors3D")
         if init_colors is not None:
             init_colors = np.asarray(init_colors, dtype=np.float32) / 255.0
-        gaussians = train_gaussians(gt, normalized_points, init_colors)
+        training_iterations = _configured_training_iterations()
+        logger.info(
+            "3DGS TRAINING START scan_id=%s test_mode=%s training_views=%d iterations=%d",
+            scan_id,
+            test_mode,
+            len(training_imgs),
+            training_iterations,
+        )
+        gaussians = train_gaussians(
+            gt,
+            normalized_points,
+            init_colors,
+            num_iter=training_iterations,
+        )
         gaussians = denormalize_gaussians(gaussians, scene_transform)
         # 训练结果已经转回 CPU；语义阶段还要同时加载 GroundingDINO 与 SAM。
         # 及时释放整批训练图像张量，避免 8GB 级显卡在模型切换时无谓 OOM。
@@ -252,6 +283,11 @@ def run_pipeline(scan_id: int) -> None:
         preview_dir = work / "preview"
         gaussian_filename = "scene_gaussian.ply"
         export_gaussian_ply(gaussians, preview_dir / gaussian_filename)
+        logger.info(
+            "GAUSSIAN EXPORT SUCCESS scan_id=%s path=%s",
+            scan_id,
+            preview_dir / gaussian_filename,
+        )
         preview = build_preview_assets(
             points,
             preview_dir,
@@ -283,16 +319,25 @@ def run_pipeline(scan_id: int) -> None:
         )
         _stage(db, scan, "done", 100, "评估完成")
     except Exception as e:  # noqa: BLE001 - 管道任一步失败都落到 failed
+        failed_stage = getattr(scan, "status", "unknown")
         db.rollback()
+        safe_message = _sanitize_log_text(str(e))
         logger.error(
-            "pipeline_failed scan_id=%s exception_type=%s",
+            "pipeline_failed scan_id=%s stage=%s exception_type=%s exception_message=%s",
             scan_id,
+            failed_stage,
             type(e).__name__,
+            safe_message,
         )
-        logger.exception("pipeline_failed traceback scan_id=%s", scan_id)
+        logger.error(
+            "pipeline_failed traceback scan_id=%s stage=%s\n%s",
+            scan_id,
+            failed_stage,
+            _sanitize_log_text("".join(traceback.format_exception(type(e), e, e.__traceback__))),
+        )
         scan = db.get(Scan, scan_id)
         if scan:
-            _fail(db, scan, "管道处理失败，请稍后重试")
+            _fail(db, scan, _user_failure_message(failed_stage, e))
     finally:
         db.close()
 
@@ -305,6 +350,22 @@ def _stage(db, scan, status, progress, message):
 def _fail(db, scan, message):
     scan.status, scan.progress, scan.message = "failed", 100, message
     db.commit()
+
+
+def _user_failure_message(stage: str, exc: Exception) -> str:
+    """Return a concise frontend message while detailed diagnostics stay in logs."""
+    detail = str(exc).lower()
+    if stage == "training":
+        if any(token in detail for token in ("gsplat", "cuda", "ninja", "msvc", "nvcc")):
+            return "3DGS训练失败：gsplat CUDA扩展不可用，请检查CUDA/Ninja/MSVC环境"
+        return "3DGS训练失败，请查看后端日志"
+    return "管道处理失败，请稍后重试"
+
+
+def _sanitize_log_text(value: str) -> str:
+    """Retain diagnostics without leaking credentials or local filesystem paths."""
+    value = re.sub(r"(?i)(password|secret|token)\s*=\s*[^\s,;]+", r"\1=<redacted>", value)
+    return re.sub(r"(?i)(?:[a-z]:\\|[a-z]:/)[^\s\r\n]+", "<local-path>", value)
 
 
 def _upsert_report(
@@ -484,6 +545,8 @@ def _prepare_training_views(
 
 def _configured_training_view_limit() -> int:
     """读取可调训练视角上限，并限制到当前全量 GPU 张量实现的安全范围。"""
+    if _test_mode_enabled():
+        return TEST_MAX_TRAINING_VIEWS
     raw = os.getenv("GAUSSIAN_MAX_TRAINING_VIEWS", str(DEFAULT_MAX_TRAINING_VIEWS))
     try:
         requested = int(raw)
@@ -495,6 +558,32 @@ def _configured_training_view_limit() -> int:
         )
         requested = DEFAULT_MAX_TRAINING_VIEWS
     return max(1, min(requested, MAX_CONFIGURED_TRAINING_VIEWS))
+
+
+def _configured_training_iterations() -> int:
+    """Return fast-test iterations without changing the production default."""
+    if _test_mode_enabled():
+        return TEST_GAUSSIAN_ITERATIONS
+    raw = os.getenv("GAUSSIAN_TRAIN_ITERATIONS", "30000")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning("invalid_gaussian_train_iterations value=%r fallback=30000", raw)
+        return 30000
+
+
+def _test_mode_enabled() -> bool:
+    return os.getenv("TEST_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _sample_ordered_items(items: list, limit: int) -> list:
+    """Uniformly retain the full time span, including both trajectory endpoints."""
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    if len(items) <= limit:
+        return list(items)
+    indices = np.linspace(0, len(items) - 1, limit).round().astype(int)
+    return [items[index] for index in indices]
 
 
 def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 30) -> dict:
