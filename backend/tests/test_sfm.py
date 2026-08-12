@@ -1,6 +1,12 @@
 import numpy as np
 import pytest
-from pipeline.sfm import build_synthetic_cameras, run_sfm, undistort_registered_view
+import pipeline.sfm as sfm_module
+from pipeline.sfm import (
+    _build_long_range_pairs,
+    build_synthetic_cameras,
+    run_sfm,
+    undistort_registered_view,
+)
 
 
 def test_build_synthetic_cameras_circular():
@@ -85,12 +91,27 @@ def _patch_pycolmap(monkeypatch, return_value):
     monkeypatch.setattr(
         pycolmap,
         "match_sequential",
-        lambda *a, **k: captured.update({"pairing_options": k["pairing_options"]}),
+        lambda *a, **k: captured.update({
+            "pairing_options": k["pairing_options"],
+            "sequential_matching_options": k["matching_options"],
+        }),
     )
     monkeypatch.setattr(
         pycolmap,
         "match_exhaustive",
-        lambda *a, **k: captured.update({"exhaustive_called": True}),
+        lambda *a, **k: captured.update({
+            "exhaustive_called": True,
+            "exhaustive_matching_options": k["matching_options"],
+        }),
+    )
+    monkeypatch.setattr(
+        pycolmap,
+        "match_image_pairs",
+        lambda *a, **k: captured.update({
+            "image_pairs_called": True,
+            "image_pairs_matching_options": k["matching_options"],
+            "image_pairs_pairing_options": k["pairing_options"],
+        }),
     )
     monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **k: return_value)
     return captured
@@ -116,6 +137,9 @@ def test_run_sfm_accepts_dict_return(tmp_path, monkeypatch):
     assert captured["camera_mode"] == pycolmap.CameraMode.SINGLE
     assert captured["pairing_options"].overlap == 30
     assert captured["pairing_options"].quadratic_overlap is True
+    assert captured["extraction_options"].sift.max_num_features == 12000
+    assert captured["extraction_options"].sift.peak_threshold == pytest.approx(0.004)
+    assert captured["sequential_matching_options"].guided_matching is True
     assert out["cameras"][0]["camera_model"] == "SIMPLE_RADIAL"
     assert out["cameras"][0]["radial_distortion"] == pytest.approx([0.02])
     assert out["quality"]["component_count"] == 2
@@ -177,6 +201,7 @@ def test_run_sfm_falls_back_to_exhaustive_when_main_track_is_incomplete(tmp_path
     out = run_sfm(_make_image_dir(tmp_path, count=10), tmp_path / "work")
 
     assert captured["exhaustive_called"] is True
+    assert captured["exhaustive_matching_options"].guided_matching is True
     assert len(out["cameras"]) == 9
 
 
@@ -215,3 +240,40 @@ def test_run_sfm_uses_bounded_sequential_fallback_for_dense_video(tmp_path, monk
     assert captured.get("exhaustive_called") is not True
     assert captured["pairing_options"].overlap == 60
     assert len(out["cameras"]) == 220
+
+
+def test_long_range_candidates_are_nonlocal_and_bounded(tmp_path, monkeypatch):
+    image_dir = _make_image_dir(tmp_path, count=100)
+    rng = np.random.default_rng(42)
+    descriptors = rng.integers(0, 256, size=(32, 32), dtype=np.uint8)
+    monkeypatch.setattr(sfm_module, "_orb_signature", lambda _path: descriptors)
+
+    pairs = _build_long_range_pairs(
+        image_dir,
+        max_anchors=10,
+        candidates_per_anchor=2,
+        max_pairs=7,
+    )
+
+    assert 0 < len(pairs) <= 7
+    assert len(pairs) == len(set(pairs))
+    for left, right in pairs:
+        left_index = int(left.removeprefix("a").removesuffix(".jpg"))
+        right_index = int(right.removeprefix("a").removesuffix(".jpg"))
+        assert abs(right_index - left_index) >= 15
+
+
+def test_long_range_pairs_use_guided_colmap_verification(tmp_path, monkeypatch):
+    captured = _patch_pycolmap(monkeypatch, {0: _FakeRecon(2)})
+    monkeypatch.setattr(
+        sfm_module,
+        "_build_long_range_pairs",
+        lambda _image_dir: [("a0.jpg", "a1.jpg")],
+    )
+
+    run_sfm(_make_image_dir(tmp_path, count=2), tmp_path / "work")
+
+    assert captured["image_pairs_called"] is True
+    assert captured["image_pairs_matching_options"].guided_matching is True
+    pair_path = captured["image_pairs_pairing_options"].match_list_path
+    assert pair_path.read_text(encoding="utf-8") == "a0.jpg a1.jpg\n"

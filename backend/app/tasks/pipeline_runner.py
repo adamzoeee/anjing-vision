@@ -47,37 +47,52 @@ def run_pipeline(scan_id: int) -> None:
         frames = work / "frames"
         _stage(db, scan, "extracting", 5, "抽帧中")
 
-        from pipeline.frame_extractor import extract_frames, filter_sharp_frames
+        from pipeline.frame_extractor import (
+            extract_frames,
+            filter_sharp_frames,
+            protect_sfm_continuity,
+        )
         if src.is_dir():
             # 照片模式：目录下的图片直接作为帧
             all_frames = sorted(list(src.glob("*.jpg")) + list(src.glob("*.jpeg")) + list(src.glob("*.JPG")))
         else:
             all_frames = extract_frames(src, frames)
-        kept, dropped = filter_sharp_frames(all_frames)
+        sharp_frames, dropped = filter_sharp_frames(all_frames)
+        sfm_frames, bridge_frames, continuity = protect_sfm_continuity(
+            all_frames,
+            sharp_frames,
+        )
         logger.info(
-            "frame_filter scan_id=%s extracted_frames=%d sharp_frames=%d dropped_frames=%d",
+            "frame_filter scan_id=%s candidate_frames=%d sharp_frames=%d blurred_frames=%d "
+            "sfm_bridge_frames_restored=%d sfm_input_frames=%d "
+            "max_dropped_run_before_recovery=%d max_dropped_run_after_recovery=%d",
             scan_id,
             len(all_frames),
-            len(kept),
+            len(sharp_frames),
             len(dropped),
+            len(bridge_frames),
+            len(sfm_frames),
+            continuity["max_dropped_run_before_recovery"],
+            continuity["max_dropped_run_after_recovery"],
         )
-        if len(kept) < 30:
-            _fail(db, scan, f"抽帧后有效图片仅 {len(kept)} 张，请重录（保证光线充足、慢速移动）")
+        if len(sfm_frames) < 30:
+            _fail(db, scan, f"抽帧后 SfM 输入图片仅 {len(sfm_frames)} 张，请重录（保证光线充足、慢速移动）")
             return
 
         _stage(db, scan, "sfm", 25, "相机位姿估计中")
         from pipeline.sfm import run_sfm, undistort_registered_view
-        # SFM 只跑清晰帧（模糊帧会污染特征匹配），复制到独立目录保证位姿与图像一一对应
+        # SfM 使用严格清晰帧和少量连续性桥接帧；桥接帧只用于恢复相机轨迹，
+        # 后续 3DGS 仍只使用严格清晰且成功注册的帧。
         frames_clean = work / "frames_clean"
         import shutil
         shutil.rmtree(frames_clean, ignore_errors=True)  # 清空重跑残留
         frames_clean.mkdir(parents=True, exist_ok=True)
-        for p in kept:
+        for p in sfm_frames:
             shutil.copy(p, frames_clean / p.name)
         sfm_out = run_sfm(frames_clean, work / "sfm")
         from pipeline.quality import assess_sfm
         sfm_quality = assess_sfm(
-            sfm_out["cameras"], sfm_out["points3D"], len(kept), sfm_out.get("quality")
+            sfm_out["cameras"], sfm_out["points3D"], len(sfm_frames), sfm_out.get("quality")
         )
         if not sfm_quality.ok:
             _fail(db, scan, sfm_quality.reason)
@@ -92,13 +107,16 @@ def run_pipeline(scan_id: int) -> None:
         )
         from PIL import Image
         # 对齐：相机与图像按文件名排序后一一对应（SFM 可能漏注册部分帧，过滤掉）
-        name_to_cam = {c["name"]: c for c in sfm_out["cameras"]}
-        paired = [(p, name_to_cam[p.name]) for p in sorted(kept) if p.name in name_to_cam]
+        paired = _pair_registered_training_frames(sharp_frames, sfm_out["cameras"])
         logger.info(
-            "sfm_registration scan_id=%s sharp_frames=%d registered_frames=%d",
+            "sfm_registration scan_id=%s sfm_input_frames=%d sharp_frames=%d "
+            "sfm_registered_frames=%d training_eligible_frames=%d bridge_frames_excluded=%d",
             scan_id,
-            len(kept),
+            len(sfm_frames),
+            len(sharp_frames),
+            len(sfm_out["cameras"]),
             len(paired),
+            len(bridge_frames),
         )
         if len(paired) < 5:
             _fail(db, scan, "SFM 注册帧过少，无法训练")
@@ -117,10 +135,14 @@ def run_pipeline(scan_id: int) -> None:
         )
         logger.info(
             "reconstruction_frame_counts scan_id=%s extracted_frames=%d sharp_frames=%d "
-            "sfm_registered_frames=%d training_views=%d",
+            "sfm_input_frames=%d sfm_bridge_frames=%d sfm_registered_frames=%d "
+            "training_eligible_frames=%d training_views=%d",
             scan_id,
             len(all_frames),
-            len(kept),
+            len(sharp_frames),
+            len(sfm_frames),
+            len(bridge_frames),
+            len(sfm_out["cameras"]),
             len(paired),
             len(training_imgs),
         )
@@ -411,6 +433,18 @@ def _robust_scene_extents(points: np.ndarray) -> list[float] | None:
     if not np.isfinite(extents).all():
         return None
     return [float(value) for value in np.sort(extents)[::-1]]
+
+
+def _pair_registered_training_frames(
+    sharp_frames: list[Path], cameras: list[dict],
+) -> list[tuple[Path, dict]]:
+    """只将严格清晰且被 SfM 注册的帧交给 3DGS，排除轨迹桥接帧。"""
+    name_to_camera = {camera["name"]: camera for camera in cameras}
+    return [
+        (path, name_to_camera[path.name])
+        for path in sorted(sharp_frames)
+        if path.name in name_to_camera
+    ]
 
 
 def _prepare_training_views(
