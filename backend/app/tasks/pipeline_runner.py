@@ -3,6 +3,7 @@
 每个阶段更新 Scan.status/progress；失败置 failed 并记录 message。
 """
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,8 @@ from ..models import Report, Scan
 from ..storage import media_path
 
 logger = logging.getLogger("anjing.pipeline")
+DEFAULT_MAX_TRAINING_VIEWS = 120  # 8GB 显存下约 1.3GB Float32 训练图像，给高斯优化保留余量
+MAX_CONFIGURED_TRAINING_VIEWS = 240
 
 STAGES = [
     ("extracting", 5, "抽帧中"), ("sfm", 25, "相机位姿估计中"),
@@ -50,7 +53,14 @@ def run_pipeline(scan_id: int) -> None:
             all_frames = sorted(list(src.glob("*.jpg")) + list(src.glob("*.jpeg")) + list(src.glob("*.JPG")))
         else:
             all_frames = extract_frames(src, frames)
-        kept, _ = filter_sharp_frames(all_frames)
+        kept, dropped = filter_sharp_frames(all_frames)
+        logger.info(
+            "frame_filter scan_id=%s extracted_frames=%d sharp_frames=%d dropped_frames=%d",
+            scan_id,
+            len(all_frames),
+            len(kept),
+            len(dropped),
+        )
         if len(kept) < 30:
             _fail(db, scan, f"抽帧后有效图片仅 {len(kept)} 张，请重录（保证光线充足、慢速移动）")
             return
@@ -84,6 +94,12 @@ def run_pipeline(scan_id: int) -> None:
         # 对齐：相机与图像按文件名排序后一一对应（SFM 可能漏注册部分帧，过滤掉）
         name_to_cam = {c["name"]: c for c in sfm_out["cameras"]}
         paired = [(p, name_to_cam[p.name]) for p in sorted(kept) if p.name in name_to_cam]
+        logger.info(
+            "sfm_registration scan_id=%s sharp_frames=%d registered_frames=%d",
+            scan_id,
+            len(kept),
+            len(paired),
+        )
         if len(paired) < 5:
             _fail(db, scan, "SFM 注册帧过少，无法训练")
             return
@@ -94,7 +110,20 @@ def run_pipeline(scan_id: int) -> None:
         ]
         imgs = [item[0] for item in rectified]
         cams = [item[1] for item in rectified]
-        training_cams, training_imgs = _prepare_training_views(cams, imgs)
+        training_cams, training_imgs = _prepare_training_views(
+            cams,
+            imgs,
+            max_views=_configured_training_view_limit(),
+        )
+        logger.info(
+            "reconstruction_frame_counts scan_id=%s extracted_frames=%d sharp_frames=%d "
+            "sfm_registered_frames=%d training_views=%d",
+            scan_id,
+            len(all_frames),
+            len(kept),
+            len(paired),
+            len(training_imgs),
+        )
         normalized_cams, normalized_points, scene_transform = normalize_scene(
             training_cams, sfm_out["points3D"]
         )
@@ -388,7 +417,7 @@ def _prepare_training_views(
     cams: list[dict],
     imgs: list[np.ndarray],
     *,
-    max_views: int = 80,
+    max_views: int = DEFAULT_MAX_TRAINING_VIEWS,
     max_dimension: int = 1280,
 ) -> tuple[list[dict], list[np.ndarray]]:
     """均匀保留全轨迹代表视角，并同步缩放图像内参。"""
@@ -417,6 +446,21 @@ def _prepare_training_views(
         selected_cams.append(camera)
         selected_imgs.append(image)
     return selected_cams, selected_imgs
+
+
+def _configured_training_view_limit() -> int:
+    """读取可调训练视角上限，并限制到当前全量 GPU 张量实现的安全范围。"""
+    raw = os.getenv("GAUSSIAN_MAX_TRAINING_VIEWS", str(DEFAULT_MAX_TRAINING_VIEWS))
+    try:
+        requested = int(raw)
+    except ValueError:
+        logger.warning(
+            "invalid_gaussian_max_training_views value=%r fallback=%d",
+            raw,
+            DEFAULT_MAX_TRAINING_VIEWS,
+        )
+        requested = DEFAULT_MAX_TRAINING_VIEWS
+    return max(1, min(requested, MAX_CONFIGURED_TRAINING_VIEWS))
 
 
 def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 30) -> dict:

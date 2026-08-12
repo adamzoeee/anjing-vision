@@ -166,14 +166,59 @@ class _ReportPageState extends State<ReportPage> {
 
   List<Widget> _measurementTiles(Report report) {
     final raw = report.measures['reference_measurements'] as List? ?? const [];
-    final labels = {'bed': '床', 'table': '桌子', 'door': '门', 'sofa': '沙发'};
+    final calibrationRaw = report.measures['calibration_quality'];
+    final calibration = calibrationRaw is Map ? calibrationRaw : const {};
+    final calibrationReferences = calibration['references'] is List
+        ? calibration['references'] as List
+        : const [];
+    final labels = {
+      'bed': '床',
+      'table': '桌子',
+      'door': '门',
+      'sofa': '沙发',
+      'cabinet': '柜子',
+    };
     final dimensions = {'length': '长', 'width': '宽', 'height': '高'};
-    final tiles = <Widget>[];
+    final calibrationSucceeded = report.calibrated == 3;
+    final usedCount = calibration['used_count'] is num
+        ? (calibration['used_count'] as num).toInt()
+        : 0;
+    final failureReason = calibration['reason']?.toString();
+    final tiles = <Widget>[
+      ListTile(
+        dense: true,
+        leading: Icon(
+          calibrationSucceeded ? Icons.check_circle : Icons.info_outline,
+          color: calibrationSucceeded ? Colors.green : Colors.orange,
+        ),
+        title: Text(calibrationSucceeded ? '尺度标定：成功' : '尺度标定：失败'),
+        subtitle: Text(
+          calibrationSucceeded
+              ? '已使用 $usedCount 个参考尺寸恢复米制比例'
+              : (failureReason ?? '未能用至少两个一致且成功识别的参考尺寸恢复米制比例'),
+        ),
+      ),
+    ];
     for (final item in raw.whereType<Map>()) {
       final object = item['object_type']?.toString();
       final dimension = item['dimension']?.toString();
       final meters = item['meters'];
       if (object == null || dimension == null || meters == null) continue;
+      Map? detail;
+      for (final candidate in calibrationReferences.whereType<Map>()) {
+        if (candidate['object_type']?.toString() == object &&
+            candidate['dimension']?.toString() == dimension) {
+          detail = candidate;
+          break;
+        }
+      }
+      final status = detail?['status']?.toString();
+      final statusText = switch (status) {
+        'used' => '已识别并用于尺度标定',
+        'not_detected' => '未在重建结果中识别到对应参考物',
+        'outlier' => '已识别，但推导比例与其他参考不一致，未采用',
+        _ => calibrationSucceeded ? '用户输入参考值' : '用户输入参考值（未用于米制标定）',
+      };
       tiles.add(
         ListTile(
           dense: true,
@@ -182,10 +227,13 @@ class _ReportPageState extends State<ReportPage> {
             '${labels[object] ?? object}${dimensions[dimension] ?? dimension}',
           ),
           trailing: Text('${(meters as num).toStringAsFixed(2)} m'),
-          subtitle: Text(
-            report.calibrated == 3 ? '用于米制比例标定' : '用户输入参考值（尚未完成统一米制标定）',
-          ),
+          subtitle: Text(statusText),
         ),
+      );
+    }
+    if (raw.isEmpty) {
+      tiles.add(
+        const Padding(padding: EdgeInsets.all(8), child: Text('未记录用户参考尺寸')),
       );
     }
     final extent = report.measures['reconstruction_extent_m'] as List?;
@@ -202,11 +250,6 @@ class _ReportPageState extends State<ReportPage> {
                 .join(' × '),
           ),
         ),
-      );
-    }
-    if (tiles.isEmpty) {
-      tiles.add(
-        const Padding(padding: EdgeInsets.all(8), child: Text('暂无可用尺寸信息')),
       );
     }
     return tiles;

@@ -1025,23 +1025,24 @@ async function main() {
                     (e.deltaY * scale) / innerHeight,
                     0,
                 );
-            } else if (e.ctrlKey || e.metaKey) {
-                // inv = rotate4(inv,  (e.deltaX * scale) / innerWidth,  0, 0, 1);
-                // inv = translate4(inv,  0, (e.deltaY * scale) / innerHeight, 0);
-                // let preY = inv[13];
+            } else {
+                // 鼠标滚轮和触控板纵向滚动统一用于前后缩放；横向滚动仍可环绕。
+                // 这让自由查看不依赖“上一/下一视角”按钮或 Ctrl+滚轮组合键。
+                if (Math.abs(e.deltaX) > 0.01) {
+                    inv = rotate4(
+                        inv,
+                        -(e.deltaX * scale) / innerWidth,
+                        0,
+                        1,
+                        0,
+                    );
+                }
                 inv = translate4(
                     inv,
                     0,
                     0,
                     (-10 * (e.deltaY * scale)) / innerHeight,
                 );
-                // inv[13] = preY;
-            } else {
-                let d = 4;
-                inv = translate4(inv, 0, 0, d);
-                inv = rotate4(inv, -(e.deltaX * scale) / innerWidth, 0, 1, 0);
-                inv = rotate4(inv, (e.deltaY * scale) / innerHeight, 1, 0, 0);
-                inv = translate4(inv, 0, 0, -d);
             }
 
             viewMatrix = invert4(inv);
@@ -1101,7 +1102,7 @@ async function main() {
             startY = e.clientY;
         }
     });
-    canvas.addEventListener("mouseup", (e) => {
+    window.addEventListener("mouseup", (e) => {
         e.preventDefault();
         down = false;
         startX = 0;
