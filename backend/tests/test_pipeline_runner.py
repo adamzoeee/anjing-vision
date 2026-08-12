@@ -7,6 +7,7 @@ from app.db import SessionLocal
 from app.models import Organization, Project, Report, Scan
 from app.tasks.pipeline_runner import (
     _calibrate_with_a4,
+    _configured_training_view_limit,
     _find_obstacles,
     _known_reference_value,
     _pixel_ray,
@@ -19,19 +20,35 @@ from app.tasks.pipeline_runner import (
 
 
 def test_prepare_training_views_samples_trajectory_and_scales_intrinsics():
-    images = [np.zeros((1920, 1080, 3), dtype=np.uint8) for _ in range(100)]
+    images = [np.zeros((192, 108, 3), dtype=np.uint8) for _ in range(140)]
     cameras = [
-        {"K": np.array([[1440.0, 0, 540.0], [0, 1440.0, 960.0], [0, 0, 1.0]]), "id": i}
-        for i in range(100)
+        {"K": np.array([[144.0, 0, 54.0], [0, 144.0, 96.0], [0, 0, 1.0]]), "id": i}
+        for i in range(140)
     ]
     selected_cameras, selected_images = _prepare_training_views(cameras, images)
-    assert len(selected_images) == len(selected_cameras) == 80
+    assert len(selected_images) == len(selected_cameras) == 120
     assert selected_cameras[0]["id"] == 0
-    assert selected_cameras[-1]["id"] == 99
+    assert selected_cameras[-1]["id"] == 139
+
+
+def test_prepare_training_views_scales_intrinsics_with_image():
+    images = [np.zeros((1920, 1080, 3), dtype=np.uint8)]
+    cameras = [
+        {"K": np.array([[1440.0, 0, 540.0], [0, 1440.0, 960.0], [0, 0, 1.0]]), "id": 0}
+    ]
+    selected_cameras, selected_images = _prepare_training_views(cameras, images)
     assert selected_images[0].shape[:2] == (1280, 720)
     assert selected_cameras[0]["K"][0, 0] == pytest.approx(960.0)
     assert selected_cameras[0]["K"][1, 2] == pytest.approx(640.0)
-    assert selected_cameras[0]["id"] == 0
+
+
+def test_training_view_limit_is_configurable_but_bounded(monkeypatch):
+    monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "160")
+    assert _configured_training_view_limit() == 160
+    monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "999")
+    assert _configured_training_view_limit() == 240
+    monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "invalid")
+    assert _configured_training_view_limit() == 120
 
 
 def test_no_detected_step_remains_confirmed_zero_threshold():

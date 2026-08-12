@@ -196,3 +196,22 @@ def test_run_sfm_falls_back_to_exhaustive_for_significant_second_component(tmp_p
 
     assert captured["exhaustive_called"] is True
     assert len(out["cameras"]) == 96
+
+
+def test_run_sfm_uses_bounded_sequential_fallback_for_dense_video(tmp_path, monkeypatch):
+    """高密度视频超过240张时不得触发平方级全量匹配。"""
+    import pycolmap
+
+    captured = _patch_pycolmap(monkeypatch, {0: _FakeRecon(120), 1: _FakeRecon(30)})
+    calls = iter([
+        {0: _FakeRecon(120), 1: _FakeRecon(30)},
+        {0: _FakeRecon(120), 1: _FakeRecon(30)},
+        {0: _FakeRecon(220)},
+    ])
+    monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **k: next(calls))
+
+    out = run_sfm(_make_image_dir(tmp_path, count=241), tmp_path / "work")
+
+    assert captured.get("exhaustive_called") is not True
+    assert captured["pairing_options"].overlap == 60
+    assert len(out["cameras"]) == 220

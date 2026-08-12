@@ -1,4 +1,5 @@
 """视频抽帧：ffmpeg 均匀抽帧 + Laplacian 清晰度过滤。"""
+import logging
 import os
 import shutil
 import subprocess
@@ -6,11 +7,11 @@ from pathlib import Path
 
 import cv2
 
-TARGET_COUNT = 200       # 重建输入目标帧数
+logger = logging.getLogger("anjing.pipeline")
+
+TARGET_COUNT = 200       # 兼容既有调用接口；固定间隔抽帧不再按目标数量截断
+FRAME_INTERVAL = 5       # 每 5 个原始视频帧保留 1 帧
 MIN_VARIANCE = 60.0      # Laplacian 方差阈值（低于视为模糊）
-MIN_SAMPLE_FPS = 2.5     # 手机绕拍需要足够相邻重叠，不能只按总帧数稀疏抽样
-MAX_SAMPLE_FPS = 30.0    # 短视频仍允许按 target_count 获取足够帧
-MAX_RECONSTRUCTION_FRAMES = 240  # 限制显存/匹配开销，同时保留长视频连续性
 
 _FFMPEG_CANDIDATES = (
     "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
@@ -36,7 +37,7 @@ def _ffmpeg_bin() -> str:
 
 
 def extract_frames(video: Path, out_dir: Path, target_count: int = TARGET_COUNT) -> list[Path]:
-    """用 ffmpeg 从视频均匀抽帧为 jpg（先探测时长，再按间隔抽）。"""
+    """用 ffmpeg 每隔 ``FRAME_INTERVAL`` 个输入帧保存一张 jpg。"""
     out_dir.mkdir(parents=True, exist_ok=True)
     for old in out_dir.glob("frame_*.jpg"):
         old.unlink()
@@ -52,21 +53,28 @@ def extract_frames(video: Path, out_dir: Path, target_count: int = TARGET_COUNT)
             break
     if duration <= 0:
         raise ValueError(f"无法解析视频时长: {video}")
-    # 旧实现对 1～2 分钟视频通常只取约 2fps；实测相邻 ORB 特征重叠中位数
-    # 仅约 20%，会让快速转弯处的轨迹断裂。长视频按约 2.5fps 保留连续性，
-    # 但总候选帧限制在 240，避免一次把数百张 1080p 图片常驻 GPU。
-    desired_count = min(
-        max(float(target_count), duration * MIN_SAMPLE_FPS),
-        float(MAX_RECONSTRUCTION_FRAMES),
-    )
-    fps = min(desired_count / duration, MAX_SAMPLE_FPS)
+    # target_count 保留在函数签名中以兼容现有调用；固定帧间隔不再按总数截断。
+    _ = target_count
+    capture = cv2.VideoCapture(str(video))
+    source_fps = float(capture.get(cv2.CAP_PROP_FPS)) if capture.isOpened() else 0.0
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) if capture.isOpened() else 0
+    capture.release()
     subprocess.run([
         _ffmpeg_bin(), "-y", "-i", str(video),
         # 只缩小不放大：低分辨率输入放大后插值模糊，会误伤清晰度过滤
-        "-vf", f"fps={fps},scale='min(1600,iw)':-2",
+        "-vf", f"select='not(mod(n,{FRAME_INTERVAL}))',scale='min(1600,iw)':-2",
+        "-fps_mode", "vfr",
         "-q:v", "2", str(out_dir / "frame_%05d.jpg"),
     ], check=True, capture_output=True)
-    return sorted(out_dir.glob("frame_*.jpg"))
+    paths = sorted(out_dir.glob("frame_*.jpg"))
+    logger.info(
+        "video_sampling source_fps=%.3f total_frames=%d frame_interval=%d extracted_frames=%d",
+        source_fps,
+        total_frames,
+        FRAME_INTERVAL,
+        len(paths),
+    )
+    return paths
 
 
 def filter_sharp_frames(

@@ -21,8 +21,8 @@ def test_extract_frames_writes_jpgs(tmp_path):
     out = tmp_path / "frames"
     out.mkdir()
     paths = extract_frames(video, out, target_count=30)
-    # 2 秒视频 @30fps → fps=15 → 约 30 帧；ffmpeg 输出帧数与 target_count 有容差
-    assert 20 <= len(paths) <= 40
+    # 2 秒视频 @30fps → 约 60 个输入帧；每 5 帧保存 1 帧 → 约 12 帧
+    assert 11 <= len(paths) <= 13
     assert all(p.suffix == ".jpg" for p in paths)
     assert paths == sorted(paths)
 
@@ -33,10 +33,11 @@ def test_extract_frames_cleans_old_frames(tmp_path):
     _make_test_video(video, duration=4.0)
     out = tmp_path / "frames"
     out.mkdir()
-    paths_a = extract_frames(video, out, target_count=60)   # 4s → fps=15 → ~60 帧
-    assert len(paths_a) > 40
-    paths_b = extract_frames(video, out, target_count=15)   # fps≈3.75 → ~15 帧
-    assert 10 <= len(paths_b) <= 25
+    paths_a = extract_frames(video, out, target_count=60)
+    assert 23 <= len(paths_a) <= 25                         # 4s @30fps，每 5 帧保存 1 帧
+    (out / "frame_99999.jpg").write_bytes(b"stale")
+    paths_b = extract_frames(video, out, target_count=15)
+    assert 23 <= len(paths_b) <= 25                         # target_count 不改变固定抽帧间隔
     assert paths_b == sorted(out.glob("frame_*.jpg"))       # 无旧帧残留
 
 
