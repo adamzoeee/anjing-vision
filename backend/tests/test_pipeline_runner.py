@@ -7,6 +7,7 @@ from app.db import SessionLocal
 from app.models import Organization, Project, Report, Scan
 from app.tasks.pipeline_runner import (
     _calibrate_with_a4,
+    _configured_training_iterations,
     _configured_training_view_limit,
     _find_obstacles,
     _known_reference_value,
@@ -69,6 +70,11 @@ def test_training_view_limit_is_configurable_but_bounded(monkeypatch):
     assert _configured_training_view_limit() == 240
     monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "invalid")
     assert _configured_training_view_limit() == 120
+
+
+def test_production_training_iterations_remain_unchanged(monkeypatch):
+    monkeypatch.delenv("GAUSSIAN_TRAIN_ITERATIONS", raising=False)
+    assert _configured_training_iterations() == 30000
 
 
 def test_no_detected_step_remains_confirmed_zero_threshold():

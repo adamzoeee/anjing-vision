@@ -129,7 +129,8 @@ docker compose up -d --build
 cd backend
 # 依赖 PostgreSQL、Redis、MinIO 自行安装，.env 指向对应地址
 .venv/Scripts/uvicorn app.main:app --host 0.0.0.0 --port 8000
-.venv/Scripts/celery -A app.tasks.celery_app worker --loglevel=info
+# Windows 本地 3DGS worker：启动前自动加载 VS 2022 x64、CUDA、Ninja 并预检 gsplat
+scripts/start_local_worker.cmd
 ```
 
 ### 采集与评估流程
