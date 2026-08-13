@@ -1,7 +1,10 @@
 """3DGS 训练：gsplat 1.5.x 光栅化 + Adam 优化，输入 SFM 相机位姿与图片。"""
 import math
 import importlib.util
+import logging
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -10,6 +13,7 @@ import torch
 import torch.nn.functional as F
 from scipy.spatial import cKDTree
 
+logger = logging.getLogger("anjing.pipeline.trainer")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # 复杂室内场景允许训练至 2 万步；不是固定跑满，而是在独立 holdout
 # 连续无显著提升时动态提前结束。环境变量仍可覆盖，便于低配机器降档。
@@ -27,10 +31,12 @@ class ValidationEarlyStop:
         patience: int = 5,
         min_psnr_delta: float = 0.03,
         min_ssim_delta: float = 0.002,
+        worst_view_tolerance: float = 0.05,
     ):
         self.patience = patience
         self.min_psnr_delta = min_psnr_delta
         self.min_ssim_delta = min_ssim_delta
+        self.worst_view_tolerance = worst_view_tolerance
         self.best_psnr = -float("inf")
         self.best_ssim = -float("inf")
         self.best_min_psnr = -float("inf")
@@ -50,7 +56,8 @@ class ValidationEarlyStop:
             self.best_min_psnr = min_psnr
             self.stale = 0
             return False
-        improved = (
+        worst_view_safe = min_psnr >= self.best_min_psnr - self.worst_view_tolerance
+        improved = worst_view_safe and (
             psnr > self.best_psnr + self.min_psnr_delta
             or ssim > self.best_ssim + self.min_ssim_delta
             or min_psnr > self.best_min_psnr + self.min_psnr_delta
@@ -63,6 +70,59 @@ class ValidationEarlyStop:
         else:
             self.stale += 1
         return self.stale >= self.patience
+
+
+def _configure_msvc_environment() -> None:
+    """Load the existing Visual Studio x64 build environment into this process."""
+    if os.name != "nt" or shutil.which("cl"):
+        return
+    candidates = []
+    configured = os.getenv("VCVARS64_PATH")
+    if configured:
+        candidates.append(Path(configured))
+    candidates.append(
+        Path(r"D:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat")
+    )
+    vswhere = Path(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe")
+    if vswhere.is_file():
+        result = subprocess.run(
+            [
+                str(vswhere), "-latest", "-products", "*", "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        install_path = result.stdout.strip()
+        if install_path:
+            candidates.append(Path(install_path) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat")
+
+    vcvars = next((path for path in candidates if path.is_file()), None)
+    if vcvars is None:
+        return
+    result = subprocess.run(
+        f'cmd.exe /d /c call "{vcvars}" >nul && set',
+        capture_output=True,
+        text=True,
+        encoding="mbcs",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        logger.error("[3DGS Runtime] MSVC environment setup failed: %s", result.stderr.strip())
+        return
+    for line in result.stdout.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            if key:
+                # Conda-launched Windows processes can contain both Path and PATH.
+                # Normalize this key so the worker does not later read a stale PATH.
+                os.environ["PATH" if key.lower() == "path" else key] = value
+
+
+def _runtime_error(component: str, detail: str) -> RuntimeError:
+    return RuntimeError(f"3DGS运行环境缺少 {component}：{detail}")
 
 
 def _reuse_cached_gsplat_extension() -> None:
@@ -91,26 +151,79 @@ def _reuse_cached_gsplat_extension() -> None:
 
 
 def ensure_3dgs_runtime() -> None:
-    """在读取全部训练图之前验证 GPU 与 gsplat 扩展，给出可操作的错误。"""
-    if DEVICE != "cuda":
-        raise RuntimeError("3DGS 训练需要 NVIDIA CUDA GPU，当前 PyTorch 未检测到 CUDA")
-    # Windows 的 JIT 扩展需要能找到当前虚拟环境中的 ninja 和 CUDA nvcc。
-    # 这里仅补齐当前进程 PATH，不写入系统环境，也不依赖任何个人绝对路径。
-    path_entries = [str(Path(sys.executable).resolve().parent)]
-    cuda_home = os.getenv("CUDA_HOME")
-    if cuda_home:
-        path_entries.append(str(Path(cuda_home) / "bin"))
+    """Configure and validate the local CUDA toolchain before 3DGS training."""
+    repo_root = Path(__file__).resolve().parents[2]
+    venv_scripts = repo_root / ".venv" / "Scripts"
+    cuda_home = Path(r"E:\CUDA\v12.8")
+    extensions_dir = repo_root / ".torch_extensions"
+    temp_dir = repo_root / ".tmp"
+    extensions_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    os.environ["CUDA_HOME"] = str(cuda_home)
+    os.environ["TORCH_EXTENSIONS_DIR"] = str(extensions_dir)
+    os.environ["TEMP"] = str(temp_dir)
+    os.environ["TMP"] = str(temp_dir)
+    # vcvars64 supplies INCLUDE/LIB and the exact versioned cl.exe directory.
+    # Load it first because the batch file replaces PATH in some worker processes.
+    _configure_msvc_environment()
     current_path = os.environ.get("PATH", "")
-    os.environ["PATH"] = os.pathsep.join(path_entries + [current_path])
+    os.environ["PATH"] = os.pathsep.join(
+        [
+            str(venv_scripts),
+            str(cuda_home / "bin"),
+            str(cuda_home / "lib" / "x64"),
+            current_path,
+        ]
+    )
+
+    # cpp_extension may have cached CUDA_HOME=None when torch was first imported.
+    from torch.utils import cpp_extension
+    cpp_extension.CUDA_HOME = str(cuda_home)
+
+    resolved_tools = {
+        "Ninja": shutil.which("ninja"),
+        "NVCC": shutil.which("nvcc"),
+        "MSVC": shutil.which("cl"),
+    }
+    checks = {
+        "CUDA": torch.cuda.is_available(),
+        **{name: path is not None for name, path in resolved_tools.items()},
+    }
+    for name, available in checks.items():
+        logger.info("[3DGS Runtime] %s: %s", name, "OK" if available else "MISSING")
+    for name, path in resolved_tools.items():
+        if path:
+            logger.info("[3DGS Runtime] %s path: %s", name, path)
+    if not checks["CUDA"]:
+        raise _runtime_error("CUDA", "PyTorch未检测到可用的NVIDIA GPU")
+    if not checks["Ninja"]:
+        raise _runtime_error("Ninja", f"未在 {venv_scripts} 找到 ninja.exe")
+    if not checks["NVCC"]:
+        raise _runtime_error("NVCC", f"未在 {cuda_home / 'bin'} 找到 nvcc.exe")
+    if not checks["MSVC"]:
+        raise _runtime_error("MSVC", "未找到 cl.exe，请确认Visual Studio C++生成工具已安装")
+
+    try:
+        import gsplat
+        logger.info(
+            "[3DGS Runtime] gsplat: OK (version=%s)",
+            getattr(gsplat, "__version__", "unknown"),
+        )
+    except Exception as exc:  # noqa: BLE001 - report the real dependency error
+        logger.exception("[3DGS Runtime] gsplat import failed")
+        raise RuntimeError(f"gsplat导入失败：{type(exc).__name__}: {exc}") from exc
+
     try:
         _reuse_cached_gsplat_extension()
         from gsplat.cuda._backend import _C
         if _C is None:
-            raise ImportError("gsplat CUDA extension was not loaded")
-    except (AttributeError, ImportError, RuntimeError) as exc:
+            raise ImportError("gsplat CUDA extension returned None")
+        logger.info("[3DGS Runtime] gsplat CUDA extension: OK")
+    except Exception as exc:  # noqa: BLE001 - preserve compiler/import diagnostics
+        logger.exception("[3DGS Runtime] gsplat CUDA extension load failed")
         raise RuntimeError(
-            "gsplat CUDA 扩展不可用；请安装与 PyTorch 匹配的 CUDA Toolkit、"
-            "Visual C++ Build Tools，并为中文用户目录配置纯英文 TEMP/TORCH_EXTENSIONS_DIR"
+            f"gsplat CUDA扩展加载失败：{type(exc).__name__}: {exc}"
         ) from exc
 
 
@@ -340,6 +453,10 @@ def train_gaussians(
         "iterations": actual_iterations,
         "configured_iterations": num_iter,
         "early_stopped": actual_iterations < num_iter,
+        "still_improving_at_limit": (
+            actual_iterations == num_iter and _quality_curve_still_improving(quality_curve)
+        ),
+        "training_view_count": n,
         "gaussian_count": len(result["means"]),
         "densification": strategy is not None,
         "training_profile": profile,
@@ -350,6 +467,19 @@ def train_gaussians(
     }
     torch.cuda.empty_cache()
     return result
+
+
+def _quality_curve_still_improving(curve: list[dict]) -> bool:
+    """训练到上限时检查最后一个 1000 步区间是否仍有实质改善。"""
+    if len(curve) < 2:
+        return False
+    previous, current = curve[-2], curve[-1]
+    worst_safe = current["validation_psnr_min"] >= previous["validation_psnr_min"] - 0.05
+    return worst_safe and (
+        current["validation_psnr_mean"] > previous["validation_psnr_mean"] + 0.03
+        or current["validation_ssim_mean"] > previous["validation_ssim_mean"] + 0.002
+        or current["validation_psnr_min"] > previous["validation_psnr_min"] + 0.03
+    )
 
 
 def _ssim(prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
