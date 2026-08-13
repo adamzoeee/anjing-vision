@@ -227,6 +227,99 @@ def ensure_3dgs_runtime() -> None:
         ) from exc
 
 
+def normalize_exposure(
+    images: list[np.ndarray],
+) -> tuple[list[np.ndarray], dict]:
+    """把各帧亮度/色偏对齐到中位亮度参考帧，抑制手机自动曝光波动。
+
+    3DGS 假设朗伯表面与恒定光照；自动曝光使同一表面在不同视角出现颜色漂移，
+    直接破坏外观拟合。仅做逐通道均值平移（不做对比度增益缩放），保持光度
+    线性与纹理结构。返回 (对齐后图像, 诊断)。
+    """
+    if not images:
+        return [], {"applied": False, "reason": "no_images"}
+    arrays = [np.asarray(image, dtype=np.float32) / 255.0 for image in images]
+    means = np.asarray([array.reshape(-1, 3).mean(axis=0) for array in arrays])
+    brightness = means @ np.asarray([0.299, 0.587, 0.114])
+    reference_index = int(np.argsort(np.abs(brightness - np.median(brightness)))[0])
+    reference_means = means[reference_index]
+    aligned = []
+    max_shift = 0.0
+    for array in arrays:
+        shift = reference_means - array.reshape(-1, 3).mean(axis=0)
+        max_shift = max(max_shift, float(np.abs(shift).max()))
+        # 输出转回 uint8：下游 prepare_tensors / 语义检测仍按 0..255 约定消费图像。
+        corrected = np.clip(array + shift, 0.0, 1.0)
+        aligned.append((corrected * 255.0 + 0.5).astype(np.uint8))
+    aligned_means = np.asarray(
+        [array.reshape(-1, 3).mean(axis=0) for array in aligned], dtype=np.float64
+    ) / 255.0
+    diagnostics = {
+        "applied": True,
+        "reference_frame_index": reference_index,
+        "brightness_before_min": float(brightness.min()),
+        "brightness_before_max": float(brightness.max()),
+        "brightness_after_min": float((aligned_means @ np.asarray([0.299, 0.587, 0.114])).min()),
+        "brightness_after_max": float((aligned_means @ np.asarray([0.299, 0.587, 0.114])).max()),
+        "max_channel_shift": float(max_shift),
+    }
+    logger.info(
+        "exposure_normalization reference_frame=%d brightness_range=[%.3f,%.3f] -> [%.3f,%.3f]",
+        reference_index,
+        diagnostics["brightness_before_min"],
+        diagnostics["brightness_before_max"],
+        diagnostics["brightness_after_min"],
+        diagnostics["brightness_after_max"],
+    )
+    return aligned, diagnostics
+
+
+def filter_init_points(
+    points: np.ndarray,
+    colors: np.ndarray | None = None,
+    *,
+    nb_neighbors: int = 20,
+    std_ratio: float = 2.0,
+) -> tuple[np.ndarray, np.ndarray | None, dict]:
+    """训练初始化前剔除点云统计离群点（飞点会变成 3DGS 漂浮高斯源头）。
+
+    与 exporter.statistical_filter 同一参数约定（20 邻域、2σ）。点数过少时
+    原样返回，避免把小场景清空。返回 (过滤后点, 同步过滤的颜色或 None, 诊断)。
+    """
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    colors = (
+        np.asarray(colors).reshape(-1, 3) if colors is not None and len(colors) else None
+    )
+    diagnostics = {"points_before": len(points), "points_after": len(points), "filtered": 0}
+    skip = len(points) < 50
+    if colors is not None and not skip:
+        skip = len(colors) != len(points)
+    if skip:
+        return points, colors, diagnostics
+    import open3d as o3d
+
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(points)
+    filtered, indices = pcd.remove_statistical_outlier(nb_neighbors=nb_neighbors, std_ratio=std_ratio)
+    kept = np.asarray(indices, dtype=int)
+    diagnostics.update({
+        "points_before": len(points),
+        "points_after": len(kept),
+        "filtered": len(points) - len(kept),
+    })
+    filtered_points = np.asarray(filtered.points, dtype=np.float64)
+    filtered_colors = colors[kept] if colors is not None else None
+    if diagnostics["filtered"]:
+        logger.info(
+            "init_point_cloud_filtered before=%d after=%d removed=%d (%.1f%%)",
+            len(points),
+            len(kept),
+            diagnostics["filtered"],
+            100.0 * diagnostics["filtered"] / len(points),
+        )
+    return filtered_points, filtered_colors, diagnostics
+
+
 def normalize_scene(cameras: list[dict], points: np.ndarray) -> tuple[list[dict], np.ndarray, dict]:
     """把任意 SFM 尺度归一化到稳定训练范围，并返回可逆变换。"""
     centers = np.stack([np.asarray(c["center"], dtype=np.float64) for c in cameras])
@@ -467,6 +560,70 @@ def train_gaussians(
     }
     torch.cuda.empty_cache()
     return result
+
+
+def prune_gaussians(
+    gaussians: dict,
+    reference_points: np.ndarray,
+    *,
+    opacity_threshold: float = 0.01,
+    box_margin: float = 0.10,
+    min_kept: int = 1000,
+) -> tuple[dict, dict]:
+    """训练后清理漂浮高斯：低透明度 + 超出参考点云主体包围盒的部分。
+
+    参考点云取 1%-99% 分位包围盒并外扩 ``box_margin``；sigmoid(opacity) 低于
+    ``opacity_threshold`` 的高斯对渲染几乎无贡献却会撑大包围盒/预览体积。
+    剔除后若剩余数量不足 ``min_kept``，降级为只按透明度剔除，再不足则原样返回。
+    """
+    import torch
+
+    reference = np.asarray(reference_points, dtype=np.float64).reshape(-1, 3)
+    means_np = np.asarray(gaussians["means"].detach().cpu(), dtype=np.float64)
+    opacities = torch.sigmoid(gaussians["opacities"].detach().cpu())
+    visible = opacities.numpy() >= opacity_threshold
+    diagnostics = {
+        "gaussians_before": int(len(means_np)),
+        "low_opacity_removed": int((~visible).sum()),
+        "out_of_box_removed": 0,
+        "gaussians_after": int(len(means_np)),
+    }
+    if len(reference) >= 10:
+        lower = np.percentile(reference, 1, axis=0)
+        upper = np.percentile(reference, 99, axis=0)
+        extent = upper - lower
+        lower -= box_margin * extent
+        upper += box_margin * extent
+        inside = np.all((means_np >= lower) & (means_np <= upper), axis=1)
+    else:
+        inside = np.ones(len(means_np), dtype=bool)
+    keep = inside & visible
+    if int(keep.sum()) < min_kept:
+        keep = visible  # 包围盒误伤时降级：只按透明度剔除
+    if int(keep.sum()) < min_kept:
+        keep = np.ones(len(means_np), dtype=bool)  # 二次降级：原样保留
+    diagnostics.update({
+        "low_opacity_removed": int((~visible).sum()),
+        "out_of_box_removed": int((~inside & visible).sum()),
+        "gaussians_after": int(keep.sum()),
+    })
+    if int(keep.sum()) == len(means_np):
+        return gaussians, diagnostics
+    pruned = dict(gaussians)
+    for key in ("means", "scales", "quats", "opacities", "sh0", "sh_rest"):
+        if key in pruned:
+            pruned[key] = pruned[key][keep]
+    pruned["training_metrics"] = dict(gaussians.get("training_metrics", {}))
+    pruned["training_metrics"]["gaussian_count"] = int(keep.sum())
+    pruned["training_metrics"]["gaussian_pruning"] = diagnostics
+    logger.info(
+        "gaussian_pruning before=%d after=%d low_opacity=%d out_of_box=%d",
+        len(means_np),
+        int(keep.sum()),
+        diagnostics["low_opacity_removed"],
+        diagnostics["out_of_box_removed"],
+    )
+    return pruned, diagnostics
 
 
 def _quality_curve_still_improving(curve: list[dict]) -> bool:

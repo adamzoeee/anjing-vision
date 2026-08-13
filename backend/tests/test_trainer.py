@@ -1,6 +1,17 @@
 import numpy as np
 import torch
-from pipeline.trainer import NUM_ITER, ValidationEarlyStop, _quality_curve_still_improving, _ssim, denormalize_gaussians, normalize_scene, prepare_tensors
+from pipeline.trainer import (
+    NUM_ITER,
+    ValidationEarlyStop,
+    _quality_curve_still_improving,
+    _ssim,
+    denormalize_gaussians,
+    filter_init_points,
+    normalize_exposure,
+    normalize_scene,
+    prepare_tensors,
+    prune_gaussians,
+)
 
 
 def test_default_training_budget_allows_complex_scene_to_reach_twenty_thousand_steps():
@@ -105,3 +116,102 @@ def test_quality_curve_reports_unconverged_at_iteration_limit():
     assert _quality_curve_still_improving(curve) is True
     curve[-1]["validation_psnr_min"] = 14.8
     assert _quality_curve_still_improving(curve) is False
+
+
+def test_normalize_exposure_outputs_uint8_and_flattens_brightness():
+    """输出必须保持 uint8 约定（prepare_tensors 会再除 255），且亮度范围收窄。"""
+    rng = np.random.default_rng(0)
+    base = rng.integers(30, 60, (16, 16, 3), dtype=np.uint8)
+    bright = np.clip(base.astype(np.int16) + 120, 0, 255).astype(np.uint8)
+    dark = np.clip(base.astype(np.int16) - 20, 0, 255).astype(np.uint8)
+    images = [bright, dark, bright, dark]
+
+    aligned, diagnostics = normalize_exposure(images)
+
+    assert all(image.dtype == np.uint8 for image in aligned)
+    assert diagnostics["applied"] is True
+    assert (
+        diagnostics["brightness_after_max"] - diagnostics["brightness_after_min"]
+        < diagnostics["brightness_before_max"] - diagnostics["brightness_before_min"]
+    )
+    # uint8 约定验证：prepare_tensors 消费后张量值域应为 [0,1] 且非全黑
+    gt = prepare_tensors(
+        [
+            {"R": np.eye(3), "t": np.zeros(3), "K": np.eye(3)},
+            {"R": np.eye(3), "t": np.zeros(3), "K": np.eye(3)},
+        ],
+        aligned[:2],
+    )
+    assert float(gt["imgs"].max()) <= 1.0
+    assert float(gt["imgs"].mean()) > 0.05  # 双重归一化会导致接近全黑
+
+
+def test_normalize_exposure_empty_input():
+    aligned, diagnostics = normalize_exposure([])
+    assert aligned == []
+    assert diagnostics["applied"] is False
+
+
+def test_filter_init_points_removes_outliers_and_aligns_colors():
+    rng = np.random.default_rng(9)
+    points = rng.normal(0, 1, (300, 3))
+    # 分散的远处飞点（statistical filter 针对散点，密集小簇由语义阶段处理）
+    points[:20] = rng.normal(0, 1, (20, 3)) * 150.0 + np.array([500.0, 0.0, 0.0])
+    colors = rng.integers(0, 255, (300, 3), dtype=np.uint8)
+
+    filtered, filtered_colors, diagnostics = filter_init_points(points, colors)
+
+    assert diagnostics["filtered"] >= 20
+    assert len(filtered) == len(filtered_colors) == diagnostics["points_after"]
+    assert not np.any(np.linalg.norm(filtered, axis=1) > 100.0)
+
+
+def test_filter_init_points_skips_small_cloud():
+    rng = np.random.default_rng(1)
+    points = rng.normal(0, 1, (30, 3))
+    filtered, _, diagnostics = filter_init_points(points)
+    assert diagnostics["filtered"] == 0
+    assert len(filtered) == 30
+
+
+def test_prune_gaussians_removes_low_opacity_and_outliers():
+    rng = np.random.default_rng(11)
+    count = 1000
+    means = rng.normal(0, 1, (count, 3)).astype(np.float32)
+    means[:50] += np.array([80.0, 0.0, 0.0])
+    gaussians = {
+        "means": torch.from_numpy(means),
+        "scales": torch.full((count, 3), -2.0),
+        "quats": torch.tensor([[1.0, 0.0, 0.0, 0.0]] * count),
+        "opacities": torch.full((count,), 3.0),
+        "sh0": torch.zeros(count, 1, 3),
+        "sh_rest": torch.zeros(count, 15, 3),
+        "training_metrics": {"gaussian_count": count},
+    }
+    gaussians["opacities"][50:80] = -8.0  # 30 个近透明
+
+    pruned, diagnostics = prune_gaussians(gaussians, rng.normal(0, 1, (2000, 3)))
+
+    assert diagnostics["out_of_box_removed"] >= 50
+    assert diagnostics["low_opacity_removed"] >= 30
+    assert diagnostics["gaussians_after"] == len(pruned["means"])
+    for key in ("means", "scales", "quats", "opacities", "sh0", "sh_rest"):
+        assert len(pruned[key]) == diagnostics["gaussians_after"]
+    assert pruned["training_metrics"]["gaussian_count"] == diagnostics["gaussians_after"]
+
+
+def test_prune_gaussians_keeps_all_when_reference_is_tiny():
+    rng = np.random.default_rng(2)
+    count = 200
+    gaussians = {
+        "means": torch.from_numpy(rng.normal(0, 1, (count, 3)).astype(np.float32)),
+        "scales": torch.full((count, 3), -2.0),
+        "quats": torch.tensor([[1.0, 0.0, 0.0, 0.0]] * count),
+        "opacities": torch.full((count,), 3.0),
+        "sh0": torch.zeros(count, 1, 3),
+        "sh_rest": torch.zeros(count, 15, 3),
+        "training_metrics": {},
+    }
+    pruned, diagnostics = prune_gaussians(gaussians, np.zeros((5, 3)))
+    assert diagnostics["gaussians_after"] == count  # 参考点过少时不做包围盒裁剪
+    assert len(pruned["means"]) == count

@@ -107,13 +107,31 @@ def run_pipeline(scan_id: int) -> None:
         if not sfm_quality.ok:
             _fail(db, scan, sfm_quality.reason)
             return
+        # 跳变段帧（快速甩动/遮挡）不参与 3DGS 训练与测量；assess_sfm 已基于
+        # 原始轨迹记录 jump_ratio，过滤诊断作为补充指标写入报告。
+        from pipeline.sfm import filter_trajectory_jumps
+        kept_cameras, dropped_jump_names, jump_diagnostics = filter_trajectory_jumps(
+            sfm_out["cameras"]
+        )
+        sfm_quality.metrics["trajectory_jump_filter"] = jump_diagnostics
+        if dropped_jump_names:
+            logger.warning(
+                "trajectory_jumps_excluded scan_id=%s dropped_frames=%d examples=%s",
+                scan_id,
+                len(dropped_jump_names),
+                dropped_jump_names[:8],
+            )
+        sfm_out["cameras"] = kept_cameras
 
         _stage(db, scan, "training", 45, "3D 重建训练中")
         from pipeline.trainer import (
             apply_scene_normalization,
             denormalize_gaussians,
+            filter_init_points,
+            normalize_exposure,
             normalize_scene,
             prepare_tensors,
+            prune_gaussians,
             train_gaussians,
         )
         from PIL import Image
@@ -140,6 +158,9 @@ def run_pipeline(scan_id: int) -> None:
         ]
         imgs = [item[0] for item in rectified]
         cams = [item[1] for item in rectified]
+        # 自动曝光波动使同一表面跨视角颜色漂移，3DGS 无法拟合；先逐通道均值
+        # 对齐到中位亮度参考帧（训练集与 holdout 共用同一参考）。
+        imgs, exposure_diagnostics = normalize_exposure(imgs)
         training_cams, training_imgs, holdout_cams, holdout_imgs, view_diagnostics = _prepare_training_split(
             cams,
             imgs,
@@ -168,6 +189,14 @@ def run_pipeline(scan_id: int) -> None:
         init_colors = sfm_out.get("colors3D")
         if init_colors is not None:
             init_colors = np.asarray(init_colors, dtype=np.float32) / 255.0
+        # 离群飞点会诱导 3DGS 长出漂浮高斯；先统计滤波再初始化（颜色同步裁剪）。
+        init_points, init_colors, point_filter_diagnostics = filter_init_points(
+            normalized_points, init_colors
+        )
+        gaussians_training_metrics_extra = {
+            "init_point_filter": point_filter_diagnostics,
+            "exposure_normalization": exposure_diagnostics,
+        }
         stage_started = time.perf_counter()
         training_iterations = _configured_training_iterations()
         logger.info(
@@ -178,7 +207,7 @@ def run_pipeline(scan_id: int) -> None:
         )
         gaussians = train_gaussians(
             gt,
-            normalized_points,
+            init_points,
             init_colors,
             num_iter=training_iterations,
             validation_gt=holdout_gt,
@@ -186,10 +215,15 @@ def run_pipeline(scan_id: int) -> None:
         )
         timings["3dgs_seconds"] = time.perf_counter() - stage_started
         gaussians["training_metrics"].update({
+            **gaussians_training_metrics_extra,
             "view_selection": view_diagnostics,
             "timings": {**timings, "total_seconds": time.perf_counter() - pipeline_started},
         })
         gaussians = denormalize_gaussians(gaussians, scene_transform)
+        # 清理漂浮高斯（低透明度 + 超出 SFM 主体包围盒），避免预览和导出
+        # 把飞点区域的浮游高斯渲染成“雾团/一大坨”。
+        gaussians, prune_diagnostics = prune_gaussians(gaussians, sfm_out["points3D"])
+        gaussians["training_metrics"]["gaussian_pruning"] = prune_diagnostics
         # 训练结果已经转回 CPU；语义阶段还要同时加载 GroundingDINO 与 SAM。
         # 及时释放整批训练图像张量，避免 8GB 级显卡在模型切换时无谓 OOM。
         del gt, holdout_gt
@@ -325,6 +359,17 @@ def run_pipeline(scan_id: int) -> None:
         score, detail = compute_score(measures)
         measures["assessment_completeness"] = detail["assessment_completeness"]
         advice = [r["advice"] for r in risks if r["level"] in ("red", "yellow")]
+        # 重建质量分级：低质量不阻断交付，但报告与消息必须携带警示。
+        from pipeline.quality import grade_reconstruction
+        grade, grade_reasons = grade_reconstruction(
+            sfm_quality.metrics,
+            gaussian_quality.metrics,
+            calibration_quality,
+        )
+        measures["reconstruction_quality"]["grade"] = grade
+        measures["reconstruction_quality"]["grade_reasons"] = grade_reasons
+        if grade == "low":
+            advice.extend(grade_reasons)
 
         _stage(db, scan, "reporting", 95, "生成报告中")
         from pipeline.exporter import export_gaussian_ply
@@ -354,6 +399,8 @@ def run_pipeline(scan_id: int) -> None:
                 "gaussian": gaussian_quality.metrics,
                 "training": gaussians.get("training_metrics", {}),
                 "calibration": calibration_quality,
+                "grade": grade,
+                "grade_reasons": grade_reasons,
             },
         )
 
@@ -368,7 +415,13 @@ def run_pipeline(scan_id: int) -> None:
             preview=preview,
             calibrated=calibrated_flag,
         )
-        _stage(db, scan, "done", 100, "评估完成")
+        _stage(
+            db,
+            scan,
+            "done",
+            100,
+            "评估完成（重建质量较低，建议重新录制）" if grade == "low" else "评估完成",
+        )
     except Exception as e:  # noqa: BLE001 - 管道任一步失败都落到 failed
         failed_stage = getattr(scan, "status", "unknown")
         db.rollback()

@@ -2,6 +2,7 @@
 import logging
 import math
 import shutil
+import time
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,8 @@ LONG_RANGE_MAX_PAIRS = 600
 LONG_RANGE_MIN_GOOD_MATCHES = 12
 LONG_RANGE_ORB_FEATURES = 400
 LONG_RANGE_THUMBNAIL_SIZE = 320
+REFINE_MAX_REPROJ_ERROR = 2.0
+REFINE_MAX_POINTS_FOR_BA = 500_000
 logger = logging.getLogger("anjing.pipeline")
 
 
@@ -209,6 +212,19 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
     recon = max(recons, key=lambda r: len(r.images)) if recons else None
     if recon is None:
         raise RuntimeError("SFM 失败：无法恢复相机位姿（图片过少或纹理不足）")
+    # 长视频快速转向/短暂模糊处可能把同一房间切成多个局部模型：主模型
+    # （注册帧最多）直接作为后续管线输入，小分量不合并、不拼接（独立坐标系），
+    # 只通过 quality.component_registered_images 暴露给质量门禁判断。
+    component_sizes = sorted((len(model.images) for model in recons), reverse=True)
+    logger.info(
+        "sfm_model_selection component_count=%d component_sizes=%s "
+        "main_component_images=%d main_component_points=%d",
+        len(recons),
+        component_sizes,
+        len(recon.images),
+        len(recon.points3D),
+    )
+    refine_diagnostics = _refine_reconstruction(recon)
     cameras, points, colors, errors, track_lengths = [], [], [], [], []
     for img_id in recon.images:
         img = recon.images[img_id]
@@ -267,9 +283,135 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
                 (len(model.images) for model in recons), reverse=True
             ),
             "exhaustive_fallback_used": exhaustive_fallback_used,
+            "refinement": refine_diagnostics,
         },
         "model_path": model_path,
     }
+
+
+def filter_trajectory_jumps(
+    cameras: list[dict],
+    *,
+    jump_factor: float = 4.0,
+    min_kept_ratio: float = 0.70,
+) -> tuple[list[dict], list[str], dict]:
+    """按时间序剔除位姿跳变帧（快速甩动/遮挡段），避免污染 3DGS 训练与测量。
+
+    帧名按字典序（frame_00001.jpg ...）视为拍摄时间序。对每一帧，若进入或
+    离开它的相邻步长超过 ``jump_factor`` × 中位步长，则视为跳变段成员并剔除；
+    被标记的相邻帧合并为连续段。剔除后若剩余帧少于 ``min_kept_ratio``，只剔除
+    最极端（步长 > 2× 阈值）的帧，把保护留给质量门禁。
+
+    返回 (保留相机列表, 被剔除帧名列表, 诊断指标)。
+    """
+    ordered = sorted(cameras, key=lambda item: item.get("name", ""))
+    if len(ordered) < 3:
+        return list(cameras), [], {
+            "dropped_count": 0, "jump_threshold_units": None, "median_step_units": None,
+        }
+    centers = np.asarray([c["center"] for c in ordered], dtype=np.float64)
+    steps = np.linalg.norm(np.diff(centers, axis=0), axis=1)
+    median_step = float(np.median(steps))
+    threshold = max(jump_factor * median_step, 1e-9)
+    # 进入或离开帧的步长异常 → 标记；相邻标记帧合并为连续跳变段。
+    flagged = np.zeros(len(ordered), dtype=bool)
+    for index in range(len(ordered)):
+        inbound = steps[index - 1] if index > 0 else 0.0
+        outbound = steps[index] if index < len(steps) else 0.0
+        flagged[index] = max(inbound, outbound) > threshold
+    dropped_names = [item["name"] for item, flag in zip(ordered, flagged) if flag]
+    kept = [item for item, flag in zip(ordered, flagged) if not flag]
+    if len(kept) < max(3, int(len(ordered) * min_kept_ratio)):
+        # 轨迹整体异常：只剔除最极端的帧，避免把整段视频删空。
+        extreme_threshold = max(2.0 * threshold, float(np.median(steps)) * 2.0)
+        dropped_names = [
+            item["name"]
+            for index, item in enumerate(ordered)
+            if max(steps[index - 1] if index > 0 else 0.0,
+                   steps[index] if index < len(steps) else 0.0) > extreme_threshold
+        ]
+        kept = [item for item in ordered if item["name"] not in set(dropped_names)]
+    diagnostics = {
+        "dropped_count": len(dropped_names),
+        "jump_threshold_units": float(threshold),
+        "median_step_units": median_step,
+        "kept_ratio": round(len(kept) / max(len(ordered), 1), 4),
+    }
+    if dropped_names:
+        logger.info(
+            "trajectory_jump_filter dropped=%d kept=%d threshold=%.4f median_step=%.4f",
+            len(dropped_names), len(kept), threshold, median_step,
+        )
+    return kept, dropped_names, diagnostics
+
+
+def _refine_reconstruction(
+    recon,
+    *,
+    max_reproj_error: float = REFINE_MAX_REPROJ_ERROR,
+    max_points_for_ba: int = REFINE_MAX_POINTS_FOR_BA,
+) -> dict:
+    """剔除高重投影误差点并做全局 BA；任何一步失败都降级，不抛异常。
+
+    高误差点多来自动态遮挡/镜面反射，进入 3DGS 初始化后会变成漂浮高斯源头。
+    BA 在误差点剔除后联合重优化位姿与三维点，压住长视频累积的轨迹漂移。
+    """
+    import pycolmap
+
+    diagnostics = {
+        "filtered_points": 0,
+        "bundle_adjustment": False,
+        "ba_seconds": 0.0,
+        "degraded_reason": None,
+    }
+    try:
+        bad = [
+            pid for pid, point in recon.points3D.items()
+            if getattr(point, "error", 0.0) > max_reproj_error
+        ]
+        for pid in bad:
+            recon.delete_point3D(pid)
+        diagnostics["filtered_points"] = len(bad)
+    except Exception as exc:  # noqa: BLE001 - 精修失败不阻断整条管线
+        diagnostics["degraded_reason"] = f"point_filter: {exc}"
+        return diagnostics
+    # 被删点的观测残留在各图像 points2D 中；置为无效，避免 BA 引用悬空点。
+    try:
+        for image in recon.images.values():
+            cleaned = []
+            for p2d in image.points2D:
+                if p2d.point3D_id in recon.points3D:
+                    cleaned.append(p2d)
+                else:
+                    cleaned.append(
+                        pycolmap.Point2D(
+                            xy=np.asarray(p2d.xy, dtype=np.float64).reshape(2, 1),
+                            point3D_id=pycolmap.INVALID_POINT3D_ID,
+                        )
+                    )
+            image.points2D.clear()
+            image.points2D = cleaned
+    except Exception as exc:  # noqa: BLE001
+        diagnostics["degraded_reason"] = f"observation_cleanup: {exc}"
+        return diagnostics
+    if len(recon.points3D) <= max_points_for_ba:
+        try:
+            started = time.perf_counter()
+            pycolmap.bundle_adjustment(recon, pycolmap.BundleAdjustmentOptions())
+            diagnostics["bundle_adjustment"] = True
+            diagnostics["ba_seconds"] = round(time.perf_counter() - started, 3)
+        except Exception as exc:  # noqa: BLE001
+            diagnostics["degraded_reason"] = f"bundle_adjustment: {exc}"
+    else:
+        diagnostics["degraded_reason"] = "model_too_large_for_ba"
+    logger.info(
+        "sfm_refinement filtered_points=%d bundle_adjustment=%s ba_seconds=%.1f reason=%s",
+        diagnostics["filtered_points"],
+        diagnostics["bundle_adjustment"],
+        diagnostics["ba_seconds"],
+        diagnostics.get("degraded_reason"),
+    )
+    return diagnostics
 
 
 def _reconstructions(maps) -> list:
@@ -287,8 +429,14 @@ def _build_long_range_pairs(
     max_anchors: int = LONG_RANGE_MAX_ANCHORS,
     candidates_per_anchor: int = LONG_RANGE_CANDIDATES_PER_ANCHOR,
     max_pairs: int = LONG_RANGE_MAX_PAIRS,
+    loop_window: int = 12,
 ) -> list[tuple[str, str]]:
-    """用轻量 ORB 相似度提出有限非邻接候选，最终连接仍由 COLMAP 验证。"""
+    """用轻量 ORB 相似度提出有限非邻接候选，最终连接仍由 COLMAP 验证。
+
+    环绕拍摄的视频首尾画面应重叠（闭环）：首尾窗口内的配对被强制加入候选，
+    不依赖 ORB 分数，为 COLMAP 提供闭环约束以对抗长轨迹尺度漂移。配对是否
+    成立仍由几何验证决定，无重叠时只会多付出少量匹配时间。
+    """
     paths = sorted(Path(image_dir).glob("*.jpg"))
     if len(paths) < 4 or max_anchors < 2 or candidates_per_anchor < 1 or max_pairs < 1:
         return []
@@ -322,13 +470,39 @@ def _build_long_range_pairs(
     for anchor_index, candidates in proposals.items():
         for _score, other_index in sorted(candidates, reverse=True)[:candidates_per_anchor]:
             selected.add(tuple(sorted((anchor_index, other_index))))
-    ranked = sorted(
-        selected,
-        key=lambda pair: (
-            -_orb_match_score(signatures[pair[0]], signatures[pair[1]]),
-            pair,
-        ),
-    )[:max_pairs]
+    # 首尾闭环强制配对：优先占用 max_pairs 预算，保证闭环候选不被 ORB 分数挤掉。
+    # 窗口随视频长度自适应，避免短视频被大量无效首尾对占满预算。
+    effective_window = min(loop_window, max(2, len(paths) // 20)) if loop_window > 0 else 0
+    if effective_window > 0 and len(paths) > 2 * effective_window:
+        head = list(range(effective_window))
+        tail = list(range(len(paths) - effective_window, len(paths)))
+        forced = sorted({
+            tuple(sorted((left, right)))
+            for left in head
+            for right in tail
+            if left != right
+        })[:max_pairs]
+        scored = sorted(
+            selected - set(forced),
+            key=lambda pair: (
+                -_orb_match_score(signatures[pair[0]], signatures[pair[1]]),
+                pair,
+            ),
+        )[: max(0, max_pairs - len(forced))]
+        ranked = scored + sorted(forced)
+    else:
+        forced = set()
+        ranked = sorted(
+            selected,
+            key=lambda pair: (
+                -_orb_match_score(signatures[pair[0]], signatures[pair[1]]),
+                pair,
+            ),
+        )[:max_pairs]
+    if forced:
+        logger.info(
+            "long_range_loop_pairs forced=%d candidates=%d", len(forced), len(ranked)
+        )
     return [(paths[left].name, paths[right].name) for left, right in ranked]
 
 
