@@ -122,7 +122,8 @@ def _make_image_dir(tmp_path, count=1):
     img_dir.mkdir()
     import cv2
     for index in range(count):
-        cv2.imwrite(str(img_dir / f"a{index}.jpg"), np.zeros((24, 32, 3), dtype=np.uint8))
+        # 零填充保证字典序 == 数字序（真实管线帧名为 frame_00001.jpg 零填充）
+        cv2.imwrite(str(img_dir / f"a{index:03d}.jpg"), np.zeros((24, 32, 3), dtype=np.uint8))
     return img_dir
 
 
@@ -274,3 +275,100 @@ def test_long_range_pairs_use_guided_colmap_verification(tmp_path, monkeypatch):
     assert captured["image_pairs_matching_options"].guided_matching is True
     pair_path = captured["image_pairs_pairing_options"].match_list_path
     assert pair_path.read_text(encoding="utf-8") == "a0.jpg a1.jpg\n"
+
+
+def test_loop_pairs_force_head_tail_closure(tmp_path, monkeypatch):
+    """首尾窗口配对不依赖 ORB 分数，且不被 max_pairs 截断挤掉。"""
+    image_dir = _make_image_dir(tmp_path, count=60)
+    rng = np.random.default_rng(7)
+    descriptors = rng.integers(0, 256, size=(32, 32), dtype=np.uint8)
+    monkeypatch.setattr(sfm_module, "_orb_signature", lambda _path: descriptors)
+
+    pairs = _build_long_range_pairs(
+        image_dir,
+        max_anchors=6,
+        candidates_per_anchor=1,
+        max_pairs=5,
+        loop_window=8,
+    )
+
+    names = {(left, right) for left, right in pairs}
+    head = {f"a{i:03d}.jpg" for i in range(8)}
+    tail = {f"a{i:03d}.jpg" for i in range(52, 60)}
+    forced_present = [(left, right) for left, right in names if left in head and right in tail]
+    # 12×12 窗口的全组合中至少有部分出现在结果里（max_pairs=5 仍保留闭环候选）
+    assert forced_present, "首尾闭环配对应优先保留"
+    assert all(right in tail for left, right in forced_present if left in head)
+    # 其余候选仍满足非邻接要求
+    for left, right in names - set(forced_present):
+        left_index = int(left.removeprefix("a").removesuffix(".jpg"))
+        right_index = int(right.removeprefix("a").removesuffix(".jpg"))
+        assert abs(right_index - left_index) >= 15
+
+
+def _make_cameras_with_centers(centers):
+    return [
+        {"name": f"frame_{index:05d}.jpg", "center": np.asarray(center, dtype=np.float64)}
+        for index, center in enumerate(centers)
+    ]
+
+
+def test_filter_trajectory_jumps_drops_jump_cluster():
+    """中段快速甩动簇（步长 20× 中位）应被整体剔除，正常帧保留。"""
+    rng = np.random.default_rng(3)
+    centers = np.zeros((40, 3))
+    for index in range(1, 40):
+        centers[index] = centers[index - 1] + [0.05, 0.0, 0.0]
+    # 第 20-23 帧发生快速甩动：步长 1.0（20× 中位步长 0.05）
+    centers[20:, 0] += 1.0
+    for index in range(20, 24):
+        centers[index, 0] += 1.0 * (index - 19)
+    cameras = _make_cameras_with_centers(centers)
+
+    kept, dropped, diagnostics = sfm_module.filter_trajectory_jumps(cameras)
+
+    assert len(dropped) > 0
+    dropped_names = set(dropped)
+    assert "frame_00020.jpg" in dropped_names
+    assert diagnostics["dropped_count"] == len(dropped)
+    assert diagnostics["kept_ratio"] > 0.7
+    assert len(kept) + len(dropped) == len(cameras)
+
+
+def test_filter_trajectory_jumps_keeps_smooth_trajectory():
+    """匀速平滑轨迹应全部保留。"""
+    centers = np.column_stack([
+        np.linspace(0.0, 2.0, 50),
+        np.zeros(50),
+        np.full(50, 1.5),
+    ])
+    cameras = _make_cameras_with_centers(centers)
+
+    kept, dropped, diagnostics = sfm_module.filter_trajectory_jumps(cameras)
+
+    assert dropped == []
+    assert len(kept) == 50
+    assert diagnostics["kept_ratio"] == 1.0
+
+
+def test_filter_trajectory_jumps_protects_min_kept_ratio():
+    """整条轨迹剧烈跳变时只剔除最极端帧，不把输入删空。"""
+    rng = np.random.default_rng(5)
+    centers = rng.normal(size=(60, 3)) * 5.0
+    centers[::2] += np.array([100.0, 0.0, 0.0])  # 一半帧是极端跳变
+    cameras = _make_cameras_with_centers(centers)
+
+    kept, dropped, _ = sfm_module.filter_trajectory_jumps(cameras)
+
+    assert len(kept) >= 0.70 * len(cameras)
+    assert len(dropped) <= 0.30 * len(cameras)
+
+
+def test_refine_reconstruction_degrades_gracefully():
+    """pycolmap 模型缺 points2D 时降级返回诊断，不抛异常。"""
+    recon = _FakeRecon(n_images=2)
+    diagnostics = sfm_module._refine_reconstruction(recon)
+
+    assert diagnostics["filtered_points"] == 0
+    assert "degraded_reason" in diagnostics
+    assert diagnostics["bundle_adjustment"] is False

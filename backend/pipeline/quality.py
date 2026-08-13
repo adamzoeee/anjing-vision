@@ -16,6 +16,46 @@ def _robust_extent(points: np.ndarray) -> np.ndarray:
     return np.percentile(points, 99, axis=0) - np.percentile(points, 1, axis=0)
 
 
+def grade_reconstruction(
+    sfm_metrics: dict | None,
+    gaussian_metrics: dict | None,
+    calibration_metrics: dict | None,
+) -> tuple[str, list[str]]:
+    """重建结果分级：good/low。低质量不阻断交付，但报告必须携带警示。
+
+    触发低质量的信号（任一命中即 grade=low）：
+    - 3DGS 验证 PSNR 偏低（<20dB，正常应 25+）
+    - 用户提供了参考物但尺度标定分歧过大（>15%）或标定失败
+    - SFM 轨迹跳变比偏高（>15）
+    - 验证视角 alpha 覆盖不足（<0.65）
+    """
+    sfm = sfm_metrics or {}
+    gaussian = gaussian_metrics or {}
+    calibration = calibration_metrics or {}
+    reasons: list[str] = []
+    psnr = gaussian.get("validation_psnr_mean")
+    if psnr is not None and float(psnr) < 20.0:
+        reasons.append(f"重建清晰度偏低（PSNR {float(psnr):.1f} dB），建议重新录制")
+    coverage = gaussian.get("validation_alpha_coverage_min")
+    if coverage is not None and float(coverage) < 0.65:
+        reasons.append("部分视角覆盖严重缺失，建议补充拍摄")
+    disagreement = calibration.get("max_relative_disagreement")
+    references_supplied = bool(calibration.get("references"))
+    scale = calibration.get("scale")
+    if disagreement is not None and float(disagreement) > 0.15:
+        reasons.append(
+            f"多个参考尺寸推导的比例不一致（分歧 {float(disagreement):.0%}），"
+            "模型内部可能扭曲，米制测量不可信"
+        )
+    elif references_supplied and scale is None:
+        reasons.append("参考物标定失败，无法恢复米制尺度，测量结果仅供参考")
+    jump_ratio = sfm.get("trajectory_jump_ratio")
+    if jump_ratio is not None and float(jump_ratio) > 15.0:
+        reasons.append("拍摄轨迹存在明显断层，模型几何可能不连续")
+    grade = "low" if reasons else "good"
+    return grade, reasons
+
+
 def assess_sfm(cameras: list[dict], points: np.ndarray, total_frames: int, quality: dict | None = None) -> QualityResult:
     """验证注册率、稀疏点数量、轨迹基线及 COLMAP 重投影误差。"""
     quality = quality or {}
@@ -88,10 +128,12 @@ def assess_gaussians(
         return QualityResult(False, "3DGS 几何相对 SFM 点云发生异常收缩或膨胀", metrics)
     psnr_mean = metrics.get("validation_psnr_mean")
     coverage = metrics.get("validation_alpha_coverage_min")
-    if psnr_mean is not None and float(psnr_mean) < 16.0:
-        return QualityResult(False, "3DGS 多视角清晰度不足，请检查拍摄重叠并重新录制", metrics)
+    # 数值发散/几何崩溃仍直接失败；清晰度与覆盖不足只降级标记（done + 警示），
+    # 由 grade_reconstruction 汇总为 grade=low，不阻断用户查看模型。
+    if psnr_mean is not None and float(psnr_mean) < 20.0:
+        metrics["low_psnr_warning"] = True
     if coverage is not None and float(coverage) < 0.65:
-        return QualityResult(False, "3DGS 部分视角覆盖严重缺失，请沿房间边缘补充拍摄", metrics)
+        metrics["low_coverage_warning"] = True
     return QualityResult(True, None, metrics)
 
 
