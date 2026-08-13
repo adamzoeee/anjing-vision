@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from pipeline.trainer import NUM_ITER, ValidationEarlyStop, _ssim, denormalize_gaussians, normalize_scene, prepare_tensors
+from pipeline.trainer import NUM_ITER, ValidationEarlyStop, _quality_curve_still_improving, _ssim, denormalize_gaussians, normalize_scene, prepare_tensors
 
 
 def test_default_training_budget_allows_complex_scene_to_reach_twenty_thousand_steps():
@@ -88,3 +88,20 @@ def test_early_stop_keeps_training_when_worst_holdout_view_improves():
     stopper.update(22.0, ssim=.82, min_psnr=14.0, refinement_finished=True)
     assert stopper.update(22.0, ssim=.82, min_psnr=14.2, refinement_finished=True) is False
     assert stopper.stale == 0
+
+
+def test_mean_gain_does_not_hide_worst_holdout_regression():
+    stopper = ValidationEarlyStop(patience=2)
+    stopper.update(20.0, ssim=.80, min_psnr=15.0, refinement_finished=True)
+    assert stopper.update(20.5, ssim=.82, min_psnr=14.8, refinement_finished=True) is False
+    assert stopper.stale == 1
+
+
+def test_quality_curve_reports_unconverged_at_iteration_limit():
+    curve = [
+        {"validation_psnr_mean": 20.0, "validation_ssim_mean": .80, "validation_psnr_min": 15.0},
+        {"validation_psnr_mean": 20.2, "validation_ssim_mean": .81, "validation_psnr_min": 15.1},
+    ]
+    assert _quality_curve_still_improving(curve) is True
+    curve[-1]["validation_psnr_min"] = 14.8
+    assert _quality_curve_still_improving(curve) is False

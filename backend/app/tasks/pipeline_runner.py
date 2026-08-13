@@ -4,6 +4,9 @@
 """
 import logging
 import time
+import os
+import re
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +18,8 @@ from ..models import Report, Scan
 from ..storage import media_path
 
 logger = logging.getLogger("anjing.pipeline")
+DEFAULT_MAX_TRAINING_VIEWS = 120  # 8GB 显存下约 1.3GB Float32 训练图像，给高斯优化保留余量
+MAX_CONFIGURED_TRAINING_VIEWS = 240
 
 STAGES = [
     ("extracting", 5, "抽帧中"), ("sfm", 25, "相机位姿估计中"),
@@ -37,6 +42,7 @@ def run_pipeline(scan_id: int) -> None:
     timings = {}
     s = get_settings()
     db = SessionLocal()
+    scan = None
     try:
         scan = db.get(Scan, scan_id)
         if scan is None:
@@ -48,33 +54,55 @@ def run_pipeline(scan_id: int) -> None:
         _stage(db, scan, "extracting", 5, "抽帧中")
 
         stage_started = time.perf_counter()
-        from pipeline.frame_extractor import extract_frames, filter_sharp_frames
+        from pipeline.frame_extractor import (
+            extract_frames,
+            filter_sharp_frames,
+            protect_sfm_continuity,
+        )
         if src.is_dir():
             # 照片模式：目录下的图片直接作为帧
             all_frames = sorted(list(src.glob("*.jpg")) + list(src.glob("*.jpeg")) + list(src.glob("*.JPG")))
         else:
             all_frames = extract_frames(src, frames)
-        kept, _ = filter_sharp_frames(all_frames)
-        timings["frame_extraction_seconds"] = time.perf_counter() - stage_started
-        if len(kept) < 30:
-            _fail(db, scan, f"抽帧后有效图片仅 {len(kept)} 张，请重录（保证光线充足、慢速移动）")
+        sharp_frames, dropped = filter_sharp_frames(all_frames)
+        sfm_frames, bridge_frames, continuity = protect_sfm_continuity(
+            all_frames,
+            sharp_frames,
+        )
+        logger.info(
+            "frame_filter scan_id=%s candidate_frames=%d sharp_frames=%d blurred_frames=%d "
+            "sfm_bridge_frames_restored=%d sfm_input_frames=%d "
+            "max_dropped_run_before_recovery=%d max_dropped_run_after_recovery=%d",
+            scan_id,
+            len(all_frames),
+            len(sharp_frames),
+            len(dropped),
+            len(bridge_frames),
+            len(sfm_frames),
+            continuity["max_dropped_run_before_recovery"],
+            continuity["max_dropped_run_after_recovery"],
+        )
+        if len(sfm_frames) < 30:
+            _fail(db, scan, f"抽帧后 SfM 输入图片仅 {len(sfm_frames)} 张，请重录（保证光线充足、慢速移动）")
             return
+        timings["frame_extraction_seconds"] = time.perf_counter() - stage_started
 
         _stage(db, scan, "sfm", 25, "相机位姿估计中")
         stage_started = time.perf_counter()
         from pipeline.sfm import run_sfm, undistort_registered_view
-        # SFM 只跑清晰帧（模糊帧会污染特征匹配），复制到独立目录保证位姿与图像一一对应
+        # SfM 使用严格清晰帧和少量连续性桥接帧；桥接帧只用于恢复相机轨迹，
+        # 后续 3DGS 仍只使用严格清晰且成功注册的帧。
         frames_clean = work / "frames_clean"
         import shutil
         shutil.rmtree(frames_clean, ignore_errors=True)  # 清空重跑残留
         frames_clean.mkdir(parents=True, exist_ok=True)
-        for p in kept:
+        for p in sfm_frames:
             shutil.copy(p, frames_clean / p.name)
         sfm_out = run_sfm(frames_clean, work / "sfm")
         timings["sfm_seconds"] = time.perf_counter() - stage_started
         from pipeline.quality import assess_sfm
         sfm_quality = assess_sfm(
-            sfm_out["cameras"], sfm_out["points3D"], len(kept), sfm_out.get("quality")
+            sfm_out["cameras"], sfm_out["points3D"], len(sfm_frames), sfm_out.get("quality")
         )
         if not sfm_quality.ok:
             _fail(db, scan, sfm_quality.reason)
@@ -91,8 +119,17 @@ def run_pipeline(scan_id: int) -> None:
         from PIL import Image
         stage_started = time.perf_counter()
         # 对齐：相机与图像按文件名排序后一一对应（SFM 可能漏注册部分帧，过滤掉）
-        name_to_cam = {c["name"]: c for c in sfm_out["cameras"]}
-        paired = [(p, name_to_cam[p.name]) for p in sorted(kept) if p.name in name_to_cam]
+        paired = _pair_registered_training_frames(sharp_frames, sfm_out["cameras"])
+        logger.info(
+            "sfm_registration scan_id=%s sfm_input_frames=%d sharp_frames=%d "
+            "sfm_registered_frames=%d training_eligible_frames=%d bridge_frames_excluded=%d",
+            scan_id,
+            len(sfm_frames),
+            len(sharp_frames),
+            len(sfm_out["cameras"]),
+            len(paired),
+            len(bridge_frames),
+        )
         if len(paired) < 5:
             _fail(db, scan, "SFM 注册帧过少，无法训练")
             return
@@ -103,7 +140,24 @@ def run_pipeline(scan_id: int) -> None:
         ]
         imgs = [item[0] for item in rectified]
         cams = [item[1] for item in rectified]
-        training_cams, training_imgs, holdout_cams, holdout_imgs, view_diagnostics = _prepare_training_split(cams, imgs)
+        training_cams, training_imgs, holdout_cams, holdout_imgs, view_diagnostics = _prepare_training_split(
+            cams,
+            imgs,
+            max_views=_configured_training_view_limit(),
+        )
+        logger.info(
+            "reconstruction_frame_counts scan_id=%s extracted_frames=%d sharp_frames=%d "
+            "sfm_input_frames=%d sfm_bridge_frames=%d sfm_registered_frames=%d "
+            "training_eligible_frames=%d training_views=%d",
+            scan_id,
+            len(all_frames),
+            len(sharp_frames),
+            len(sfm_frames),
+            len(bridge_frames),
+            len(sfm_out["cameras"]),
+            len(paired),
+            len(training_imgs),
+        )
         normalized_cams, normalized_points, scene_transform = normalize_scene(
             training_cams, sfm_out["points3D"]
         )
@@ -115,10 +169,18 @@ def run_pipeline(scan_id: int) -> None:
         if init_colors is not None:
             init_colors = np.asarray(init_colors, dtype=np.float32) / 255.0
         stage_started = time.perf_counter()
+        training_iterations = _configured_training_iterations()
+        logger.info(
+            "3DGS TRAINING START scan_id=%s training_views=%d iterations=%d",
+            scan_id,
+            len(training_imgs),
+            training_iterations,
+        )
         gaussians = train_gaussians(
             gt,
             normalized_points,
             init_colors,
+            num_iter=training_iterations,
             validation_gt=holdout_gt,
             validation_dir=work / "validation",
         )
@@ -272,6 +334,11 @@ def run_pipeline(scan_id: int) -> None:
         preview_dir = work / "preview"
         gaussian_filename = "scene_gaussian.ply"
         export_gaussian_ply(gaussians, preview_dir / gaussian_filename)
+        logger.info(
+            "GAUSSIAN EXPORT SUCCESS scan_id=%s path=%s",
+            scan_id,
+            preview_dir / gaussian_filename,
+        )
         preview = build_preview_assets(
             points,
             preview_dir,
@@ -303,16 +370,25 @@ def run_pipeline(scan_id: int) -> None:
         )
         _stage(db, scan, "done", 100, "评估完成")
     except Exception as e:  # noqa: BLE001 - 管道任一步失败都落到 failed
+        failed_stage = getattr(scan, "status", "unknown")
         db.rollback()
+        safe_message = _sanitize_log_text(str(e))
         logger.error(
-            "pipeline_failed scan_id=%s exception_type=%s",
+            "pipeline_failed scan_id=%s stage=%s exception_type=%s exception_message=%s",
             scan_id,
+            failed_stage,
             type(e).__name__,
+            safe_message,
         )
-        logger.exception("pipeline_failed traceback scan_id=%s", scan_id)
+        logger.error(
+            "pipeline_failed traceback scan_id=%s stage=%s\n%s",
+            scan_id,
+            failed_stage,
+            _sanitize_log_text("".join(traceback.format_exception(type(e), e, e.__traceback__))),
+        )
         scan = db.get(Scan, scan_id)
         if scan:
-            _fail(db, scan, "管道处理失败，请稍后重试")
+            _fail(db, scan, _user_failure_message(failed_stage, e))
     finally:
         db.close()
 
@@ -325,6 +401,27 @@ def _stage(db, scan, status, progress, message):
 def _fail(db, scan, message):
     scan.status, scan.progress, scan.message = "failed", 100, message
     db.commit()
+
+
+def _user_failure_message(stage: str, exc: Exception) -> str:
+    """Return a concise frontend message while detailed diagnostics stay in logs."""
+    detail = str(exc).lower()
+    if stage == "training":
+        if "out of memory" in detail:
+            return "3DGS训练失败：GPU显存不足，请降低训练视角数量后重试"
+        if any(
+            token in detail
+            for token in ("cuda扩展", "cuda extension", "ninja", "msvc", "nvcc")
+        ):
+            return "3DGS训练失败：gsplat CUDA扩展不可用，请检查CUDA/Ninja/MSVC环境"
+        return "3DGS训练失败，请查看后端日志"
+    return "管道处理失败，请稍后重试"
+
+
+def _sanitize_log_text(value: str) -> str:
+    """Retain diagnostics without leaking credentials or local filesystem paths."""
+    value = re.sub(r"(?i)(password|secret|token)\s*=\s*[^\s,;]+", r"\1=<redacted>", value)
+    return re.sub(r"(?i)(?:[a-z]:\\|[a-z]:/)[^\s\r\n]+", "<local-path>", value)
 
 
 def _upsert_report(
@@ -455,14 +552,33 @@ def _robust_scene_extents(points: np.ndarray) -> list[float] | None:
     return [float(value) for value in np.sort(extents)[::-1]]
 
 
+def _pair_registered_training_frames(
+    sharp_frames: list[Path], cameras: list[dict],
+) -> list[tuple[Path, dict]]:
+    """只将严格清晰且被 SfM 注册的帧交给 3DGS，排除轨迹桥接帧。"""
+    name_to_camera = {camera["name"]: camera for camera in cameras}
+    return [
+        (path, name_to_camera[path.name])
+        for path in sorted(sharp_frames)
+        if path.name in name_to_camera
+    ]
+
+
 def _prepare_training_views(
     cams: list[dict],
     imgs: list[np.ndarray],
     *,
-    max_views: int = 80,
+    max_views: int = DEFAULT_MAX_TRAINING_VIEWS,
     max_dimension: int = 960,
 ) -> tuple[list[dict], list[np.ndarray]]:
     """兼容旧调用：返回智能筛选后的训练视角，不包含独立 holdout。"""
+    if len(cams) != len(imgs) or not cams:
+        raise ValueError("训练相机与图片必须非空且一一对应")
+    # 保留旧工具/小型测试的兼容路径；正式 SfM 相机均具有 center/R。
+    if len(cams) < 10 or any("center" not in camera or "R" not in camera for camera in cams):
+        count = min(len(cams), max_views)
+        indices = np.linspace(0, len(cams) - 1, count, dtype=int)
+        return _resize_selected_views(cams, imgs, indices, max_dimension)
     train_cams, train_imgs, _holdout_cams, _holdout_imgs, _ = _prepare_training_split(
         cams, imgs, max_views=max_views, max_dimension=max_dimension
     )
@@ -496,7 +612,7 @@ def _prepare_training_split(
     cams: list[dict],
     imgs: list[np.ndarray],
     *,
-    max_views: int = 80,
+    max_views: int = DEFAULT_MAX_TRAINING_VIEWS,
     max_dimension: int = 960,
 ):
     """按位姿、朝向、转弯、画面内容和清晰度划分训练集与 12% 未见视角。"""
@@ -508,6 +624,31 @@ def _prepare_training_split(
     training = _resize_selected_views(cams, imgs, split.train_indices, max_dimension)
     holdout = _resize_selected_views(cams, imgs, split.holdout_indices, max_dimension)
     return *training, *holdout, split.diagnostics
+
+
+def _configured_training_view_limit() -> int:
+    """读取可调训练视角上限，并限制到当前全量 GPU 张量实现的安全范围。"""
+    raw = os.getenv("GAUSSIAN_MAX_TRAINING_VIEWS", str(DEFAULT_MAX_TRAINING_VIEWS))
+    try:
+        requested = int(raw)
+    except ValueError:
+        logger.warning(
+            "invalid_gaussian_max_training_views value=%r fallback=%d",
+            raw,
+            DEFAULT_MAX_TRAINING_VIEWS,
+        )
+        requested = DEFAULT_MAX_TRAINING_VIEWS
+    return max(1, min(requested, MAX_CONFIGURED_TRAINING_VIEWS))
+
+
+def _configured_training_iterations() -> int:
+    """读取质量优先训练上限，默认 20000 次。"""
+    raw = os.getenv("GAUSSIAN_TRAIN_ITERATIONS", "20000")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning("invalid_gaussian_train_iterations value=%r fallback=20000", raw)
+        return 20000
 
 
 def _find_obstacles(imgs, cams, points=None, *, frame_stride: int | None = None) -> dict:

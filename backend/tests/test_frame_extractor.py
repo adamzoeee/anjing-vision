@@ -4,7 +4,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pipeline.frame_extractor import _ffmpeg_bin, extract_frames, filter_sharp_frames
+import pipeline.frame_extractor as frame_extractor
+from pipeline.frame_extractor import (
+    _ffmpeg_bin,
+    _max_dropped_run,
+    _select_dynamic_frames,
+    extract_frames,
+    filter_sharp_frames,
+    protect_sfm_continuity,
+)
 
 
 def _make_test_video(path: Path, duration: float = 2.0, size: str = "320x240", rate: int = 30):
@@ -21,8 +29,8 @@ def test_extract_frames_writes_jpgs(tmp_path):
     out = tmp_path / "frames"
     out.mkdir()
     paths = extract_frames(video, out, target_count=30)
-    # 2 秒视频 @30fps → fps=15 → 约 30 帧；ffmpeg 输出帧数与 target_count 有容差
-    assert 20 <= len(paths) <= 40
+    # 静止/低运动区域允许降采样，但动态选择不得超过约 8 张/秒。
+    assert 3 <= len(paths) <= 16
     assert all(p.suffix == ".jpg" for p in paths)
     assert paths == sorted(paths)
 
@@ -33,10 +41,11 @@ def test_extract_frames_cleans_old_frames(tmp_path):
     _make_test_video(video, duration=4.0)
     out = tmp_path / "frames"
     out.mkdir()
-    paths_a = extract_frames(video, out, target_count=60)   # 4s → fps=15 → ~60 帧
-    assert len(paths_a) > 40
-    paths_b = extract_frames(video, out, target_count=15)   # fps≈3.75 → ~15 帧
-    assert 10 <= len(paths_b) <= 25
+    paths_a = extract_frames(video, out, target_count=60)
+    assert 7 <= len(paths_a) <= 32
+    (out / "frame_99999.jpg").write_bytes(b"stale")
+    paths_b = extract_frames(video, out, target_count=15)
+    assert len(paths_b) == len(paths_a)                     # target_count 不改变动态抽帧策略
     assert paths_b == sorted(out.glob("frame_*.jpg"))       # 无旧帧残留
 
 
@@ -64,3 +73,79 @@ def test_filter_sharp_frames_drops_unreadable_file(tmp_path):
     bad.write_bytes(b"not an image")
     kept, dropped = filter_sharp_frames([bad], min_variance=50.0)
     assert kept == [] and dropped == [bad]
+
+
+@pytest.mark.parametrize(
+    ("score", "method", "expected_min", "expected_max"),
+    [
+        (0.02, "flow", 7.0, 8.0),
+        (0.006, "flow", 4.8, 5.2),
+        (0.0, "flow", 2.0, 2.3),
+    ],
+)
+def test_dynamic_selection_adapts_to_motion(
+    tmp_path, monkeypatch, score, method, expected_min, expected_max,
+):
+    paths = []
+    for index in range(61):
+        path = tmp_path / f"frame_{index + 1:05d}.jpg"
+        image = np.full((40, 60), index % 255, dtype=np.uint8)
+        import cv2
+        cv2.imwrite(str(path), image)
+        paths.append(path)
+    monkeypatch.setattr(frame_extractor, "_motion_score", lambda _a, _b: (score, method))
+    selected, stats = _select_dynamic_frames(paths, candidate_fps=15.0)
+    effective_fps = (len(selected) - 1) / 4.0
+    assert expected_min <= effective_fps <= expected_max
+    assert stats["max_sample_gap_seconds"] <= 0.5
+
+
+def test_protect_sfm_continuity_restores_best_readable_bridges(tmp_path):
+    import cv2
+
+    paths = []
+    for index in range(12):
+        path = tmp_path / f"frame_{index + 1:05d}.jpg"
+        image = np.zeros((80, 80), dtype=np.uint8)
+        if index in {0, 11}:
+            image[::2, ::2] = 255
+        elif index == 5:
+            image[20:60:2, 20:60:2] = 180
+        else:
+            image[30:50, 30:50] = 20 + index
+        cv2.imwrite(str(path), image)
+        paths.append(path)
+    sharp = [paths[0], paths[-1]]
+
+    sfm_frames, recovered, stats = protect_sfm_continuity(
+        paths, sharp, max_dropped_run=2,
+    )
+
+    assert paths[5] in recovered
+    assert set(sharp).issubset(sfm_frames)
+    assert set(recovered).isdisjoint(sharp)
+    assert stats["candidate_frames"] == 12
+    assert stats["sharp_frames"] == 2
+    assert stats["sfm_bridge_frames_restored"] == len(recovered)
+    assert stats["max_dropped_run_before_recovery"] == 10
+    assert stats["max_dropped_run_after_recovery"] <= 2
+    assert _max_dropped_run(paths, set(sfm_frames)) <= 2
+
+
+def test_protect_sfm_continuity_never_restores_unreadable_file(tmp_path):
+    import cv2
+
+    first = tmp_path / "frame_00001.jpg"
+    broken = tmp_path / "frame_00002.jpg"
+    last = tmp_path / "frame_00003.jpg"
+    cv2.imwrite(str(first), np.eye(20, dtype=np.uint8) * 255)
+    broken.write_bytes(b"not an image")
+    cv2.imwrite(str(last), np.eye(20, dtype=np.uint8) * 255)
+
+    sfm_frames, recovered, stats = protect_sfm_continuity(
+        [first, broken, last], [first, last], max_dropped_run=0,
+    )
+
+    assert broken not in recovered
+    assert broken not in sfm_frames
+    assert stats["max_dropped_run_after_recovery"] == 1

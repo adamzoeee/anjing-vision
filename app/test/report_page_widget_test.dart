@@ -121,6 +121,11 @@ void main() {
       scrollable: find.byType(Scrollable),
     );
     expect(find.text('建议拓宽门洞'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('清理通道杂物'),
+      200,
+      scrollable: find.byType(Scrollable),
+    );
     expect(find.text('清理通道杂物'), findsOneWidget);
   });
 
@@ -245,5 +250,78 @@ void main() {
     final provider = authenticatedReportImage(api, '/static/12/view_0.png');
     expect(provider.url, 'https://api.test.invalid/static/12/view_0.png');
     expect(provider.headers, {'Authorization': 'Bearer image-token'});
+  });
+
+  testWidgets('标定成功时显示参考尺寸和重建空间尺寸', (tester) async {
+    adapter.onGet(
+      '/api/reports/scans/12',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 90,
+        'risks': [],
+        'advice': [],
+        'images': [],
+        'calibrated': 3,
+        'measures': {
+          'reference_measurements': [
+            {'object_type': 'door', 'dimension': 'height', 'meters': 2.0},
+            {'object_type': 'door', 'dimension': 'width', 'meters': 0.9},
+          ],
+          'calibration_quality': {
+            'used_count': 2,
+            'references': [
+              {'object_type': 'door', 'dimension': 'height', 'meters': 2.0, 'status': 'used'},
+              {'object_type': 'door', 'dimension': 'width', 'meters': 0.9, 'status': 'used'},
+            ],
+          },
+          'reconstruction_extent_m': [4.2, 3.1, 2.6],
+        },
+      }),
+    );
+
+    await tester.pumpWidget(reportApp());
+    await tester.pumpAndSettle();
+    expect(find.text('尺度标定：成功'), findsOneWidget);
+    expect(find.text('2.00 m'), findsOneWidget);
+    expect(find.text('0.90 m'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('4.20m × 3.10m × 2.60m'),
+      250,
+      scrollable: find.byType(Scrollable),
+    );
+    expect(find.text('4.20m × 3.10m × 2.60m'), findsOneWidget);
+  });
+
+  testWidgets('标定失败时仍显示输入值和失败原因', (tester) async {
+    adapter.onGet(
+      '/api/reports/scans/12',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 70,
+        'risks': [],
+        'advice': [],
+        'images': [],
+        'calibrated': 0,
+        'measures': {
+          'reference_measurements': [
+            {'object_type': 'bed', 'dimension': 'length', 'meters': 2.0},
+          ],
+          'calibration_quality': {
+            'used_count': 0,
+            'reason': '至少需要两个被模型成功识别的参考尺寸',
+            'references': [
+              {'object_type': 'bed', 'dimension': 'length', 'meters': 2.0, 'status': 'not_detected'},
+            ],
+          },
+        },
+      }),
+    );
+
+    await tester.pumpWidget(reportApp());
+    await tester.pumpAndSettle();
+    expect(find.text('尺度标定：失败'), findsOneWidget);
+    expect(find.text('至少需要两个被模型成功识别的参考尺寸'), findsOneWidget);
+    expect(find.text('2.00 m'), findsOneWidget);
+    expect(find.text('未在重建结果中识别到对应参考物'), findsOneWidget);
   });
 }
