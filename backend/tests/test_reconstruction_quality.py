@@ -1,6 +1,11 @@
 import numpy as np
 
-from pipeline.quality import assess_gaussians, assess_metric_scene, assess_sfm
+from pipeline.quality import (
+    assess_gaussians,
+    assess_metric_scene,
+    assess_sfm,
+    grade_reconstruction,
+)
 
 
 def _cameras(count: int):
@@ -69,17 +74,66 @@ def test_gaussian_quality_rejects_exploded_cube():
     assert result.metrics["extent_ratio"] > 4
 
 
-def test_gaussian_quality_rejects_blurry_or_incomplete_multiview_model():
+def test_gaussian_quality_marks_blurry_or_incomplete_as_degraded_not_failed():
+    """低 PSNR/覆盖不再阻断交付，只做降级标记（grade_reconstruction 汇总）。"""
     rng = np.random.default_rng(30)
     source = rng.normal(0, 0.3, (1000, 3))
-    assert not assess_gaussians(
+    blurry = assess_gaussians(
         source.copy(), source, {"validation_psnr_mean": 15.9, "validation_alpha_coverage_min": 0.9}
-    ).ok
-    result = assess_gaussians(
+    )
+    assert blurry.ok
+    assert blurry.metrics["low_psnr_warning"] is True
+    incomplete = assess_gaussians(
         source.copy(), source, {"validation_psnr_mean": 22.0, "validation_alpha_coverage_min": 0.4}
     )
-    assert not result.ok
-    assert "覆盖" in result.reason
+    assert incomplete.ok
+    assert incomplete.metrics["low_coverage_warning"] is True
+    # 分级函数必须把这些信号转成 grade=low + 警示
+    grade, reasons = grade_reconstruction(
+        {}, blurry.metrics, {"references": [], "scale": 1.0}
+    )
+    assert grade == "low"
+    assert reasons
+
+
+def test_grade_reconstruction_flags_calibration_disagreement():
+    """参考物分歧 >15% 或标定失败时降级，且原因含米制测量警示。"""
+    grade, reasons = grade_reconstruction(
+        {"trajectory_jump_ratio": 5.0},
+        {"validation_psnr_mean": 26.0, "validation_alpha_coverage_min": 0.9},
+        {
+            "references": [{"object_type": "door"}],
+            "scale": None,
+            "max_relative_disagreement": 0.30,
+        },
+    )
+    assert grade == "low"
+    assert any("不一致" in reason for reason in reasons)
+    assert any("米制" in reason for reason in reasons)
+
+
+def test_grade_reconstruction_good_when_all_signals_healthy():
+    grade, reasons = grade_reconstruction(
+        {"trajectory_jump_ratio": 8.0},
+        {"validation_psnr_mean": 26.0, "validation_alpha_coverage_min": 0.9},
+        {
+            "references": [{"object_type": "door"}],
+            "scale": 0.2,
+            "max_relative_disagreement": 0.05,
+        },
+    )
+    assert grade == "good"
+    assert reasons == []
+
+
+def test_grade_reconstruction_flags_trajectory_jumps():
+    grade, reasons = grade_reconstruction(
+        {"trajectory_jump_ratio": 18.0},
+        {"validation_psnr_mean": 26.0, "validation_alpha_coverage_min": 0.9},
+        {},
+    )
+    assert grade == "low"
+    assert any("断层" in reason for reason in reasons)
 
 
 def test_gaussian_quality_accepts_clear_representative_views():
