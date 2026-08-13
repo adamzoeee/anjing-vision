@@ -180,19 +180,16 @@ def test_run_sfm_falls_back_to_exhaustive_when_main_track_is_incomplete(tmp_path
     assert len(out["cameras"]) == 9
 
 
-def test_run_sfm_falls_back_to_exhaustive_for_significant_second_component(tmp_path, monkeypatch):
-    """主模型超过70%但仍有显著第二片段时，不能静默丢弃第二片段。"""
+def test_run_sfm_does_not_run_quadratic_fallback_when_main_track_is_complete(tmp_path, monkeypatch):
+    """主模型超过70%时保留主坐标系，不为独立第二片段盲目承担全量匹配。"""
     import pycolmap
 
     captured = _patch_pycolmap(monkeypatch, {0: _FakeRecon(80), 1: _FakeRecon(15)})
-    calls = iter([
-        {0: _FakeRecon(80), 1: _FakeRecon(15)},
-        {0: _FakeRecon(80), 1: _FakeRecon(15)},
-        {0: _FakeRecon(96)},
-    ])
+    calls = iter([{0: _FakeRecon(80), 1: _FakeRecon(15)}, {0: _FakeRecon(80), 1: _FakeRecon(15)}])
     monkeypatch.setattr(pycolmap, "incremental_mapping", lambda *a, **k: next(calls))
 
     out = run_sfm(_make_image_dir(tmp_path, count=100), tmp_path / "work")
 
-    assert captured["exhaustive_called"] is True
-    assert len(out["cameras"]) == 96
+    assert captured.get("exhaustive_called", False) is False
+    assert len(out["cameras"]) == 80
+    assert out["quality"]["component_registered_images"] == [80, 15]

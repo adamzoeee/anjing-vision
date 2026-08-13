@@ -76,6 +76,9 @@ class _ReportPageState extends State<ReportPage> {
                   Text('尺寸信息', style: Theme.of(context).textTheme.titleMedium),
                   ..._measurementTiles(r),
                   const SizedBox(height: 16),
+                  Text('重建质量', style: Theme.of(context).textTheme.titleMedium),
+                  ..._qualityTiles(r),
+                  const SizedBox(height: 16),
                   Text(
                     '风险项（${r.risks.length}）',
                     style: Theme.of(context).textTheme.titleMedium,
@@ -166,7 +169,14 @@ class _ReportPageState extends State<ReportPage> {
 
   List<Widget> _measurementTiles(Report report) {
     final raw = report.measures['reference_measurements'] as List? ?? const [];
-    final labels = {'bed': '床', 'table': '桌子', 'door': '门', 'sofa': '沙发'};
+    final labels = {
+      'bed': '床',
+      'table': '桌子',
+      'door': '门',
+      'sofa': '沙发',
+      'cabinet': '柜子',
+      'bookshelf': '书架',
+    };
     final dimensions = {'length': '长', 'width': '宽', 'height': '高'};
     final tiles = <Widget>[];
     for (final item in raw.whereType<Map>()) {
@@ -187,6 +197,28 @@ class _ReportPageState extends State<ReportPage> {
           ),
         ),
       );
+    }
+    final room = report.measures['room_dimensions'] as Map?;
+    if (room?['status'] == 'measured') {
+      tiles.add(_dimensionTile('房间', room!));
+    } else if (room != null) {
+      tiles.add(
+        const ListTile(
+          dense: true,
+          leading: Icon(Icons.help_outline),
+          title: Text('房间尺寸'),
+          subtitle: Text('当前重建不足以可靠测量，结果标记为未知'),
+        ),
+      );
+    }
+    final objects = report.measures['object_dimensions'] as Map?;
+    if (objects != null) {
+      for (final entry in objects.entries) {
+        final result = entry.value;
+        if (result is Map && result['status'] == 'measured') {
+          tiles.add(_dimensionTile(entry.key.toString(), result));
+        }
+      }
     }
     final extent = report.measures['reconstruction_extent_m'] as List?;
     if (extent != null && extent.length >= 3 && report.calibrated == 3) {
@@ -210,5 +242,81 @@ class _ReportPageState extends State<ReportPage> {
       );
     }
     return tiles;
+  }
+
+  Widget _dimensionTile(String label, Map result) {
+    final values = result['dimensions'] as Map? ?? const {};
+    final names = {
+      'length': '长',
+      'width': '宽',
+      'height': '高',
+      'thickness': '厚',
+    };
+    final valueText = values.entries
+        .where((entry) => entry.value is num)
+        .map(
+          (entry) =>
+              '${names[entry.key] ?? entry.key} ${(entry.value as num).toStringAsFixed(2)}m',
+        )
+        .join(' · ');
+    return ListTile(
+      dense: true,
+      leading: const Icon(Icons.architecture),
+      title: Text('$label自动测量'),
+      subtitle: Text('置信度：${result['confidence'] ?? 'unknown'}'),
+      trailing: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 240),
+        child: Text(valueText, textAlign: TextAlign.end),
+      ),
+    );
+  }
+
+  List<Widget> _qualityTiles(Report report) {
+    final quality = report.measures['reconstruction_quality'] as Map?;
+    final training = quality?['training'] as Map?;
+    if (training == null || training.isEmpty) {
+      return const [
+        Padding(padding: EdgeInsets.all(8), child: Text('暂无重建质量指标')),
+      ];
+    }
+    String metric(String key, {int digits = 2}) {
+      final value = training[key];
+      return value is num ? value.toStringAsFixed(digits) : '未知';
+    }
+
+    final selection = training['view_selection'] as Map? ?? const {};
+    final timings = training['timings'] as Map? ?? const {};
+    final trainViews = selection['training_view_count'] ?? '未知';
+    final holdoutViews =
+        selection['holdout_view_count'] ??
+        training['validation_view_count'] ??
+        '未知';
+    final seconds = timings['3dgs_seconds'];
+    return [
+      ListTile(
+        dense: true,
+        leading: const Icon(Icons.visibility_outlined),
+        title: Text('训练视角 $trainViews · 留出视角 $holdoutViews'),
+        subtitle: const Text('留出视角未参与训练，用于真实新视角验收'),
+      ),
+      ListTile(
+        dense: true,
+        leading: const Icon(Icons.analytics_outlined),
+        title: Text(
+          'PSNR ${metric('validation_psnr_mean')}（最低 ${metric('validation_psnr_min')}）',
+        ),
+        subtitle: Text(
+          'SSIM ${metric('validation_ssim_mean', digits: 3)}（最低 ${metric('validation_ssim_min', digits: 3)}）',
+        ),
+      ),
+      ListTile(
+        dense: true,
+        leading: const Icon(Icons.timer_outlined),
+        title: Text('实际迭代 ${training['iterations'] ?? '未知'}'),
+        subtitle: Text(
+          seconds is num ? '3DGS ${seconds.toStringAsFixed(1)} 秒' : '训练耗时未知',
+        ),
+      ),
+    ];
   }
 }

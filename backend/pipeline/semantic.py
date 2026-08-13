@@ -36,6 +36,7 @@ OBJECT_PROMPTS: tuple[tuple[str, str], ...] = (
     ("bed", "床"),
     ("sofa", "沙发"),
     ("cabinet", "柜子"),
+    ("bookshelf", "书架"),
 )
 PROMPT_OBJECTS = [prompt for prompt, _label in OBJECT_PROMPTS]
 CHINESE_PROMPT_OBJECTS = [label for _prompt, label in OBJECT_PROMPTS]
@@ -350,12 +351,12 @@ def project_mask_to_points(
     return candidate_ids[visible].tolist()
 
 
-def merge_votes(votes: dict[int, dict[str, int]]) -> dict[int, str]:
+def merge_votes(votes: dict[int, dict[str, int]], *, min_votes: int = 1) -> dict[int, str]:
     """多关键帧投票；空候选忽略，平票按标签字典序保证确定性。"""
     labels: dict[int, str] = {}
     for point_id, candidates in votes.items():
         valid = [(label, int(count)) for label, count in candidates.items() if count > 0]
-        if valid:
+        if valid and max(count for _label, count in valid) >= min_votes:
             labels[point_id] = sorted(valid, key=lambda item: (-item[1], item[0]))[0][0]
     return labels
 

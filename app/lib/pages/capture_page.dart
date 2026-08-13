@@ -30,6 +30,7 @@ class _CapturePageState extends State<CapturePage> {
     'sofa': '沙发',
     'table': '桌子',
     'cabinet': '柜子',
+    'bookshelf': '书架',
   };
   static const _dimensions = {'length': '长度', 'width': '宽度', 'height': '高度'};
   static const _objectDimensions = {
@@ -38,6 +39,7 @@ class _CapturePageState extends State<CapturePage> {
     'sofa': ['length', 'width', 'height'],
     'table': ['length', 'width', 'height'],
     'cabinet': ['height', 'width', 'length'],
+    'bookshelf': ['height', 'width', 'length'],
   };
   static const _tips = [
     '1. 一个视频只拍一个房间，从门口开始',

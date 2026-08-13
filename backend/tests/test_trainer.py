@@ -1,6 +1,10 @@
 import numpy as np
 import torch
-from pipeline.trainer import _ssim, denormalize_gaussians, normalize_scene, prepare_tensors
+from pipeline.trainer import NUM_ITER, ValidationEarlyStop, _ssim, denormalize_gaussians, normalize_scene, prepare_tensors
+
+
+def test_default_training_budget_allows_complex_scene_to_reach_twenty_thousand_steps():
+    assert NUM_ITER == 20_000
 
 
 def test_prepare_tensors_shapes():
@@ -59,3 +63,28 @@ def test_scene_normalization_is_reversible_for_gaussian_means():
         "scales": torch.zeros((len(points), 3)),
     }, transform)
     assert np.allclose(restored["means"].numpy(), points, atol=1e-6)
+
+
+def test_early_stop_ignores_densification_and_stops_after_real_plateau():
+    stopper = ValidationEarlyStop(patience=3)
+    assert stopper.update(18.0, ssim=.70, min_psnr=14.0, refinement_finished=False) is False
+    assert stopper.update(17.0, ssim=.68, min_psnr=13.0, refinement_finished=False) is False
+    assert stopper.update(17.3, ssim=.71, min_psnr=14.1, refinement_finished=True) is False
+    assert stopper.update(17.31, ssim=.711, min_psnr=14.11, refinement_finished=True) is False
+    assert stopper.update(17.30, ssim=.711, min_psnr=14.11, refinement_finished=True) is False
+    assert stopper.update(17.30, ssim=.711, min_psnr=14.11, refinement_finished=True) is True
+
+
+def test_early_stop_resets_patience_after_meaningful_holdout_gain():
+    stopper = ValidationEarlyStop(patience=2)
+    stopper.update(20.0, ssim=.80, min_psnr=15.0, refinement_finished=True)
+    assert stopper.update(20.01, ssim=.801, min_psnr=15.01, refinement_finished=True) is False
+    assert stopper.update(20.2, ssim=.81, min_psnr=15.2, refinement_finished=True) is False
+    assert stopper.stale == 0
+
+
+def test_early_stop_keeps_training_when_worst_holdout_view_improves():
+    stopper = ValidationEarlyStop(patience=2)
+    stopper.update(22.0, ssim=.82, min_psnr=14.0, refinement_finished=True)
+    assert stopper.update(22.0, ssim=.82, min_psnr=14.2, refinement_finished=True) is False
+    assert stopper.stale == 0
