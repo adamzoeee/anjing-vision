@@ -239,3 +239,4 @@ def test_project_mask_validates_shapes_and_merge_votes_is_deterministic():
     with pytest.raises(ValueError, match="Nx3"):
         project_mask_to_points(np.zeros((3, 2)), np.zeros((4, 4)), np.eye(3), np.eye(3), np.zeros(3))
     assert merge_votes({1: {}, 2: {"桌子": 2, "椅子": 2}, 3: {"纸箱": 0}}) == {2: "桌子"}
+    assert merge_votes({2: {"桌子": 1}, 3: {"床": 2}}, min_votes=2) == {3: "床"}

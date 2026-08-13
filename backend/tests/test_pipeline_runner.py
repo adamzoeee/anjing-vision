@@ -19,18 +19,23 @@ from app.tasks.pipeline_runner import (
 
 
 def test_prepare_training_views_samples_trajectory_and_scales_intrinsics():
-    images = [np.zeros((1920, 1080, 3), dtype=np.uint8) for _ in range(100)]
+    images = [np.full((1920, 1080, 3), i, dtype=np.uint8) for i in range(100)]
     cameras = [
-        {"K": np.array([[1440.0, 0, 540.0], [0, 1440.0, 960.0], [0, 0, 1.0]]), "id": i}
+        {
+            "K": np.array([[1440.0, 0, 540.0], [0, 1440.0, 960.0], [0, 0, 1.0]]),
+            "R": np.eye(3),
+            "center": np.array([i / 99.0, 0.0, 0.0]),
+            "id": i,
+        }
         for i in range(100)
     ]
     selected_cameras, selected_images = _prepare_training_views(cameras, images)
-    assert len(selected_images) == len(selected_cameras) == 80
+    assert len(selected_images) == len(selected_cameras) == 48
     assert selected_cameras[0]["id"] == 0
     assert selected_cameras[-1]["id"] == 99
-    assert selected_images[0].shape[:2] == (1280, 720)
-    assert selected_cameras[0]["K"][0, 0] == pytest.approx(960.0)
-    assert selected_cameras[0]["K"][1, 2] == pytest.approx(640.0)
+    assert selected_images[0].shape[:2] == (960, 540)
+    assert selected_cameras[0]["K"][0, 0] == pytest.approx(720.0)
+    assert selected_cameras[0]["K"][1, 2] == pytest.approx(480.0)
     assert selected_cameras[0]["id"] == 0
 
 

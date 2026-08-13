@@ -3,6 +3,7 @@
 每个阶段更新 Scan.status/progress；失败置 failed 并记录 message。
 """
 import logging
+import time
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +33,8 @@ def _step_measurements(step: float) -> dict:
 
 
 def run_pipeline(scan_id: int) -> None:
+    pipeline_started = time.perf_counter()
+    timings = {}
     s = get_settings()
     db = SessionLocal()
     try:
@@ -44,6 +47,7 @@ def run_pipeline(scan_id: int) -> None:
         frames = work / "frames"
         _stage(db, scan, "extracting", 5, "抽帧中")
 
+        stage_started = time.perf_counter()
         from pipeline.frame_extractor import extract_frames, filter_sharp_frames
         if src.is_dir():
             # 照片模式：目录下的图片直接作为帧
@@ -51,11 +55,13 @@ def run_pipeline(scan_id: int) -> None:
         else:
             all_frames = extract_frames(src, frames)
         kept, _ = filter_sharp_frames(all_frames)
+        timings["frame_extraction_seconds"] = time.perf_counter() - stage_started
         if len(kept) < 30:
             _fail(db, scan, f"抽帧后有效图片仅 {len(kept)} 张，请重录（保证光线充足、慢速移动）")
             return
 
         _stage(db, scan, "sfm", 25, "相机位姿估计中")
+        stage_started = time.perf_counter()
         from pipeline.sfm import run_sfm, undistort_registered_view
         # SFM 只跑清晰帧（模糊帧会污染特征匹配），复制到独立目录保证位姿与图像一一对应
         frames_clean = work / "frames_clean"
@@ -65,6 +71,7 @@ def run_pipeline(scan_id: int) -> None:
         for p in kept:
             shutil.copy(p, frames_clean / p.name)
         sfm_out = run_sfm(frames_clean, work / "sfm")
+        timings["sfm_seconds"] = time.perf_counter() - stage_started
         from pipeline.quality import assess_sfm
         sfm_quality = assess_sfm(
             sfm_out["cameras"], sfm_out["points3D"], len(kept), sfm_out.get("quality")
@@ -75,12 +82,14 @@ def run_pipeline(scan_id: int) -> None:
 
         _stage(db, scan, "training", 45, "3D 重建训练中")
         from pipeline.trainer import (
+            apply_scene_normalization,
             denormalize_gaussians,
             normalize_scene,
             prepare_tensors,
             train_gaussians,
         )
         from PIL import Image
+        stage_started = time.perf_counter()
         # 对齐：相机与图像按文件名排序后一一对应（SFM 可能漏注册部分帧，过滤掉）
         name_to_cam = {c["name"]: c for c in sfm_out["cameras"]}
         paired = [(p, name_to_cam[p.name]) for p in sorted(kept) if p.name in name_to_cam]
@@ -94,19 +103,34 @@ def run_pipeline(scan_id: int) -> None:
         ]
         imgs = [item[0] for item in rectified]
         cams = [item[1] for item in rectified]
-        training_cams, training_imgs = _prepare_training_views(cams, imgs)
+        training_cams, training_imgs, holdout_cams, holdout_imgs, view_diagnostics = _prepare_training_split(cams, imgs)
         normalized_cams, normalized_points, scene_transform = normalize_scene(
             training_cams, sfm_out["points3D"]
         )
+        normalized_holdout_cams = apply_scene_normalization(holdout_cams, scene_transform)
         gt = prepare_tensors(normalized_cams, training_imgs)
+        holdout_gt = prepare_tensors(normalized_holdout_cams, holdout_imgs)
+        timings["training_image_loading_seconds"] = time.perf_counter() - stage_started
         init_colors = sfm_out.get("colors3D")
         if init_colors is not None:
             init_colors = np.asarray(init_colors, dtype=np.float32) / 255.0
-        gaussians = train_gaussians(gt, normalized_points, init_colors)
+        stage_started = time.perf_counter()
+        gaussians = train_gaussians(
+            gt,
+            normalized_points,
+            init_colors,
+            validation_gt=holdout_gt,
+            validation_dir=work / "validation",
+        )
+        timings["3dgs_seconds"] = time.perf_counter() - stage_started
+        gaussians["training_metrics"].update({
+            "view_selection": view_diagnostics,
+            "timings": {**timings, "total_seconds": time.perf_counter() - pipeline_started},
+        })
         gaussians = denormalize_gaussians(gaussians, scene_transform)
         # 训练结果已经转回 CPU；语义阶段还要同时加载 GroundingDINO 与 SAM。
         # 及时释放整批训练图像张量，避免 8GB 级显卡在模型切换时无谓 OOM。
-        del gt
+        del gt, holdout_gt
         import torch
         torch.cuda.empty_cache()
 
@@ -137,6 +161,19 @@ def run_pipeline(scan_id: int) -> None:
         _stage(db, scan, "segmenting", 65, "语义分割与参考物识别中")
         semantic_result = _find_obstacles(imgs, cams, semantic_points)
 
+        from pipeline.spatial_measurement import (
+            estimate_room_frame,
+            measure_room,
+            measure_semantic_objects,
+        )
+        room_frame = estimate_room_frame(points, cams)
+        object_measurements = measure_semantic_objects(
+            points, semantic_result["semantic_point_ids"], room_frame
+        )
+        for result in object_measurements.values():
+            if result.get("status") == "measured":
+                result["unit"] = "model_units"
+
         _stage(db, scan, "calibrating", 75, "多参考物尺度标定中")
         from pipeline.calibrator import estimate_scale_from_references
         from pipeline.quality import assess_metric_scene
@@ -144,6 +181,7 @@ def run_pipeline(scan_id: int) -> None:
             points,
             semantic_result["semantic_point_ids"],
             scan.reference_measurements or [],
+            object_measurements=object_measurements,
         )
         calibration_quality = {"method": "known_objects", **calibration_details}
         calibrated_flag = 0
@@ -157,6 +195,23 @@ def run_pipeline(scan_id: int) -> None:
         scale = scale or 1.0
         points = points * scale
         if calibrated_flag:
+            for result in object_measurements.values():
+                if result.get("status") == "measured":
+                    result["dimensions"] = {
+                        name: float(value) * scale
+                        for name, value in result["dimensions"].items()
+                    }
+                    result["unit"] = "meters"
+            metric_room_frame = None if room_frame is None else type(room_frame)(
+                origin=room_frame.origin * scale,
+                axes=room_frame.axes,
+                ground_inlier_ratio=room_frame.ground_inlier_ratio,
+                confidence=room_frame.confidence,
+                horizontal_method=room_frame.horizontal_method,
+            )
+        else:
+            metric_room_frame = room_frame
+        if calibrated_flag:
             gaussians["means"] = gaussians["means"] * scale
             gaussians["scales"] = gaussians["scales"] + np.log(scale)
 
@@ -165,7 +220,9 @@ def run_pipeline(scan_id: int) -> None:
         # 在真实地面/墙面空间判定接入前，不能把点云包围盒或最大空隙冒充门宽、通道宽。
         references = scan.reference_measurements or []
         door_w = _known_reference_value(references, "door", "width")
-        room_extent = _robust_scene_extents(points) if calibrated_flag else None
+        room_dimensions = measure_room(points, metric_room_frame) if calibrated_flag else {
+            "status": "unknown", "confidence": "low", "reason": "metric_scale_unavailable"
+        }
         measures = {
             "door_width_m": door_w,
             "passage_width_m": None,
@@ -176,7 +233,21 @@ def run_pipeline(scan_id: int) -> None:
             "scale_status": "metric_references" if calibrated_flag else "relative",
             "calibration_quality": calibration_quality,
             "reference_measurements": references,
-            "reconstruction_extent_m": room_extent,
+            "room_dimensions": room_dimensions,
+            # 兼容已有报告消费者；新代码优先读取有语义方向的 room_dimensions。
+            "reconstruction_extent_m": _robust_scene_extents(points) if calibrated_flag else None,
+            "object_dimensions": object_measurements,
+            "room_coordinate_system": None if room_frame is None else {
+                "status": "estimated",
+                "confidence": room_frame.confidence,
+                "ground_inlier_ratio": room_frame.ground_inlier_ratio,
+                "horizontal_method": room_frame.horizontal_method,
+            },
+            "reconstruction_quality": {
+                "sfm": sfm_quality.metrics,
+                "gaussian": gaussian_quality.metrics,
+                "training": gaussians.get("training_metrics", {}),
+            },
             "geometry_assessment_status": "pending_spatial_validation",
             # 2D 检测不是通道风险。只有后续空间判定确认位于通道内时才填入此字段。
             "obstacles_in_passage": semantic_result["obstacles_in_passage"],
@@ -389,15 +460,17 @@ def _prepare_training_views(
     imgs: list[np.ndarray],
     *,
     max_views: int = 80,
-    max_dimension: int = 1280,
+    max_dimension: int = 960,
 ) -> tuple[list[dict], list[np.ndarray]]:
-    """均匀保留全轨迹代表视角，并同步缩放图像内参。"""
-    import cv2
+    """兼容旧调用：返回智能筛选后的训练视角，不包含独立 holdout。"""
+    train_cams, train_imgs, _holdout_cams, _holdout_imgs, _ = _prepare_training_split(
+        cams, imgs, max_views=max_views, max_dimension=max_dimension
+    )
+    return train_cams, train_imgs
 
-    if len(cams) != len(imgs) or not cams:
-        raise ValueError("训练相机与图片必须非空且一一对应")
-    count = min(len(imgs), max_views)
-    indices = np.linspace(0, len(imgs) - 1, count, dtype=int)
+
+def _resize_selected_views(cams, imgs, indices, max_dimension):
+    import cv2
     selected_cams, selected_imgs = [], []
     for index in indices:
         image = imgs[int(index)]
@@ -419,7 +492,25 @@ def _prepare_training_views(
     return selected_cams, selected_imgs
 
 
-def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 30) -> dict:
+def _prepare_training_split(
+    cams: list[dict],
+    imgs: list[np.ndarray],
+    *,
+    max_views: int = 80,
+    max_dimension: int = 960,
+):
+    """按位姿、朝向、转弯、画面内容和清晰度划分训练集与 12% 未见视角。"""
+    from pipeline.view_selection import select_training_views
+
+    if len(cams) != len(imgs) or not cams:
+        raise ValueError("训练相机与图片必须非空且一一对应")
+    split = select_training_views(cams, imgs, max_train_views=max_views)
+    training = _resize_selected_views(cams, imgs, split.train_indices, max_dimension)
+    holdout = _resize_selected_views(cams, imgs, split.holdout_indices, max_dimension)
+    return *training, *holdout, split.diagnostics
+
+
+def _find_obstacles(imgs, cams, points=None, *, frame_stride: int | None = None) -> dict:
     """生成可供空间判断使用的语义结果，不把普通家具检测直接判为通道风险。
 
     每个采样帧真实执行 GroundingDINO bbox → SAM mask。若提供未缩放的 SFM 点云，
@@ -429,6 +520,8 @@ def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 30) -> dict:
 
     from pipeline.semantic import analyze_image, merge_votes, project_mask_to_points
 
+    if frame_stride is None:
+        frame_stride = max(1, len(imgs) // 16)
     if frame_stride <= 0:
         raise ValueError("frame_stride must be positive")
     summaries = {}
@@ -465,7 +558,7 @@ def _find_obstacles(imgs, cams, points=None, *, frame_stride: int = 30) -> dict:
             for point_id in hits:
                 votes[point_id][label] += 1
 
-    point_labels = merge_votes(votes)
+    point_labels = merge_votes(votes, min_votes=2 if len(sampled) >= 8 else 1)
     point_counts = Counter(point_labels.values())
     objects = []
     for label, summary in sorted(summaries.items()):

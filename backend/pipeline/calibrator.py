@@ -14,6 +14,7 @@ REFERENCE_LABELS = {
     "sofa": "沙发",
     "table": "桌子",
     "cabinet": "柜子",
+    "bookshelf": "书架",
 }
 
 
@@ -33,6 +34,7 @@ def estimate_scale_from_references(
     points: np.ndarray,
     semantic_point_ids: dict[str, list[int]],
     measurements: list[dict],
+    object_measurements: dict[str, dict] | None = None,
 ) -> tuple[float | None, dict]:
     """由 2～3 个已知物体尺寸稳健估计米/模型单位比例。"""
     candidates = []
@@ -43,20 +45,26 @@ def estimate_scale_from_references(
         ("sofa", "length"): 0, ("sofa", "width"): 1, ("sofa", "height"): 2,
         ("table", "length"): 0, ("table", "width"): 1, ("table", "height"): 2,
         ("cabinet", "height"): 0, ("cabinet", "width"): 1, ("cabinet", "length"): 1,
+        ("bookshelf", "height"): 0, ("bookshelf", "width"): 1, ("bookshelf", "length"): 1,
     }
     for item in measurements:
         object_type = item.get("object_type")
         label = REFERENCE_LABELS.get(object_type)
         ids = semantic_point_ids.get(label, []) if label else []
-        extents = _object_extents(points[np.asarray(ids, dtype=int)]) if ids else None
-        rank = rank_by_type.get((object_type, item.get("dimension")))
-        if extents is None or rank is None or rank >= len(extents) or extents[rank] <= 1e-6:
+        dimension = item.get("dimension")
+        measured = (object_measurements or {}).get(label or "", {})
+        model_units = measured.get("dimensions", {}).get(dimension)
+        extents = _object_extents(points[np.asarray(ids, dtype=int)]) if ids and model_units is None else None
+        rank = rank_by_type.get((object_type, dimension))
+        if model_units is None and extents is not None and rank is not None and rank < len(extents):
+            model_units = float(extents[rank])
+        if model_units is None or model_units <= 1e-6:
             details.append({**item, "status": "not_detected"})
             continue
-        scale = float(item["meters"]) / float(extents[rank])
+        scale = float(item["meters"]) / float(model_units)
         if np.isfinite(scale) and 0.02 < scale < 20.0:
             candidates.append(scale)
-            details.append({**item, "status": "used", "model_units": float(extents[rank]), "scale": scale})
+            details.append({**item, "status": "used", "model_units": float(model_units), "scale": scale})
     metrics = {"references": details, "used_count": len(candidates)}
     if len(candidates) < 2:
         metrics["reason"] = "至少需要两个被模型成功识别的参考尺寸"

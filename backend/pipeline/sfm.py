@@ -133,10 +133,11 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
         (len(model.images) for model in models_after_sequential), reverse=True
     )
     best_registered = component_sizes[0] if component_sizes else 0
-    significant_secondary = len(component_sizes) > 1 and component_sizes[1] >= max(
-        10, int(np.ceil(image_count * 0.10))
-    )
-    if best_registered / max(image_count, 1) < 0.70 or significant_secondary:
+    # 多 component 不代表应该自动做 O(N²) 全量匹配，更不能把独立坐标系直接拼接。
+    # 主轨迹已覆盖至少 70% 时保留主 component，并把断裂写入质量指标；只有主轨迹
+    # 本身不足时才承担 exhaustive 兜底成本。
+    exhaustive_fallback_used = best_registered / max(image_count, 1) < 0.70
+    if exhaustive_fallback_used:
         shutil.rmtree(model_path, ignore_errors=True)
         pycolmap.match_exhaustive(db_path)
         maps = pycolmap.incremental_mapping(db_path, str(image_dir), str(model_path))
@@ -203,6 +204,7 @@ def run_sfm(image_dir: Path, work_dir: Path) -> dict:
             "component_registered_images": sorted(
                 (len(model.images) for model in recons), reverse=True
             ),
+            "exhaustive_fallback_used": exhaustive_fallback_used,
         },
         "model_path": model_path,
     }

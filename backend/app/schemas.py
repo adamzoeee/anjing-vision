@@ -71,7 +71,7 @@ class ScanIn(BaseModel):
 
 
 class ReferenceMeasurement(BaseModel):
-    object_type: Literal["door", "bed", "sofa", "table", "cabinet"]
+    object_type: Literal["door", "bed", "sofa", "table", "cabinet", "bookshelf"]
     dimension: Literal["length", "width", "height"]
     meters: float = Field(gt=0.1, le=20.0)
 
@@ -83,6 +83,7 @@ class ReferenceMeasurement(BaseModel):
             "sofa": {"length", "width", "height"},
             "table": {"length", "width", "height"},
             "cabinet": {"length", "width", "height"},
+            "bookshelf": {"length", "width", "height"},
         }
         if self.dimension not in allowed[self.object_type]:
             raise ValueError("该参考物不支持此尺寸方向")
