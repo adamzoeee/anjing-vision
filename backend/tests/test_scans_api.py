@@ -13,7 +13,11 @@ def _auth(client):
     return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
-def test_create_scan_and_upload_video(client, tmp_path):
+def test_create_scan_and_upload_video(client, tmp_path, monkeypatch):
+    import app.routers.scans as scans_module
+    called = {}
+    monkeypatch.setattr(scans_module, "dispatch_scan",
+                        lambda scan_id: called.setdefault("id", scan_id))
     h = _auth(client)
     pid = client.post("/api/projects", json={"name": "王奶奶家"}, headers=h).json()["id"]
     r = client.post(f"/api/projects/{pid}/scans", json={"capture_type": "video"}, headers=h)
@@ -27,8 +31,9 @@ def test_create_scan_and_upload_video(client, tmp_path):
         files={"files": ("clip.mp4", fake.read_bytes(), "video/mp4")},
     )
     assert r.status_code == 200
+    assert called.get("id") == sid  # 上传完成即触发管道分发
     r = client.get(f"/api/scans/{sid}", headers=h)
-    assert r.json()["status"] != "uploading"  # 上传后进入管道（同步模式会失败但状态已流转）
+    assert r.json()["status"] == "uploading"  # 管道异步推进，不阻塞上传请求
 
 
 def test_scan_ownership_enforced(client):
@@ -74,6 +79,21 @@ def test_reference_measurements_validate_bounds(client):
         ]},
     )
     assert response.status_code == 422
+
+
+def test_bookshelf_can_be_used_as_metric_reference(client):
+    h = _auth(client)
+    pid = client.post("/api/projects", json={"name": "书架标定"}, headers=h).json()["id"]
+    sid = client.post(f"/api/projects/{pid}/scans", json={"capture_type": "video"}, headers=h).json()["id"]
+    response = client.put(
+        f"/api/scans/{sid}/references",
+        headers=h,
+        json={"measurements": [
+            {"object_type": "bookshelf", "dimension": "height", "meters": 1.8},
+            {"object_type": "bed", "dimension": "length", "meters": 2.0},
+        ]},
+    )
+    assert response.status_code == 200
 
 
 def test_reference_measurements_require_two_distinct_supported_dimensions(client):
@@ -233,8 +253,10 @@ def test_dispatch_failure_marks_scan_failed_without_leaking_error(client, monkey
     assert "password=hidden" not in status.text
 
 
-def test_upload_sanitizes_filename(client, tmp_path):
+def test_upload_sanitizes_filename(client, tmp_path, monkeypatch):
     """路径注入防护：../ 与空 basename 均不能逃逸 media 目录或返回 500。"""
+    import app.routers.scans as scans_module
+    monkeypatch.setattr(scans_module, "dispatch_scan", lambda scan_id: None)
     import os
     h = _auth(client)
     pid = client.post("/api/projects", json={"name": "王奶奶家"}, headers=h).json()["id"]
@@ -266,8 +288,10 @@ def test_upload_over_limit_rejected(client):
     scans_mod.MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
 
-def test_photos_upload_multiple_files(client, tmp_path):
+def test_photos_upload_multiple_files(client, tmp_path, monkeypatch):
     """照片模式：多文件上传，media_path 指向目录。"""
+    import app.routers.scans as scans_module
+    monkeypatch.setattr(scans_module, "dispatch_scan", lambda scan_id: None)
     h = _auth(client)
     pid = client.post("/api/projects", json={"name": "王奶奶家"}, headers=h).json()["id"]
     sid = client.post(f"/api/projects/{pid}/scans", json={"capture_type": "photos"}, headers=h).json()["id"]

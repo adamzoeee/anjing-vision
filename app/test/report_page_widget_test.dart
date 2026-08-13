@@ -115,6 +115,11 @@ void main() {
     expect(find.text('高风险'), findsOneWidget);
     expect(find.text('地面障碍物'), findsOneWidget);
     expect(find.text('注意'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('建议拓宽门洞'),
+      300,
+      scrollable: find.byType(Scrollable),
+    );
     expect(find.text('建议拓宽门洞'), findsOneWidget);
     expect(find.text('清理通道杂物'), findsOneWidget);
   });
@@ -174,6 +179,65 @@ void main() {
     expect(find.text('未知'), findsOneWidget);
     expect(find.byIcon(Icons.help_outline), findsOneWidget);
     expect(find.byIcon(Icons.check_circle), findsNothing);
+  });
+
+  testWidgets('显示自动尺寸和未参与训练的重建质量指标', (tester) async {
+    adapter.onGet(
+      '/api/reports/scans/12',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 88,
+        'risks': [],
+        'advice': [],
+        'images': [],
+        'calibrated': 3,
+        'measures': {
+          'room_dimensions': {
+            'status': 'measured',
+            'confidence': 'high',
+            'dimensions': {'length': 4.2, 'width': 3.1, 'height': 2.6},
+          },
+          'object_dimensions': {
+            '床': {
+              'status': 'measured',
+              'confidence': 'medium',
+              'dimensions': {'length': 2.0, 'width': 1.51, 'height': 0.48},
+            },
+          },
+          'reconstruction_quality': {
+            'training': {
+              'validation_psnr_mean': 24.51,
+              'validation_psnr_min': 19.02,
+              'validation_ssim_mean': 0.812,
+              'validation_ssim_min': 0.701,
+              'iterations': 8000,
+              'validation_view_count': 12,
+              'view_selection': {
+                'training_view_count': 80,
+                'holdout_view_count': 12,
+              },
+              'timings': {'3dgs_seconds': 612.4},
+            },
+          },
+        },
+      }),
+    );
+
+    await tester.pumpWidget(reportApp());
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('重建质量'),
+      300,
+      scrollable: find.byType(Scrollable),
+    );
+
+    expect(find.text('房间自动测量'), findsOneWidget);
+    expect(find.text('床自动测量'), findsOneWidget);
+    expect(find.text('重建质量'), findsOneWidget);
+    expect(find.textContaining('训练视角 80'), findsOneWidget);
+    expect(find.textContaining('PSNR 24.51'), findsOneWidget);
+    expect(find.textContaining('SSIM 0.812'), findsOneWidget);
+    expect(find.textContaining('实际迭代 8000'), findsOneWidget);
   });
 
   test('标注图片使用后端资源地址并携带认证请求头', () {

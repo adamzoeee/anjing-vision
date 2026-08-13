@@ -11,10 +11,58 @@ import torch.nn.functional as F
 from scipy.spatial import cKDTree
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-NUM_ITER = int(os.getenv("GAUSSIAN_TRAIN_ITERATIONS", "30000"))
+# 复杂室内场景允许训练至 2 万步；不是固定跑满，而是在独立 holdout
+# 连续无显著提升时动态提前结束。环境变量仍可覆盖，便于低配机器降档。
+NUM_ITER = int(os.getenv("GAUSSIAN_TRAIN_ITERATIONS", "20000"))
 SH_DEGREE = 3
 SH_C0 = 0.28209479177387814
 _DLL_HANDLES: list[object] = []
+
+
+class ValidationEarlyStop:
+    """质量优先的 holdout 平台期判断，同时保护平均与最差视角。"""
+
+    def __init__(
+        self,
+        patience: int = 5,
+        min_psnr_delta: float = 0.03,
+        min_ssim_delta: float = 0.002,
+    ):
+        self.patience = patience
+        self.min_psnr_delta = min_psnr_delta
+        self.min_ssim_delta = min_ssim_delta
+        self.best_psnr = -float("inf")
+        self.best_ssim = -float("inf")
+        self.best_min_psnr = -float("inf")
+        self.stale = 0
+
+    def update(
+        self,
+        psnr: float,
+        *,
+        ssim: float,
+        min_psnr: float,
+        refinement_finished: bool,
+    ) -> bool:
+        if not refinement_finished:
+            self.best_psnr = psnr
+            self.best_ssim = ssim
+            self.best_min_psnr = min_psnr
+            self.stale = 0
+            return False
+        improved = (
+            psnr > self.best_psnr + self.min_psnr_delta
+            or ssim > self.best_ssim + self.min_ssim_delta
+            or min_psnr > self.best_min_psnr + self.min_psnr_delta
+        )
+        if improved:
+            self.best_psnr = max(self.best_psnr, psnr)
+            self.best_ssim = max(self.best_ssim, ssim)
+            self.best_min_psnr = max(self.best_min_psnr, min_psnr)
+            self.stale = 0
+        else:
+            self.stale += 1
+        return self.stale >= self.patience
 
 
 def _reuse_cached_gsplat_extension() -> None:
@@ -88,6 +136,21 @@ def normalize_scene(cameras: list[dict], points: np.ndarray) -> tuple[list[dict]
     return normalized_cameras, normalized_points, {"origin": origin, "scale": scale}
 
 
+def apply_scene_normalization(cameras: list[dict], transform: dict) -> list[dict]:
+    """把独立 holdout 相机应用与训练集完全相同的场景归一化。"""
+    origin = np.asarray(transform["origin"], dtype=np.float64)
+    scale = float(transform["scale"])
+    normalized = []
+    for camera in cameras:
+        item = dict(camera)
+        rotation = np.asarray(camera["R"], dtype=np.float64)
+        translation = np.asarray(camera["t"], dtype=np.float64)
+        item["t"] = scale * (rotation @ origin + translation)
+        item["center"] = (np.asarray(camera["center"], dtype=np.float64) - origin) * scale
+        normalized.append(item)
+    return normalized
+
+
 def denormalize_gaussians(gaussians: dict, transform: dict) -> dict:
     """将训练结果恢复到原始 SFM 坐标系。"""
     result = dict(gaussians)
@@ -132,6 +195,10 @@ def train_gaussians(
     *,
     profile: str = "official",
     seed: int = 42,
+    validation_gt: dict | None = None,
+    validation_dir: str | Path | None = None,
+    evaluation_interval: int = 1000,
+    early_stop_patience: int = 5,
 ) -> dict:
     """训练高斯场，返回 {means, scales, quats, opacities, sh0, sh_rest}（CPU 张量）。
 
@@ -142,6 +209,8 @@ def train_gaussians(
 
     if profile not in {"official", "legacy"}:
         raise ValueError("profile 必须是 official 或 legacy")
+    if evaluation_interval < 100:
+        raise ValueError("evaluation_interval 不能小于 100")
     torch.manual_seed(seed)
     np.random.seed(seed)
     n = len(gt["imgs"])
@@ -199,13 +268,18 @@ def train_gaussians(
         refine_stop = (
             max(601, num_iter - 100)
             if profile == "legacy"
-            else min(15_000, max(601, num_iter - 100))
+            else min(10_000, max(601, num_iter - 100))
         )
         strategy = DefaultStrategy(refine_stop_iter=refine_stop)
         strategy.check_sanity(params, optimizers)
         strategy_state = strategy.initialize_state(scene_scale=1.0)
 
     H, W = gt["imgs"].shape[1], gt["imgs"].shape[2]
+    quality_curve: list[dict] = []
+    early_stop = ValidationEarlyStop(early_stop_patience)
+    actual_iterations = num_iter
+    # densification 结束后才允许提前停止，避免高斯仍在增殖时误判平台期。
+    earliest_stop = min(num_iter, max(15_000, (strategy.refine_stop_iter + 5_000) if strategy else 15_000))
     for step in range(num_iter):
         idx = torch.randint(0, n, (1,), device=DEVICE)
         K, c2w, img = gt["K"][idx], gt["c2w"][idx], gt["imgs"][idx]
@@ -232,16 +306,46 @@ def train_gaussians(
             )
         if not torch.isfinite(loss):
             raise RuntimeError("3DGS 训练数值发散")
-    validation = _validate_training_views(params, gt, rasterization)
+        completed = step + 1
+        if validation_gt is not None and (
+            completed % evaluation_interval == 0 or completed == num_iter
+        ):
+            checkpoint = _validate_views(
+                params, validation_gt, rasterization, max_views=6, save_dir=None
+            )
+            current_psnr = checkpoint["validation_psnr_mean"]
+            quality_curve.append({"iteration": completed, **checkpoint})
+            # densification 期间 PSNR 会因 split/prune 短暂波动，不用于累计早停耐心值。
+            should_stop = early_stop.update(
+                current_psnr,
+                ssim=checkpoint["validation_ssim_mean"],
+                min_psnr=checkpoint["validation_psnr_min"],
+                refinement_finished=strategy is None or completed > strategy.refine_stop_iter,
+            )
+            if completed >= earliest_stop and should_stop:
+                actual_iterations = completed
+                break
+    validation_source = validation_gt if validation_gt is not None else gt
+    validation = _validate_views(
+        params,
+        validation_source,
+        rasterization,
+        max_views=None if validation_gt is not None else 8,
+        save_dir=validation_dir,
+    )
     result = {name: value.detach().cpu() for name, value in params.items()}
     result["opacity_logits"] = True
     result["training_metrics"] = {
         "final_loss": float(loss.detach().cpu()),
-        "iterations": num_iter,
+        "iterations": actual_iterations,
+        "configured_iterations": num_iter,
+        "early_stopped": actual_iterations < num_iter,
         "gaussian_count": len(result["means"]),
         "densification": strategy is not None,
         "training_profile": profile,
         "images_undistorted": bool(gt.get("images_undistorted", False)),
+        "validation_is_holdout": validation_gt is not None,
+        "quality_curve": quality_curve,
         **validation,
     }
     torch.cuda.empty_cache()
@@ -271,12 +375,15 @@ def _ssim(prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
 
 
 @torch.inference_mode()
-def _validate_training_views(params, gt: dict, rasterization) -> dict:
-    """用均匀分布的已注册视角检查最终模型，而不是只相信最后一次随机 loss。"""
+def _validate_views(params, gt: dict, rasterization, *, max_views: int | None, save_dir) -> dict:
+    """渲染独立视角，计算 PSNR/SSIM，并保存最差视角三联图。"""
     count = int(gt["imgs"].shape[0])
-    indices = torch.linspace(0, count - 1, min(count, 8), device=DEVICE).round().long()
+    selected_count = count if max_views is None else min(count, max_views)
+    indices = torch.linspace(0, count - 1, selected_count, device=DEVICE).round().long()
     psnr_values: list[float] = []
+    ssim_values: list[float] = []
     coverage_values: list[float] = []
+    rendered: list[tuple[int, np.ndarray, np.ndarray]] = []
     colors = torch.cat([params["sh0"], params["sh_rest"]], dim=1)
     height, width = int(gt["imgs"].shape[1]), int(gt["imgs"].shape[2])
     for index in indices:
@@ -289,10 +396,28 @@ def _validate_training_views(params, gt: dict, rasterization) -> dict:
         )
         mse = F.mse_loss(render, gt["imgs"][selected]).clamp_min(1e-12)
         psnr_values.append(float((-10.0 * torch.log10(mse)).cpu()))
+        ssim_values.append(float(_ssim(render, gt["imgs"][selected]).cpu()))
         coverage_values.append(float((alpha > 0.05).float().mean().cpu()))
+        if save_dir is not None:
+            rendered.append((int(index), gt["imgs"][selected][0].cpu().numpy(), render[0].clamp(0, 1).cpu().numpy()))
+    worst_files = []
+    if save_dir is not None and rendered:
+        import cv2
+        output = Path(save_dir)
+        output.mkdir(parents=True, exist_ok=True)
+        for rank in np.argsort(psnr_values)[: min(5, len(rendered))]:
+            source_index, truth, prediction = rendered[int(rank)]
+            difference = np.abs(truth - prediction)
+            triptych = np.concatenate([truth, prediction, difference], axis=1)
+            filename = f"worst_{len(worst_files) + 1:02d}_view_{source_index:04d}.jpg"
+            cv2.imwrite(str(output / filename), cv2.cvtColor((triptych * 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
+            worst_files.append(filename)
     return {
         "validation_view_count": len(psnr_values),
         "validation_psnr_mean": float(np.mean(psnr_values)),
         "validation_psnr_min": float(np.min(psnr_values)),
+        "validation_ssim_mean": float(np.mean(ssim_values)),
+        "validation_ssim_min": float(np.min(ssim_values)),
         "validation_alpha_coverage_min": float(np.min(coverage_values)),
+        "validation_worst_view_files": worst_files,
     }
