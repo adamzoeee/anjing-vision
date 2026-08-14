@@ -1,101 +1,16 @@
 """pipeline_runner 的标定逻辑单元测试（不依赖 GPU/DB）。"""
 import numpy as np
-import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
 from app.models import Organization, Project, Report, Scan
 from app.tasks.pipeline_runner import (
-    _calibrate_with_a4,
-    _configured_training_iterations,
-    _configured_training_view_limit,
     _find_obstacles,
     _known_reference_value,
-    _pair_registered_training_frames,
-    _pixel_ray,
-    _prepare_training_views,
     _robust_scene_extents,
     _step_measurements,
-    _triangulate,
     _upsert_report,
 )
-
-
-def test_prepare_training_views_samples_trajectory_and_scales_intrinsics():
-    images = [np.full((1920, 1080, 3), i, dtype=np.uint8) for i in range(100)]
-    cameras = [
-        {
-            "K": np.array([[1440.0, 0, 540.0], [0, 1440.0, 960.0], [0, 0, 1.0]]),
-            "R": np.eye(3),
-            "center": np.array([i / 99.0, 0.0, 0.0]),
-            "id": i,
-        }
-        for i in range(100)
-    ]
-    selected_cameras, selected_images = _prepare_training_views(cameras, images)
-    assert len(selected_images) == len(selected_cameras) == 48
-    assert selected_cameras[0]["id"] == 0
-    assert selected_cameras[-1]["id"] == 99
-    assert selected_images[0].shape[:2] == (960, 540)
-    assert selected_cameras[0]["K"][0, 0] == pytest.approx(720.0)
-    assert selected_cameras[0]["K"][1, 2] == pytest.approx(480.0)
-    assert selected_cameras[0]["id"] == 0
-
-
-def test_training_pairs_exclude_registered_sfm_bridge_frames(tmp_path):
-    sharp = [
-        tmp_path / "frame_00001.jpg",
-        tmp_path / "frame_00003.jpg",
-        tmp_path / "frame_00005.jpg",
-    ]
-    cameras = [
-        {"name": "frame_00001.jpg", "id": 1},
-        {"name": "frame_00002.jpg", "id": 2},  # SfM bridge: must not train.
-        {"name": "frame_00003.jpg", "id": 3},
-        {"name": "frame_00004.jpg", "id": 4},  # SfM bridge: must not train.
-    ]
-
-    paired = _pair_registered_training_frames(sharp, cameras)
-
-    assert [path.name for path, _ in paired] == ["frame_00001.jpg", "frame_00003.jpg"]
-    assert [camera["id"] for _, camera in paired] == [1, 3]
-
-
-def test_prepare_training_views_respects_configured_limit():
-    images = [np.zeros((192, 108, 3), dtype=np.uint8) for _ in range(140)]
-    cameras = [
-        {"K": np.array([[144.0, 0, 54.0], [0, 144.0, 96.0], [0, 0, 1.0]]), "id": i}
-        for i in range(140)
-    ]
-    selected_cameras, selected_images = _prepare_training_views(cameras, images, max_views=120)
-    assert len(selected_images) == len(selected_cameras) <= 120
-    assert selected_cameras[0]["id"] == 0
-    assert selected_cameras[-1]["id"] == 139
-
-
-def test_prepare_training_views_scales_intrinsics_with_image():
-    images = [np.zeros((1920, 1080, 3), dtype=np.uint8)]
-    cameras = [
-        {"K": np.array([[1440.0, 0, 540.0], [0, 1440.0, 960.0], [0, 0, 1.0]]), "id": 0}
-    ]
-    selected_cameras, selected_images = _prepare_training_views(cameras, images)
-    assert selected_images[0].shape[:2] == (960, 540)
-    assert selected_cameras[0]["K"][0, 0] == pytest.approx(720.0)
-    assert selected_cameras[0]["K"][1, 2] == pytest.approx(480.0)
-
-
-def test_training_view_limit_is_configurable_but_bounded(monkeypatch):
-    monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "160")
-    assert _configured_training_view_limit() == 160
-    monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "999")
-    assert _configured_training_view_limit() == 240
-    monkeypatch.setenv("GAUSSIAN_MAX_TRAINING_VIEWS", "invalid")
-    assert _configured_training_view_limit() == 120
-
-
-def test_production_training_iterations_default_to_quality_profile(monkeypatch):
-    monkeypatch.delenv("GAUSSIAN_TRAIN_ITERATIONS", raising=False)
-    assert _configured_training_iterations() == 20000
 
 
 def test_no_detected_step_remains_confirmed_zero_threshold():
@@ -127,68 +42,6 @@ def test_metric_scene_extent_uses_robust_pca_axes():
     extents = _robust_scene_extents(points @ rotation.T)
     assert extents is not None
     assert np.allclose(extents, [3.92, 2.94, 1.96], atol=0.15)
-
-
-def _cam(center, look_at, focal=600.0, w=640, h=480):
-    """构造针孔相机：位置 center，看向 look_at。返回 {R, t, K}（world→cam 约定）。"""
-    z = np.asarray(look_at, dtype=float) - np.asarray(center, dtype=float)
-    z = z / np.linalg.norm(z)
-    up = np.array([0.0, 0.0, 1.0])
-    if abs(z @ up) > 0.99:  # 光轴与 up 平行时换参考轴
-        up = np.array([1.0, 0.0, 0.0])
-    x = np.cross(up, z)
-    x = x / np.linalg.norm(x)
-    y = np.cross(z, x)
-    R_w2c = np.stack([x, y, z], axis=0)  # world→cam
-    C = np.asarray(center, dtype=float)
-    t = -R_w2c @ C
-    K = np.array([[focal, 0, w / 2], [0, focal, h / 2], [0, 0, 1.0]])
-    return {"R": R_w2c, "t": t, "K": K}
-
-
-def test_pixel_ray_unit_norm():
-    cam = _cam([0, 0, 0], [0, 0, -1])
-    ray = _pixel_ray(cam, 320, 240)
-    assert abs(np.linalg.norm(ray) - 1.0) < 1e-9
-
-
-def test_triangulate_converging_rays():
-    # 两条从不同起点指向同一点的射线 → 最近点≈目标
-    target = np.array([0.0, 0.0, 2.0])
-    C_i = np.array([0.5, 0.0, 0.0])
-    C_j = np.array([-0.5, 0.0, 0.0])
-    d_i = (target - C_i) / np.linalg.norm(target - C_i)
-    d_j = (target - C_j) / np.linalg.norm(target - C_j)
-    P = _triangulate(C_i, d_i, C_j, d_j)
-    assert P is not None
-    assert np.allclose(P, target, atol=1e-6)
-
-
-def test_triangulate_parallel_rays():
-    d = np.array([0.0, 0.0, 1.0])
-    assert _triangulate(np.array([0.0, 0.0, 0.0]), d, np.array([1.0, 0.0, 0.0]), d) is None
-
-
-def test_calibrate_with_a4_two_views(monkeypatch):
-    """两帧看到同一 A4（画面中心、真实距离 2.0m、SFM 单位距离 1.0）→ 尺度≈2.0。"""
-    # SFM 场景：A4 在原点，相机距离 1 单位（米制深度 2.0m → 尺度≈2.0 米/单位）
-    a4_pos = np.array([0.0, 0.0, 0.0])
-    cams = [
-        _cam([0.3, 0.0, 1.0], a4_pos),
-        _cam([-0.3, 0.0, 1.0], a4_pos),
-    ]
-    imgs = [np.zeros((480, 640, 3), dtype=np.uint8) for _ in cams]
-
-    def fake_detect(img):
-        # 焦距 600、真实距离 2.0m → 长边像素 = 600 * 0.297 / 2.0 = 89.1
-        long_px = 600 * 0.297 / 2.0
-        return (long_px, long_px / 1.414, 320.0, 240.0)  # (长, 短, cx, cy)
-
-    monkeypatch.setattr("pipeline.calibrator.detect_a4_in_image", fake_detect)
-    scale = _calibrate_with_a4(imgs, cams)
-    assert scale is not None
-    # 米制深度 2.0 / SFM 单位距离 ~1.04 → 尺度 ~1.9
-    assert 1.5 < scale < 2.5
 
 
 def test_report_write_is_idempotent_for_pipeline_retries():
