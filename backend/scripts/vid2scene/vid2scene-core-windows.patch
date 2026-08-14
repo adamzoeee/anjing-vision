@@ -179,3 +179,37 @@ index f2cf4a5..2fa542e 100644
          quest_project_dir=args.quest_project_dir,
 +        no_normalize_world_space=args.no_normalize_world_space,
      )
+
+diff --git a/vid2scene_core/apriltag_calibration.py b/vid2scene_core/apriltag_calibration.py
+--- a/vid2scene_core/apriltag_calibration.py
++++ b/vid2scene_core/apriltag_calibration.py
+@@ -91,4 +91,10 @@ def _triangulate_point_robust(
+     for image, pixel in observations:
+         points_2d.append(pixel)
+-        cams_from_world.append(image.cam_from_world)
++        # pycolmap 4 exposes cam_from_world as a method, while older builds
++        # exposed the Rigid3d directly.  Normalize both APIs before passing
++        # poses to estimate_triangulation.
++        cam_from_world = image.cam_from_world
++        cams_from_world.append(
++            cam_from_world() if callable(cam_from_world) else cam_from_world
++        )
+         cameras.append(reconstruction.cameras[image.camera_id])
+@@ -358,9 +364,16 @@ def rescale_reconstruction(
+     # Scale camera translations
+     for image_id, image in reconstruction.images.items():
+         cam_from_world = image.cam_from_world
++        if callable(cam_from_world):
++            cam_from_world = cam_from_world()
+         new_translation = cam_from_world.translation * scale_factor
+         new_cam_from_world = pycolmap.Rigid3d(
+             rotation=cam_from_world.rotation,
+             translation=new_translation
+         )
+-        image.cam_from_world = new_cam_from_world
++        if callable(image.cam_from_world):
++            frame = image.frame
++            frame = frame() if callable(frame) else frame
++            frame.set_cam_from_world(image.camera_id, new_cam_from_world)
++        else:
++            image.cam_from_world = new_cam_from_world

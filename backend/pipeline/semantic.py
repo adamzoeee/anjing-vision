@@ -361,6 +361,282 @@ def merge_votes(votes: dict[int, dict[str, int]], *, min_votes: int = 1) -> dict
     return labels
 
 
+# ---------------------------------------------------------------------------
+# 第二阶段：多视角 2D → 3D 语义融合
+# ---------------------------------------------------------------------------
+
+_MIN_CAMERA_DEPTH = 0.1  # 相机前方的最小可信深度（米/模型单位）
+
+
+def project_points_to_view(
+    points: np.ndarray,
+    camera: dict,
+    *,
+    image_shape: tuple[int, ...] | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """把 Nx3 世界点投影到相机像素坐标。
+
+    返回 ``(uv, depth, valid)``：
+    - ``uv`` (N,2) 浮点像素坐标，无效点填充 NaN；
+    - ``depth`` (N,) 相机系深度（Z_cam）；
+    - ``valid`` (N,) bool：点在相机前方且投影落在图像边界内。
+
+    相机约定与 COLMAP 一致：``cam = R @ world + t``。非针孔相机
+    （SIMPLE_RADIAL / RADIAL）按 COLMAP 径向畸变模型
+    ``u = f * (1 + k1*r^2 + k2*r^4) * x/z + c`` 解析投影；
+    未识别的相机模型一律拒绝（valid=False），避免错误使用 K @ X。
+    """
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    K = np.asarray(camera["K"], dtype=np.float64)
+    R = np.asarray(camera["R"], dtype=np.float64)
+    t = np.asarray(camera["t"], dtype=np.float64).reshape(3)
+    if K.shape != (3, 3) or R.shape != (3, 3):
+        raise ValueError("camera K/R 必须为 3x3，t 必须含三个值")
+    count = len(points)
+    uv = np.full((count, 2), np.nan, dtype=np.float64)
+    depth = np.full(count, np.nan, dtype=np.float64)
+    valid = np.zeros(count, dtype=bool)
+    if count == 0:
+        return uv, depth, valid
+    if image_shape is None:
+        size = camera.get("image_size")
+        if size is None:
+            raise ValueError("camera 缺少 image_size，且未提供 image_shape")
+        width, height = int(size[0]), int(size[1])
+    else:
+        height, width = int(image_shape[0]), int(image_shape[1])
+    if height <= 0 or width <= 0:
+        raise ValueError("图像尺寸必须为正")
+
+    finite = np.isfinite(points).all(axis=1)
+    if not finite.any():
+        return uv, depth, valid
+    cam_pts = (R @ points[finite].T + t.reshape(3, 1)).T
+    cam_depth = cam_pts[:, 2]
+    front_local = np.isfinite(cam_pts).all(axis=1) & (cam_depth > _MIN_CAMERA_DEPTH)
+    if not front_local.any():
+        return uv, depth, valid
+    camera_model = str(camera.get("camera_model", "PINHOLE")).upper()
+    radial = np.asarray(camera.get("radial_distortion", []), dtype=np.float64)
+    if camera_model not in {"PINHOLE", "SIMPLE_PINHOLE", "SIMPLE_RADIAL", "RADIAL"}:
+        return uv, depth, valid
+    if camera_model in {"SIMPLE_RADIAL", "RADIAL"} and radial.size and not np.any(radial):
+        camera_model = "PINHOLE"  # 畸变系数全零时等价于针孔
+
+    finite_ids = np.where(finite)[0]
+    local = np.where(front_local)[0]
+    ids = finite_ids[local]
+    x_n = cam_pts[local, 0] / cam_depth[local]
+    y_n = cam_pts[local, 1] / cam_depth[local]
+    if camera_model in {"SIMPLE_RADIAL", "RADIAL"} and radial.size > 0:
+        k1 = float(radial[0])
+        k2 = float(radial[1]) if radial.size > 1 else 0.0
+        distortion = 1.0 + k1 * (x_n**2 + y_n**2) + k2 * (x_n**2 + y_n**2) ** 2
+    else:
+        distortion = 1.0
+    u = K[0, 0] * distortion * x_n + K[0, 2]
+    v = K[1, 1] * distortion * y_n + K[1, 2]
+    inside = (
+        np.isfinite(u) & np.isfinite(v)
+        & (u >= 0.0) & (u < width) & (v >= 0.0) & (v < height)
+    )
+    keep_local = np.where(inside)[0]
+    kept = ids[keep_local]
+    uv[kept, 0] = u[keep_local]
+    uv[kept, 1] = v[keep_local]
+    depth[kept] = cam_depth[local][keep_local]
+    valid[kept] = True
+    return uv, depth, valid
+
+
+def _nearest_surface_filter(
+    point_ids: np.ndarray,
+    pixel_x: np.ndarray,
+    pixel_y: np.ndarray,
+    depth: np.ndarray,
+    image_shape: tuple[int, ...],
+    *,
+    depth_tolerance: float = 0.03,
+) -> np.ndarray:
+    """轻量 z-buffer：同一像素只保留最前 depth_tolerance 深度层内的点。
+
+    2D 实例 mask 只描述相机看见的物体表面；投影恰好落在 mask 里的背景点
+    （墙、后方家具）不能投票给前景标签。相对容差适用于任意比例尺度。
+    """
+    if len(point_ids) == 0:
+        return point_ids
+    height, width = int(image_shape[0]), int(image_shape[1])
+    pixel_ids = pixel_y * width + pixel_x
+    nearest_depth = np.full(height * width, np.inf, dtype=np.float64)
+    np.minimum.at(nearest_depth, pixel_ids, depth)
+    visible = depth <= nearest_depth[pixel_ids] * (1.0 + depth_tolerance) + 1e-9
+    return point_ids[visible]
+
+
+class SemanticFusion:
+    """多视角语义投票的每点统计结果。
+
+    属性：
+    - ``visible_views``: (N,) int，每个 3D 点被多少注册视图看到；
+    - ``votes``: point_id → {label: 加权票数}；
+    - ``supporting_views``: point_id → {label: 支持视图数}；
+    - ``point_labels``: point_id → label（通过一致性筛选后）；
+    - ``semantic_score``: point_id → winner 加权得分（票数 / 可见视图数）；
+    - ``consistency``: point_id → winner 票 / 总票（0..1）。
+    """
+
+    def __init__(
+        self,
+        *,
+        visible_views: np.ndarray,
+        votes: dict[int, dict[str, float]],
+        supporting_views: dict[int, dict[str, int]],
+        point_labels: dict[int, str],
+        semantic_score: dict[int, float],
+        consistency: dict[int, float],
+        diagnostics: dict | None = None,
+    ):
+        self.visible_views = visible_views
+        self.votes = votes
+        self.supporting_views = supporting_views
+        self.point_labels = point_labels
+        self.semantic_score = semantic_score
+        self.consistency = consistency
+        self.diagnostics = diagnostics or {}
+
+    def label_point_ids(self, label: str) -> list[int]:
+        """返回某个标签的全部 3D 点索引（升序）。"""
+        return sorted(point_id for point_id, value in self.point_labels.items() if value == label)
+
+
+def fuse_multiview_semantics(
+    points: np.ndarray,
+    view_records: list[dict],
+    *,
+    min_supporting_views: int = 2,
+    min_consistency: float = 0.5,
+    min_semantic_score: float = 0.25,
+    depth_tolerance: float = 0.03,
+) -> SemanticFusion:
+    """多视角 2D mask → 3D 语义投票与一致性筛选。
+
+    ``view_records`` 每项为：:
+
+        {
+            "camera": {K, R, t, camera_model, radial_distortion, image_size},
+            "image_shape": (H, W),
+            "detections": [
+                {"label": str, "score": float, "mask": bool[H,W], "mask_score": float}
+            ],
+        }
+
+    每个 3D 点先投影到所有视图统计可见性，再对每个 SAM mask 内的命中点做
+    逐像素 z-buffer 遮挡过滤后加权投票（权重 = 检测分 × mask 分）。
+    只有支持视图数、票数一致性和加权得分全部达标才给出标签：
+    单帧检测不能直接确定语义。
+    """
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    if min_supporting_views < 1:
+        raise ValueError("min_supporting_views 必须 ≥ 1")
+    if not 0.0 < min_consistency <= 1.0:
+        raise ValueError("min_consistency 必须位于 (0, 1]")
+    point_count = len(points)
+    visible_views = np.zeros(point_count, dtype=int)
+    votes: dict[int, dict[str, float]] = {}
+    supporting_views: dict[int, dict[str, int]] = {}
+    detection_count = 0
+    ignored_view_count = 0
+    for record in view_records:
+        camera = record.get("camera")
+        detections = record.get("detections") or []
+        image_shape = tuple(int(value) for value in record.get("image_shape", (0, 0)))
+        if camera is None or len(image_shape) != 2 or min(image_shape) <= 0:
+            ignored_view_count += 1
+            continue
+        uv, depth, valid = project_points_to_view(points, camera, image_shape=image_shape)
+        visible_views += valid
+        valid_ids = np.where(valid)[0]
+        # ``uv`` 对无效点使用 NaN。不能先对整列 astype(int)，否则即使随后
+        # 用 np.where 丢弃无效值，NumPy 仍会先转换 NaN 并产生运行时警告。
+        pixel_x = np.zeros(point_count, dtype=int)
+        pixel_y = np.zeros(point_count, dtype=int)
+        pixel_x[valid_ids] = np.rint(uv[valid_ids, 0]).astype(int)
+        pixel_y[valid_ids] = np.rint(uv[valid_ids, 1]).astype(int)
+        for detection in detections:
+            mask = np.asarray(detection.get("mask"), dtype=bool)
+            if mask.shape != image_shape or not bool(np.any(mask)):
+                continue
+            weight = max(float(detection.get("score", 0.0)), 0.0) * max(
+                float(detection.get("mask_score", 0.0)), 0.0
+            )
+            if weight <= 0.0:
+                continue
+            label = str(detection.get("label", "")).strip()
+            if not label:
+                continue
+            inside = valid & mask[pixel_y, pixel_x]
+            candidate_ids = valid_ids[inside[valid_ids]]
+            if len(candidate_ids) == 0:
+                continue
+            surfaced = _nearest_surface_filter(
+                candidate_ids,
+                pixel_x[candidate_ids],
+                pixel_y[candidate_ids],
+                depth[candidate_ids],
+                image_shape,
+                depth_tolerance=depth_tolerance,
+            )
+            for point_id in surfaced.tolist():
+                point_votes = votes.setdefault(point_id, {})
+                point_votes[label] = point_votes.get(label, 0.0) + weight
+                point_support = supporting_views.setdefault(point_id, {})
+                point_support[label] = point_support.get(label, 0) + 1
+            detection_count += 1
+
+    point_labels: dict[int, str] = {}
+    semantic_score: dict[int, float] = {}
+    consistency: dict[int, float] = {}
+    labeled_count = 0
+    for point_id, candidates in votes.items():
+        positive = {label: value for label, value in candidates.items() if value > 0}
+        if not positive:
+            continue
+        winner, winner_votes = max(positive.items(), key=lambda item: (item[1], item[0]))
+        total_votes = float(sum(positive.values()))
+        support = supporting_views[point_id].get(winner, 0)
+        visible = int(visible_views[point_id]) if point_id < len(visible_views) else 0
+        score = winner_votes / max(visible, 1)
+        ratio = winner_votes / max(total_votes, 1e-12)
+        semantic_score[point_id] = float(score)
+        consistency[point_id] = float(ratio)
+        if (
+            support >= min_supporting_views
+            and ratio >= min_consistency
+            and score >= min_semantic_score
+        ):
+            point_labels[point_id] = winner
+            labeled_count += 1
+    diagnostics = {
+        "view_count": len(view_records),
+        "ignored_view_count": ignored_view_count,
+        "detection_count": detection_count,
+        "labeled_point_count": labeled_count,
+        "voted_point_count": len(votes),
+        "min_supporting_views": min_supporting_views,
+        "min_consistency": min_consistency,
+        "min_semantic_score": min_semantic_score,
+    }
+    return SemanticFusion(
+        visible_views=visible_views,
+        votes=votes,
+        supporting_views=supporting_views,
+        point_labels=point_labels,
+        semantic_score=semantic_score,
+        consistency=consistency,
+        diagnostics=diagnostics,
+    )
+
+
 def model_runtime_info() -> dict:
     """供本地验证脚本记录真实模型设备与缓存状态。"""
     dino_device = str(next(_dino_model.parameters()).device) if _dino_model is not None else None

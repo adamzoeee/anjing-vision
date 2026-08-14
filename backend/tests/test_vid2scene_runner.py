@@ -102,6 +102,24 @@ def test_build_command_includes_no_normalize_world_space(monkeypatch):
     assert "--training_max_num_gaussians" in command
     assert "1200000" in command
     assert command[command.index("--reconstruction_method") + 1] == "colmap"
+    assert command[command.index("--apriltag_size") + 1] == "0.09"
+
+
+def test_build_command_omits_apriltag_when_disabled(monkeypatch):
+    monkeypatch.setenv("VID2SCENE_PYTHON", r"C:\fake\vid2scene\python.exe")
+    command = vr.build_command(
+        Path(r"C:\video.mp4"), Path(r"C:\work"), apriltag_enabled=False
+    )
+    assert "--apriltag_size" not in command
+
+
+def test_build_command_uses_image_dir_for_photo_scan(tmp_path, monkeypatch):
+    monkeypatch.setenv("VID2SCENE_PYTHON", r"C:\fake\vid2scene\python.exe")
+    source = tmp_path / "photos"
+    source.mkdir()
+    command = vr.build_command(source, tmp_path / "work")
+    assert command[command.index("--image_dir") + 1] == str(source)
+    assert "--video_path" not in command
 
 
 def test_map_progress_stage_markers():
@@ -170,6 +188,7 @@ def test_run_reconstruction_with_stub_pipeline(tmp_path, monkeypatch):
         "print('Extracting frames from video')\n"
         "print('Doing retrieval')\n"
         "print('Running Gsplat script')\n"
+        "print('Applied scale factor: 0.1234')\n"
         "print('step=1000 loss=0.2')\n"
     )
     (core_dir / "vid2scene.py").write_text(stub, encoding="utf-8")
@@ -181,6 +200,8 @@ def test_run_reconstruction_with_stub_pipeline(tmp_path, monkeypatch):
         video, work, progress_callback=lambda p: seen.append(p), training_num_steps=20000
     )
     assert result["splat_ply"] == work / "ply" / "splat.ply"
+    assert result["metric_calibration"]["status"] == "metric_apriltag"
+    assert result["metric_calibration"]["scale_applied_by"] == "vid2scene"
     assert seen and seen[-1] >= 0.55  # gsplat 阶段已进入
     assert seen == sorted(seen)  # 进度单调不减（本桩输出顺序保证）
 
@@ -195,3 +216,32 @@ def test_run_reconstruction_failure_raises_with_log_tail(tmp_path, monkeypatch):
     monkeypatch.setenv("VID2SCENE_PYTHON", str(Path(__import__("sys").executable)))
     with pytest.raises(RuntimeError, match="退出码 3"):
         vr.run_reconstruction(tmp_path / "video.mp4", tmp_path / "work")
+
+
+def test_run_reconstruction_rejects_missing_apriltag_calibration(tmp_path, monkeypatch):
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "vid2scene.py").write_text("print('finished without tag')\n", encoding="utf-8")
+    monkeypatch.setattr(vr, "VID2SCENE_CORE_DIR", core_dir)
+    monkeypatch.setenv("VID2SCENE_PYTHON", str(Path(__import__("sys").executable)))
+    with pytest.raises(RuntimeError, match="尺度标定失败"):
+        vr.run_reconstruction(tmp_path / "video.mp4", tmp_path / "work")
+    metadata = __import__("json").loads(
+        (tmp_path / "work" / "metric_calibration.json").read_text(encoding="utf-8")
+    )
+    assert metadata["status"] == "calibration_failed"
+    assert metadata["coordinate_unit"] == "model_units"
+
+
+def test_parse_reconstruction_exposes_relative_scale_contract(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    monkeypatch.setattr(vr, "parse_sparse_model", lambda _path: {
+        "cameras": [], "points3D": np.empty((0, 3)), "colors3D": np.empty((0, 3)),
+        "quality": {},
+    })
+    monkeypatch.setattr(vr, "read_splat_ply", lambda _path: {"means": np.empty((0, 3))})
+    (work / "ply").mkdir(parents=True)
+    (work / "ply" / "splat.ply").write_bytes(b"x")
+    result = vr.parse_reconstruction(work)
+    assert result["metric_scale_status"] == "relative"
+    assert result["coordinate_unit"] == "model_units"

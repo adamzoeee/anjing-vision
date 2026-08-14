@@ -161,3 +161,13 @@ def test_liveness_and_database_readiness(client):
     assert live.json() == {"ok": True}
     assert ready.status_code == 200
     assert ready.json() == {"ok": True, "database": "ready"}
+def test_apriltag_metric_defaults_are_valid():
+    settings = Settings(_env_file=None)
+    assert settings.apriltag_enabled is True
+    assert settings.apriltag_family == "tagStandard41h12"
+    assert settings.apriltag_size_m == pytest.approx(0.09)
+
+
+def test_apriltag_rejects_unsupported_family():
+    with pytest.raises(ValueError, match="tagStandard41h12"):
+        Settings(_env_file=None, apriltag_enabled=True, apriltag_family="tag36h11")

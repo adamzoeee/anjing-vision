@@ -1,4 +1,4 @@
-"""vid2scene 重建适配层（vid2scene 为 Apache-2.0 许可，见 E:/.PJs/vid2scene/LICENSE）。
+"""vid2scene 重建适配层（vid2scene 为 Apache-2.0 许可）。
 
 自研「抽帧 → pycolmap SfM → gsplat 训练」整体替换为 vid2scene 端到端重建：
   1. subprocess 调用 vid2scene_core/vid2scene.py CLI（独立 conda 环境）；
@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from functools import lru_cache
@@ -22,13 +23,14 @@ logger = logging.getLogger("anjing.pipeline.vid2scene")
 
 SH_C0 = 0.28209479177387814
 
+_DEFAULT_VID2SCENE_ROOT = Path(__file__).resolve().parents[2].parent / "vid2scene"
 VID2SCENE_CORE_DIR = Path(
-    os.getenv("VID2SCENE_CORE_DIR", r"E:\.PJs\vid2scene\vid2scene_core")
+    os.getenv("VID2SCENE_CORE_DIR", str(_DEFAULT_VID2SCENE_ROOT / "vid2scene_core"))
 )
 VID2SCENE_GSPLAT_SCRIPT = Path(
     os.getenv(
         "VID2SCENE_GSPLAT_SCRIPT",
-        r"E:\.PJs\vid2scene\gsplat\examples\simple_trainer.py",
+        str(_DEFAULT_VID2SCENE_ROOT / "gsplat" / "examples" / "simple_trainer.py"),
     )
 )
 VID2SCENE_CONDA_ENV = os.getenv("VID2SCENE_CONDA_ENV", "vid2scene")
@@ -37,6 +39,12 @@ DEFAULT_TRAINING_STEPS = int(os.getenv("VID2SCENE_TRAINING_STEPS", "20000"))
 DEFAULT_MAX_GAUSSIANS = int(os.getenv("VID2SCENE_MAX_GAUSSIANS", "1200000"))
 DEFAULT_METHOD = os.getenv("VID2SCENE_RECONSTRUCTION_METHOD", "colmap")
 DEFAULT_TIMEOUT_SECONDS = float(os.getenv("VID2SCENE_TIMEOUT_SECONDS", "0") or 0)
+APRILTAG_ENABLED = os.getenv("APRILTAG_ENABLED", "true").strip().lower() not in {
+    "0", "false", "no",
+}
+APRILTAG_FAMILY = os.getenv("APRILTAG_FAMILY", "tagStandard41h12").strip()
+APRILTAG_SIZE_M = float(os.getenv("APRILTAG_SIZE_M", "0.09"))
+_APRILTAG_SCALE_PATTERN = re.compile(r"Applied scale factor:\s*([0-9.eE+-]+)")
 
 # stdout 标记 → 重建阶段内的进度（0..1）。gsplat 的 step 行另行解析。
 _STAGE_MARKERS = [
@@ -86,7 +94,7 @@ def vid2scene_env_python() -> Path:
             return candidate
     raise RuntimeError(
         "未找到 vid2scene conda 环境（python.exe 不存在）。"
-        f"请先运行 E:/.PJs/vid2scene/setup_env.ps1 或设置 VID2SCENE_PYTHON。"
+        "请先运行 backend/scripts/vid2scene/setup_vid2scene.ps1 或设置 VID2SCENE_PYTHON。"
     )
 
 
@@ -115,20 +123,26 @@ def _child_environment() -> dict:
 
 
 def build_command(
-    video: Path,
+    source: Path,
     output_dir: Path,
     *,
     target_framecount: int = DEFAULT_FRAMECOUNT,
     training_num_steps: int = DEFAULT_TRAINING_STEPS,
     max_gaussians: int = DEFAULT_MAX_GAUSSIANS,
     reconstruction_method: str = DEFAULT_METHOD,
+    apriltag_enabled: bool = APRILTAG_ENABLED,
+    apriltag_size_m: float = APRILTAG_SIZE_M,
 ) -> list[str]:
     """构造 vid2scene CLI 命令（供测试断言与实际调用共用）。"""
-    return [
+    if apriltag_enabled:
+        if APRILTAG_FAMILY != "tagStandard41h12":
+            raise ValueError("vid2scene 当前仅支持 tagStandard41h12 尺度标定")
+        if not 0.0 < apriltag_size_m <= 1.0:
+            raise ValueError("APRILTAG_SIZE_M 必须位于 (0, 1] 米")
+    command = [
         str(vid2scene_env_python()),
         str(VID2SCENE_CORE_DIR / "vid2scene.py"),
         str(output_dir),
-        "--video_path", str(video),
         "--target_framecount", str(int(target_framecount)),
         "--training_max_num_gaussians", str(int(max_gaussians)),
         "--training_num_steps", str(int(training_num_steps)),
@@ -136,6 +150,10 @@ def build_command(
         # 保留 COLMAP 世界坐标：下游几何测量/语义投影要求相机与点云同坐标系。
         "--no_normalize_world_space",
     ]
+    command.extend(["--image_dir" if Path(source).is_dir() else "--video_path", str(source)])
+    if apriltag_enabled:
+        command.extend(["--apriltag_size", str(float(apriltag_size_m))])
+    return command
 
 
 def map_progress(line: str, training_num_steps: int = DEFAULT_TRAINING_STEPS) -> float | None:
@@ -153,7 +171,7 @@ def map_progress(line: str, training_num_steps: int = DEFAULT_TRAINING_STEPS) ->
 
 
 def run_reconstruction(
-    video: Path,
+    source: Path,
     work_dir: Path,
     *,
     target_framecount: int = DEFAULT_FRAMECOUNT,
@@ -163,6 +181,8 @@ def run_reconstruction(
     progress_callback=None,
     kill_check=None,
     timeout_s: float = DEFAULT_TIMEOUT_SECONDS,
+    apriltag_enabled: bool = APRILTAG_ENABLED,
+    apriltag_size_m: float = APRILTAG_SIZE_M,
 ) -> dict:
     """运行 vid2scene 重建并返回产物路径字典。
 
@@ -172,20 +192,22 @@ def run_reconstruction(
     子进程 cwd 为 vid2scene_core：所有路径必须先转为绝对路径，
     否则调用方传入的相对路径（如 data/media/...）会解析失败。
     """
-    video = Path(video).resolve()
+    source = Path(source).resolve()
     work_dir = Path(work_dir).resolve()
     command = build_command(
-        video, work_dir,
+        source, work_dir,
         target_framecount=target_framecount,
         training_num_steps=training_num_steps,
         max_gaussians=max_gaussians,
         reconstruction_method=reconstruction_method,
+        apriltag_enabled=apriltag_enabled,
+        apriltag_size_m=apriltag_size_m,
     )
     started = time.perf_counter()
     logger.info(
-        "vid2scene_start video=%s work_dir=%s framecount=%d steps=%d "
+        "vid2scene_start source=%s work_dir=%s framecount=%d steps=%d "
         "max_gaussians=%d method=%s command=%s",
-        video, work_dir, target_framecount, training_num_steps,
+        source, work_dir, target_framecount, training_num_steps,
         max_gaussians, reconstruction_method, " ".join(command),
     )
     process = subprocess.Popen(
@@ -201,10 +223,14 @@ def run_reconstruction(
     )
     assert process.stdout is not None
     tail: list[str] = []
+    apriltag_scale_factor: float | None = None
     for line in process.stdout:
         line = line.rstrip("\n")
         tail.append(line)
         tail = tail[-40:]
+        scale_match = _APRILTAG_SCALE_PATTERN.search(line)
+        if scale_match:
+            apriltag_scale_factor = float(scale_match.group(1))
         if progress_callback is not None:
             progress = map_progress(line, training_num_steps)
             if progress is not None:
@@ -220,7 +246,32 @@ def run_reconstruction(
         detail = "\n".join(tail)
         logger.error("vid2scene_failed exit=%s\n%s", return_code, detail)
         raise RuntimeError(f"vid2scene 重建失败（退出码 {return_code}），日志尾部：\n{detail[-2000:]}")
+    if apriltag_enabled and apriltag_scale_factor is None:
+        failed_calibration = {
+            "status": "calibration_failed",
+            "coordinate_unit": "model_units",
+            "family": APRILTAG_FAMILY,
+            "tag_size_m": float(apriltag_size_m),
+            "scale_factor": None,
+            "scale_applied_by": None,
+        }
+        work_dir.mkdir(parents=True, exist_ok=True)
+        (work_dir / "metric_calibration.json").write_text(
+            json.dumps(failed_calibration, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        raise RuntimeError("尺度标定失败，需要重新拍摄/检查标定纸。")
     elapsed = time.perf_counter() - started
+    calibration = {
+        "status": "metric_apriltag" if apriltag_enabled else "relative",
+        "coordinate_unit": "meters" if apriltag_enabled else "model_units",
+        "family": APRILTAG_FAMILY if apriltag_enabled else None,
+        "tag_size_m": float(apriltag_size_m) if apriltag_enabled else None,
+        "scale_factor": apriltag_scale_factor,
+        "scale_applied_by": "vid2scene" if apriltag_enabled else None,
+    }
+    (work_dir / "metric_calibration.json").write_text(
+        json.dumps(calibration, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     logger.info("vid2scene_done seconds=%.1f work_dir=%s", elapsed, work_dir)
     return {
         "sfm_dir": work_dir / "sfm_output",
@@ -229,6 +280,7 @@ def run_reconstruction(
         "splat_ply": work_dir / "ply" / "splat.ply",
         "result_dir": work_dir / "results",
         "seconds": elapsed,
+        "metric_calibration": calibration,
     }
 
 
@@ -377,10 +429,26 @@ def parse_reconstruction(work_dir: Path) -> dict:
         raise FileNotFoundError(f"vid2scene 未产出 splat.ply: {splat_path}")
     splat = read_splat_ply(splat_path)
     stats = read_training_stats(work_dir / "results")
+    calibration_path = work_dir / "metric_calibration.json"
+    calibration = (
+        json.loads(calibration_path.read_text(encoding="utf-8"))
+        if calibration_path.is_file()
+        else {
+            "status": "relative",
+            "coordinate_unit": "model_units",
+            "scale_factor": None,
+            "scale_applied_by": None,
+        }
+    )
+    from .scene_contract import validate_metric_calibration
+    validate_metric_calibration(calibration)
     return {
         **sparse,
         "gaussian": splat,
         "image_dir": work_dir / "sfm_output" / "images",
         "splat_ply": splat_path,
         "training_stats": stats,
+        "metric_calibration": calibration,
+        "coordinate_unit": calibration["coordinate_unit"],
+        "metric_scale_status": calibration["status"],
     }
