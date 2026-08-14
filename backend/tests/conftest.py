@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-os.environ["DATABASE_URL"] = "sqlite:///./test.db"
+os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "sqlite:///./test.db")
 os.environ["ENVIRONMENT"] = "test"
 os.environ["SECRET_KEY"] = "test-secret-key-with-at-least-32-bytes"
 os.environ["STORAGE_BACKEND"] = "local"

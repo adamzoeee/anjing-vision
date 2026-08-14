@@ -149,12 +149,15 @@ DATA_DIR=./data
 
 # ---- vid2scene 重建（默认开启）----
 VID2SCENE_ENABLED=true
-VID2SCENE_CORE_DIR=E:\.PJs\vid2scene\vid2scene_core
-VID2SCENE_GSPLAT_SCRIPT=E:\.PJs\vid2scene\gsplat\examples\simple_trainer.py
+VID2SCENE_CORE_DIR=<部署目录>\vid2scene\vid2scene_core
+VID2SCENE_GSPLAT_SCRIPT=<部署目录>\vid2scene\gsplat\examples\simple_trainer.py
 VID2SCENE_FRAMECOUNT=300             # 抽帧数
 VID2SCENE_TRAINING_STEPS=20000       # 训练步数
 VID2SCENE_MAX_GAUSSIANS=1200000      # 高斯数量上限
 VID2SCENE_RECONSTRUCTION_METHOD=colmap
+APRILTAG_ENABLED=true
+APRILTAG_FAMILY=tagStandard41h12
+APRILTAG_SIZE_M=0.09             # 标准打印版 detection-corner 边长
 ```
 
 ### 5. 启动后端
@@ -172,9 +175,7 @@ API 文档：<http://localhost:8000/docs>
 cd <本仓库>\backend
 .venv\Scripts\python scripts\run_pipeline.py `
   --input 你的房间视频.mp4 `
-  --outdir out `
-  --reference door=height=2.05 `
-  --reference bed=length=2.0
+  --outdir out
 ```
 
 输出 `out\report.json`：评分、风险项、米制测量、预览资源清单。参考耗时：2.5 分钟
@@ -196,7 +197,7 @@ flutter run   # Android 模拟器默认连 http://10.0.2.2:8000
 | 重建报 `ffmpeg ... Unrecognized option 'vsync'` | 补丁未生效：重新执行第 2 步的 `git apply` |
 | 训练报 `num_workers`/管道错误 | gsplat 补丁未生效：`git -C E:\.PJs\vid2scene\gsplat apply gsplat-windows.patch` |
 | 首次重建很慢 | 正常：首次要下载模型权重；另确认 GPU 未被其他程序占用 |
-| 想回退自研重建管线 | `.env` 设 `VID2SCENE_ENABLED=false`（旧 `sfm.py`/`trainer.py` 保留可回退） |
+| 尺度标定失败 | 确认使用 tagStandard41h12 / ID 00000 标准打印版、100% 比例打印，并让完整 Tag 在多个视角清晰可见 |
 
 ## 生产部署（可选）
 
@@ -210,7 +211,7 @@ flutter run   # Android 模拟器默认连 http://10.0.2.2:8000
 ## 采集与评估流程
 
 1. 注册机构账号 → 新建评估项目（如「王奶奶家」）
-2. 进入采集页，填写 2～3 个门、床或家具的已知尺寸，再录制或选择 1～3 分钟单房间视频（无需放置 A4 纸）
+2. 将标准 AprilTag 标定纸平整放置并以 100% 比例打印，录制或选择 1～3 分钟单房间视频；系统自动恢复米制尺度
 3. 上传后实时查看进度（3D 重建 → 语义分割 → 标定 → 分析 → 评分）
 4. 查看报告：安全评分、风险项列表、改造建议、标注图、交互式 3D 预览
 5. 改造完成后再次扫描，使用「改造前后对比」查看评分变化
@@ -221,19 +222,20 @@ flutter run   # Android 模拟器默认连 http://10.0.2.2:8000
 ├── backend/
 │   ├── app/                 # FastAPI 应用
 │   │   ├── routers/         # auth / projects / scans / reports API
-│   │   └── tasks/           # Celery 任务与管道编排器（含 vid2scene 分支）
+│   │   └── tasks/           # Celery 任务与 vid2scene 正式管道编排器
 │   ├── pipeline/            # 核心算法（无框架依赖，可独立测试）
 │   │   ├── vid2scene_runner.py  # vid2scene 适配层：subprocess 调用 + 产物解析
-│   │   ├── sfm.py / trainer.py  # 自研管线（仅 VID2SCENE_ENABLED=false 回退时使用）
+│   │   ├── scene_contract.py    # 统一相机、点云、米制状态数据契约
+│   │   ├── sfm.py / trainer.py  # 仅保留新管道复用的后处理算法，不再作为重建入口
 │   │   ├── exporter.py          # 高斯场 → 点云 / 预览 PLY 导出
-│   │   ├── calibrator.py        # 多参考物米制标定 + 单参考物兜底
+│   │   ├── calibrator.py        # 历史扫描兼容的参考物标定工具
 │   │   ├── semantic.py          # GroundingDINO + SAM 语义分割
 │   │   ├── geometry.py / spatial_measurement.py  # 点云几何测量
 │   │   ├── rules.py             # 风险规则与评分（全 unknown 时不可评分）
 │   │   └── report_builder.py    # 标注图与预览资源（含抽稀）
 │   ├── scripts/             # CLI：run_pipeline / download_models
 │   │   └── vid2scene/       # vid2scene 部署：一键环境脚本 + Windows 补丁
-│   ├── tests/               # 207 个测试
+│   ├── tests/               # 后端自动测试
 │   ├── docker-compose.yml   # 生产形态（可选）
 │   └── ENV_SETUP.md         # 历史：Windows GPU 环境搭建记录
 └── app/                     # Flutter 客户端
@@ -247,7 +249,7 @@ flutter run   # Android 模拟器默认连 http://10.0.2.2:8000
 
 ```bash
 # 后端
-cd backend && .venv/Scripts/python -m pytest tests/ -v   # 207 passed
+cd backend && .venv/Scripts/python -m pytest tests/ -v
 
 # Flutter
 cd app && flutter test
@@ -256,16 +258,16 @@ cd app && flutter test
 ## 已知限制
 
 - 管道需要 GPU（gsplat 光栅化依赖 CUDA），无 GPU 环境无法完成训练阶段
-- 米制标定依赖 GroundingDINO/SAM 检出至少两个已填写参考物；参考物漏拍或尺寸估计不一致时保留相对尺度并明确提示，不伪造米制结果（门开着时门高测不准，见采集页引导）
+- 正常产品流程依赖 AprilTag 自动恢复米制尺度；标定失败时明确返回失败状态，绝不把相对坐标伪装成米。旧参考物标定仅用于历史扫描兼容
 - 重建质量受拍摄条件影响：光线充足、慢速移动、避免反光面效果最佳
 - 3D 交互预览目前是独立 Web 页面（`app/web/preview/index.html`），App 内的 webview 集成待完成
-- 自研抽帧/SfM/训练代码保留但仅作回退（`VID2SCENE_ENABLED=false`），新功能不再投入
+- 正式重建入口只有 vid2scene；旧自研抽帧/SfM/训练入口已退役，仍被调用的文件只提供畸变校正、曝光归一化等后处理能力
 
 ## 重建后端：vid2scene（替代自研管线）
 
 自研的「抽帧 → pycolmap SfM → gsplat 训练」已被 [vid2scene](https://github.com/samuelm2/vid2scene)（Apache-2.0）端到端重建替代：视频直接送入，内部完成抽帧 → HLoc（EigenPlaces 检索 + ALIKED/LightGlue 匹配）→ COLMAP SfM → gsplat MCMC 训练（bilateral grid 外观建模、高斯数量硬上限）。下游的语义分割、尺度标定、几何测量、风险规则与报告全部保留，只消费 vid2scene 产出的 COLMAP 相机模型与 `splat.ply`，通过 `backend/pipeline/vid2scene_runner.py` 适配。
 
-### 与自研管线的实测对比（吕昊东房间.mp4，2.5 分钟，同机 RTX 5080 Laptop）
+### 与旧自研管线的既有实测对比（单房间样本，2.5 分钟，同机 GPU）
 
 | 指标 | 自研（Scan 11） | vid2scene（Scan 18） |
 |------|----------------|-----------|

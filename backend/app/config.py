@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     task_sync: bool = False
     allow_sync_fallback: bool = True
 
+    apriltag_enabled: bool = True
+    apriltag_family: str = "tagStandard41h12"
+    apriltag_size_m: float = Field(default=0.09, gt=0.0, le=1.0)
+
     auto_create_tables: bool = True
     default_page_size: int = Field(default=20, ge=1, le=100)
     max_page_size: int = Field(default=100, ge=1, le=500)
@@ -138,6 +142,8 @@ class Settings(BaseSettings):
     def _validate_environment_safety(self) -> "Settings":
         if self.max_page_size < self.default_page_size:
             raise ValueError("MAX_PAGE_SIZE 不能小于 DEFAULT_PAGE_SIZE")
+        if self.apriltag_enabled and self.apriltag_family != "tagStandard41h12":
+            raise ValueError("当前米制标定仅支持 tagStandard41h12")
 
         if self.environment == EnvironmentMode.production:
             if len(self.secret_key.encode("utf-8")) < 32 or self.secret_key.lower() in _WEAK_SECRETS:
