@@ -73,7 +73,9 @@ class Report(Base):
     __tablename__ = "reports"
     id = Column(Integer, primary_key=True)
     scan_id = Column(Integer, ForeignKey("scans.id"), nullable=False, unique=True)
-    score = Column(Float, default=0)
+    # 注意：不能给 default=0 —— SQLAlchemy 的 Python 侧 default 在值为 None 时
+    # 也会触发，会把「无法评分」（score=None）错误地落库为 0 分。
+    score = Column(Float, nullable=True)
     risks = Column(JSON, default=list)
     measures = Column(JSON, default=dict)
     advice = Column(JSON, default=list)

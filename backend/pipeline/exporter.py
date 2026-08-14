@@ -53,21 +53,33 @@ def export_pointcloud(gaussians: dict, out_path: Path, downsample_voxel: float =
     o3d.io.write_point_cloud(str(out_path), pcd)
 
 
-def export_gaussian_ply(gaussians: dict, out_path: Path) -> None:
-    """导出标准 3D Gaussian Splat PLY，供兼容查看器保留真实高斯属性。"""
-    means = gaussians["means"].numpy().astype("<f4")
-    scales = gaussians["scales"].numpy().astype("<f4")
-    quats = gaussians["quats"].numpy().astype("<f4")
-    opacities = gaussians["opacities"].numpy().reshape(-1, 1).astype("<f4")
+def export_gaussian_ply(gaussians: dict, out_path: Path, max_gaussians: int | None = None) -> None:
+    """导出标准 3D Gaussian Splat PLY，供兼容查看器保留真实高斯属性。
+
+    max_gaussians 用于控制浏览器加载体积：按不透明度保留最可见的高斯。
+    """
+    opacities_raw = _opacity_values(gaussians)
+    keep = np.ones(len(opacities_raw), dtype=bool)
+    if max_gaussians is not None and len(opacities_raw) > max_gaussians:
+        keep = np.argsort(opacities_raw)[::-1][:max_gaussians]
+        keep = np.sort(keep)
+    means = gaussians["means"].numpy().astype("<f4")[keep]
+    scales = gaussians["scales"].numpy().astype("<f4")[keep]
+    quats = gaussians["quats"].numpy().astype("<f4")[keep]
+    opacities = gaussians["opacities"].numpy().reshape(-1, 1).astype("<f4")[keep]
     if not gaussians.get("opacity_logits", False):
         values = np.clip(opacities, 1e-6, 1 - 1e-6)
         opacities = np.log(values / (1 - values)).astype("<f4")
-    sh0 = gaussians["sh0"].numpy().reshape(-1, 3).astype("<f4")
+    sh0 = gaussians["sh0"].numpy().reshape(-1, 3).astype("<f4")[keep]
     sh_rest = gaussians.get("sh_rest")
-    rest = (
-        sh_rest.numpy().transpose(0, 2, 1).reshape(len(means), -1).astype("<f4")
-        if sh_rest is not None else np.zeros((len(means), 0), dtype="<f4")
-    )
+    if sh_rest is not None:
+        rest = (
+            sh_rest.numpy().transpose(0, 2, 1)
+            .reshape(len(sh_rest.numpy()), -1)
+            .astype("<f4")[keep]
+        )
+    else:
+        rest = np.zeros((len(means), 0), dtype="<f4")
     names = ["x", "y", "z", "nx", "ny", "nz"]
     names += [f"f_dc_{i}" for i in range(3)]
     names += [f"f_rest_{i}" for i in range(rest.shape[1])]
