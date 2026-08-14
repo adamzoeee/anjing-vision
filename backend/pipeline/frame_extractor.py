@@ -13,7 +13,8 @@ logger = logging.getLogger("anjing.pipeline")
 
 TARGET_COUNT = 200       # 兼容既有调用接口；动态抽帧不按目标数量截断
 FRAME_INTERVAL = 5       # 兼容旧代码/配置；动态抽帧不再使用固定帧间隔
-MIN_VARIANCE = 60.0      # Laplacian 方差阈值（低于视为模糊）
+MIN_VARIANCE = 100.0     # Laplacian 方差阈值（低于视为模糊；手机夜景/运动模糊下 60 过松）
+SFM_FRAME_LIMIT = 250    # SfM 输入帧数上限：超出按时间均匀抽稀（单房间 250 帧足够，帧数翻倍只会拖慢并引入漂移）
 CANDIDATE_MAX_FPS = 15.0
 FAST_SAMPLE_FPS = 7.5
 NORMAL_SAMPLE_FPS = 5.5
@@ -28,8 +29,10 @@ NORMAL_DIFFERENCE_SCORE = 0.02
 DEFAULT_MAX_DROPPED_RUN = 2
 
 _FFMPEG_CANDIDATES = (
-    "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
+    # 本机 C:/Program Files/ffmpeg 下为 ffmpeg 4.0.2（不支持 -fps_mode），
+    # 故将 C:/ffmpeg（ffmpeg 9.0）排在前面；仅按功能可用性排序，无其他语义。
     "C:/ffmpeg/bin/ffmpeg.exe",
+    "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
     "/usr/bin/ffmpeg",
 )
 
@@ -57,7 +60,7 @@ def extract_frames(video: Path, out_dir: Path, target_count: int = TARGET_COUNT)
         old.unlink()
     probe = subprocess.run(
         [_ffmpeg_bin(), "-i", str(video)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, errors="replace",
     )
     duration = 0.0
     for line in probe.stderr.splitlines():
@@ -311,3 +314,21 @@ def _dropped_runs(ordered: list[Path], kept: set[Path]) -> list[list[Path]]:
 
 def _max_dropped_run(ordered: list[Path], kept: set[Path]) -> int:
     return max((len(run) for run in _dropped_runs(ordered, kept)), default=0)
+
+
+def decimate_frames(paths: list[Path], limit: int = SFM_FRAME_LIMIT) -> list[Path]:
+    """把按时间排序的帧均匀抽稀到 ``limit`` 张以内，始终保留首尾帧。
+
+    边走边拍的长视频按运动量抽帧后仍可能得到 600+ 帧；单房间 SfM 只需
+    约 200~250 帧。帧数过多时顺序匹配与增量重建开销接近线性甚至超线性，
+    且过小的相邻基线只会放大漂移。均匀抽稀保持时间等距，不破坏顺序匹配
+    的连续性假设。
+    """
+    ordered = list(paths)
+    if len(ordered) <= limit:
+        return ordered
+    limit = max(2, int(limit))
+    indices: set[int] = {0, len(ordered) - 1}
+    step = (len(ordered) - 1) / (limit - 1)
+    indices.update(round(i * step) for i in range(1, limit - 1))
+    return [ordered[index] for index in sorted(indices)]

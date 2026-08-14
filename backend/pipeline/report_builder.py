@@ -71,9 +71,24 @@ def build_preview_assets(
     cameras: list[dict] | None = None,
     image_shapes: list[tuple[int, int]] | None = None,
     camera_scale: float = 1.0,
+    max_points: int | None = None,
 ) -> dict:
-    """打包交互预览：scene.ply + manifest.json（供 App WebGL 渲染器加载）。"""
+    """打包交互预览：scene.ply + manifest.json（供 App WebGL 渲染器加载）。
+
+    max_points 用于控制浏览器加载体积：点数超出时按步长均匀抽稀
+    （几何测量/标定使用完整点云，不受影响）。
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    colors = (
+        np.asarray(colors, dtype=np.float64).reshape(-1, 3)
+        if colors is not None and len(colors) else None
+    )
+    if max_points is not None and len(points) > max_points:
+        step = len(points) / max_points
+        indices = np.unique(np.floor(np.arange(0, len(points), step)).astype(int))
+        points = points[indices]
+        colors = colors[indices] if colors is not None else None
     pcd = _make_pcd(points, colors)
     ply_path = out_dir / "scene.ply"
     o3d.io.write_point_cloud(str(ply_path), pcd)

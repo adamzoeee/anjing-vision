@@ -187,6 +187,55 @@ cd app && flutter test
 - 重建质量受拍摄条件影响：光线充足、慢速移动、避免反光面效果最佳
 - 3D 交互预览目前是独立 Web 页面（`app/web/preview/index.html`），App 内的 webview 集成待完成
 
+## 3D 重建后端：vid2scene（替代自研管线）
+
+自研的「抽帧 → pycolmap SfM → gsplat 训练」已被 [vid2scene](https://github.com/samuelm2/vid2scene)（Apache-2.0）端到端重建替代：视频直接送入，内部完成抽帧 → HLoc（EigenPlaces 检索 + ALIKED/LightGlue 匹配）→ COLMAP SfM → gsplat MCMC 训练（带 bilateral grid 外观建模、高斯数量上限）。下游的语义分割、尺度标定、几何测量、风险规则与报告全部保留，只消费 vid2scene 产出的 COLMAP 相机模型与 `splat.ply`。
+
+### 部署形态
+
+vid2scene 运行在独立的 conda 环境（`vid2scene`），与本后端 venv 完全隔离，通过 subprocess 调用（`backend/pipeline/vid2scene_runner.py`）：
+
+| 组件 | 说明 |
+|------|------|
+| conda env `vid2scene` | Python 3.12 + torch 2.7.1(cu128) + colmap 4.1.1 + pycolmap + hloc + gsplat(fork 1.5.3) + fused_ssim |
+| `E:\.PJs\vid2scene\` | vid2scene 源码（clone + submodule），含少量 Windows 适配补丁 |
+| `VID2SCENE_*` 环境变量 | 见 `backend/.env`：开关、源码路径、帧数/训练步数/高斯上限/SfM 方法 |
+
+### 环境搭建（Windows 原生，无 Docker/WSL）
+
+```powershell
+git clone https://github.com/samuelm2/vid2scene.git E:\.PJs\vid2scene
+cd E:\.PJs\vid2scene
+git submodule update --init gsplat glomap Hierarchical-Localization spz
+git -C gsplat submodule update --init   # gsplat 内部的 glm
+# 然后依次执行仓库内 setup_env.ps1 / setup_env3.ps1（或按 setup_env*.log 记录的
+# 步骤手动执行）：conda create → conda install colmap → pip torch/deps →
+# fused-ssim 与 gsplat fork 用 MSVC+CUDA12.8 编译（注意 DISTUTILS_USE_SDK=1、
+# TORCH_CUDA_ARCH_LIST=12.0+PTX、CUDA_HOME 指向真实 CUDA 路径）
+```
+
+注意事项（已踩坑）：
+- RTX 50 系（sm_120）必须用 torch 2.7+cu128；vid2scene 官方锁的 torch 2.5.1+cu124 不含 sm_120 内核
+- `pycolmap_parser` 需用最新 HEAD（旧 pin 在 numpy 2.x 下 `np.uint64(-1)` 溢出）
+- ffmpeg ≥ 7 已移除 `-vsync`，`extract_frames.py` 已改用 `-fps_mode`
+- 首次运行会从 HuggingFace/GitHub 下载 EigenPlaces/ALIKED/LightGlue 权重（约 500MB，缓存后不再下载）
+
+### 回退开关
+
+`VID2SCENE_ENABLED=false` 时回退到自研管线（`sfm.py` + `trainer.py`）；vid2scene 失败会以明确的「3D 重建失败」消息落库，不会静默降级。
+
+### 与自研管线的实测对比（吕昊东房间.mp4，2.5 分钟，同机 RTX 5080 Laptop）
+
+| 指标 | 自研（Scan 11） | vid2scene（最终实测，Scan 18） |
+|------|----------------|-----------|
+| 总耗时 | 4 小时 10 分 | **约 24 分钟**（重建 23.7 分钟 + 语义/报告约 1 分钟） |
+| SfM | 699 帧 68 分钟、漂移严重（跳变比 12.5） | 282/282 帧注册、跳变比 4.8、重投影误差 1.16px |
+| 训练 | 3 小时、损失 0.199、PSNR 16.5dB | 约 19 分钟、损失 0.03~0.12（MCMC + bilateral grid 外观建模） |
+| 高斯数 | 566 万（膨胀 37 倍） | **91 万**（硬上限 120 万） |
+| 标定 | 26.3% 分歧 → 失败 | **10.1% 分歧 → 标定成功**（门高 2.05m、床长 2.0m 一致），分歧超限时自动退化为单参考物+层高门禁兜底 |
+| 报告 | 全部 unknown 假 100 分 | 米制房间 6.99×6.58m、床 2.22×0.76m、门宽 0.85m；全 unknown 不再产出分数 |
+| 预览体积 | 168MB + 1.4GB | **24MB scene.ply + 74MB gaussian ply** |
+
 ## 许可证
 
-本项目仅供学习与研究使用。依赖的开源组件（PyTorch、gsplat、Open3D、FastAPI、Flutter 等）遵循各自许可证；请勿将本项目用于商业用途前确认所有依赖的许可条款。
+本项目仅供学习与研究使用。依赖的开源组件（PyTorch、gsplat、Open3D、FastAPI、Flutter、vid2scene（Apache-2.0）等）遵循各自许可证；请勿将本项目用于商业用途前确认所有依赖的许可条款。

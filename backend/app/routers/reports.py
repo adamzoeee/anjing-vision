@@ -141,16 +141,23 @@ def compare(
     after_report = after_scan.report
     if before_report is None or after_report is None:
         raise HTTPException(404, "报告不存在")
+    before_score = before_report.score
+    after_score = after_report.score
     return {
         "before": {
             "scan_id": before_report.scan_id,
-            "score": before_report.score,
+            "score": before_score,
             "risks": before_report.risks,
         },
         "after": {
             "scan_id": after_report.scan_id,
-            "score": after_report.score,
+            "score": after_score,
             "risks": after_report.risks,
         },
-        "score_delta": round(after_report.score - before_report.score, 1),
+        # 任一侧无法评分（全部未知）时不计算差值，前端显示“无法对比”。
+        "score_delta": (
+            round(after_score - before_score, 1)
+            if before_score is not None and after_score is not None
+            else None
+        ),
     }

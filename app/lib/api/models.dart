@@ -77,7 +77,7 @@ class Risk {
 
 class Report {
   final int scanId;
-  final double score;
+  final double? score;
   final List<Risk> risks;
   final List<String> advice;
   final List<String> images;
@@ -100,7 +100,7 @@ class Report {
   });
   factory Report.fromJson(Map<String, dynamic> j) => Report(
     scanId: j['scan_id'],
-    score: (j['score'] ?? 0).toDouble(),
+    score: (j['score'] as num?)?.toDouble(),
     risks: (j['risks'] as List? ?? []).map((e) => Risk.fromJson(e)).toList(),
     advice: (j['advice'] as List? ?? []).map((e) => e.toString()).toList(),
     images: (j['images'] as List? ?? []).map((e) => e.toString()).toList(),

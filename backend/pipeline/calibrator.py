@@ -132,6 +132,82 @@ def scale_from_door_prior(door_height_units: float, standard_height: float = DOO
     return standard_height / door_height_units
 
 
+# 单参考物兜底时的优先级：大而平、语义分割通常完整的物体在前；
+# 门在拍摄时经常处于开启/半遮挡状态，分割高度不完整，排在最后。
+_SINGLE_REFERENCE_PREFERENCE = [
+    ("bed", "length"), ("bed", "width"), ("bed", "height"),
+    ("sofa", "length"), ("sofa", "width"),
+    ("table", "length"), ("table", "width"),
+    ("cabinet", "height"), ("bookshelf", "height"),
+    ("door", "height"), ("door", "width"),
+]
+
+
+def fallback_single_reference_scale(
+    details: dict,
+    points: np.ndarray,
+    room_frame=None,
+    *,
+    min_ceiling_m: float = 1.8,
+    max_ceiling_m: float = 4.5,
+) -> tuple[float | None, dict]:
+    """多参考物分歧过大时的单参考物兜底标定。
+
+    依次尝试每个已测量参考物单独推出的比例，用两道门禁筛选：
+      1. assess_metric_scene：米制化后场景尺寸在单房间合理范围；
+      2. 层高合理性：房间框架（重力方向）下的净高必须在
+         min_ceiling_m..max_ceiling_m 之间（门开着时门高分割不全、
+         比例会虚高，层高门禁可将其排除）。
+    返回 (scale, 元信息)；全部候选被门禁拒绝时返回 (None, 元信息)。
+    """
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+    used = [
+        item for item in details.get("references", [])
+        if item.get("status") == "used" and item.get("model_units")
+    ]
+    by_type_dim = {
+        (str(item.get("object_type")), str(item.get("dimension"))): item for item in used
+    }
+    ranked = [by_type_dim[key] for key in _SINGLE_REFERENCE_PREFERENCE if key in by_type_dim]
+    tried = []
+    for item in ranked:
+        candidate = float(item["meters"]) / float(item["model_units"])
+        if not np.isfinite(candidate) or candidate <= 0:
+            continue
+        from .quality import assess_metric_scene
+
+        metric_points = points * candidate
+        if not assess_metric_scene(metric_points, calibrated=1).ok:
+            tried.append({"reference": item, "scale": candidate, "rejected": "metric_scene"})
+            continue
+        ceiling_m = None
+        if room_frame is not None:
+            up = np.asarray(room_frame.axes[:, 2], dtype=np.float64)
+            heights = (points - np.asarray(room_frame.origin, dtype=np.float64)) @ up
+            ceiling_m = float(
+                (np.percentile(heights, 97) - np.percentile(heights, 3)) * candidate
+            )
+            if not (min_ceiling_m <= ceiling_m <= max_ceiling_m):
+                tried.append({
+                    "reference": item, "scale": candidate, "rejected": "ceiling",
+                    "ceiling_m": round(ceiling_m, 2),
+                })
+                continue
+        return candidate, {
+            "method": "single_reference_fallback",
+            "reference": {
+                "object_type": item.get("object_type"),
+                "dimension": item.get("dimension"),
+                "meters": item.get("meters"),
+                "model_units": item.get("model_units"),
+            },
+            "scale": candidate,
+            "ceiling_m": round(ceiling_m, 2) if ceiling_m is not None else None,
+            "rejected_candidates": tried,
+        }
+    return None, {"method": "single_reference_fallback", "rejected_candidates": tried}
+
+
 def detect_a4_in_image(rgb: np.ndarray, mask: np.ndarray | None = None) -> tuple[float, float, float, float] | None:
     """在图片中检测 A4 纸（白纸矩形），返回 (长边像素, 短边像素, 中心x, 中心y)；找不到返回 None。
 

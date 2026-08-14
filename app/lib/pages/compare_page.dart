@@ -46,13 +46,7 @@ class _ComparePageState extends State<ComparePage> {
           : d == null
               ? const Center(child: CircularProgressIndicator())
               : ListView(padding: const EdgeInsets.all(16), children: [
-                  Center(child: Text(
-                    '评分变化：${(d['before'] as Map)['score']} → ${(d['after'] as Map)['score']}'
-                    '（${d['score_delta'] >= 0 ? '+' : ''}${d['score_delta']}）',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: (d['score_delta'] as num) >= 0 ? Colors.green : Colors.red))),
+                  Center(child: _scoreComparison(d)),
                   const SizedBox(height: 16),
                   Text('改造前风险', style: Theme.of(context).textTheme.titleMedium),
                   ..._riskTiles(d['before']),
@@ -60,6 +54,27 @@ class _ComparePageState extends State<ComparePage> {
                   Text('改造后风险', style: Theme.of(context).textTheme.titleMedium),
                   ..._riskTiles(d['after']),
                 ]));
+  }
+
+  Widget _scoreComparison(Map<String, dynamic> d) {
+    final beforeScore = ((d['before'] as Map)['score'] as num?)?.toDouble();
+    final afterScore = ((d['after'] as Map)['score'] as num?)?.toDouble();
+    final delta = (d['score_delta'] as num?)?.toDouble();
+    if (beforeScore == null || afterScore == null || delta == null) {
+      return const Text(
+        '⚠ 一侧或双侧扫描关键测量项缺失，暂无法对比评分',
+        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+      );
+    }
+    return Text(
+      '评分变化：${beforeScore.toStringAsFixed(1)} → ${afterScore.toStringAsFixed(1)}'
+      '（${delta >= 0 ? '+' : ''}${delta.toStringAsFixed(1)}）',
+      style: TextStyle(
+        fontSize: 22,
+        fontWeight: FontWeight.bold,
+        color: delta >= 0 ? Colors.green : Colors.red,
+      ),
+    );
   }
 
   List<Widget> _riskTiles(dynamic side) {
