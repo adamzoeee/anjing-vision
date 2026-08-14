@@ -1,0 +1,34 @@
+commit b8d9973cdc14b4fcefbe1304381dcf77ac906a1b
+Author: Adam Zoeee <adamzoeee@foxmail.com>
+Date:   Fri Aug 14 13:51:21 2026 +0800
+
+    Windows 适配：DataLoader 多进程 spawn 管道溢出时回退单进程（num_workers=0/persistent_workers=False）
+
+diff --git a/examples/simple_trainer.py b/examples/simple_trainer.py
+index 3cdddeb..c55aadd 100644
+--- a/examples/simple_trainer.py
++++ b/examples/simple_trainer.py
+@@ -624,8 +624,11 @@ class Runner:
+             self.trainset,
+             batch_size=cfg.batch_size,
+             shuffle=True,
+-            num_workers=4,
+-            persistent_workers=True,
++            # Windows 上 spawn 多进程 DataLoader 需要把整个 dataset（含每相机的
++            # 畸变矫正映射 mapx/mapy，数百相机时可达数 GB）pickle 进子进程管道，
++            # 超过 Windows 管道上限直接 EINVAL。单进程加载足够喂饱 GPU。
++            num_workers=4 if os.name != "nt" else 0,
++            persistent_workers=True if os.name != "nt" else False,
+             pin_memory=True,
+         )
+         trainloader_iter = iter(trainloader)
+@@ -1010,7 +1013,8 @@ class Runner:
+         world_size = self.world_size
+ 
+         valloader = torch.utils.data.DataLoader(
+-            self.valset, batch_size=1, shuffle=False, num_workers=1
++            self.valset, batch_size=1, shuffle=False,
++            num_workers=1 if os.name != "nt" else 0,
+         )
+         ellipse_time = 0
+         metrics = defaultdict(list)

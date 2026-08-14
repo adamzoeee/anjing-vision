@@ -1,0 +1,181 @@
+commit e00634c74fb378fd29c9dc49fed3b1065fe13149
+Author: Adam Zoeee <adamzoeee@foxmail.com>
+Date:   Fri Aug 14 13:51:14 2026 +0800
+
+    Windows 原生部署适配补丁（old-friend 集成）
+    
+    - extract_frames：ffmpeg>=7 用 -fps_mode 替代 -vsync；修正 filtergraph
+      逗号转义；抽帧失败直接抛错而不是静默继续
+    - generate_sfm_hloc：pycolmap 4.x 返回 dict 时取注册帧最多的模型
+    - vid2scene.py：vggt 惰性导入（Windows 无 pyceres）；新增
+      --no_normalize_world_space 保留 COLMAP 世界坐标；model_orientation_aligner
+      崩溃容错并校验对齐产物完整
+    - 部署脚本：conda 环境搭建（torch 2.7.1+cu128 / colmap / gsplat fork /
+      fused_ssim / fused_bilagrid）+ 冒烟与端到端运行脚本
+
+diff --git a/vid2scene_core/extract_frames.py b/vid2scene_core/extract_frames.py
+index 67b73f5..07d290a 100644
+--- a/vid2scene_core/extract_frames.py
++++ b/vid2scene_core/extract_frames.py
+@@ -56,16 +56,19 @@ def extract_frames(video_path, output_dir, target_framecount=None, downscale=Tru
+ 
+     # ffmpeg command to extract frames at calculated intervals
+     output_pattern = os.path.join(output_dir, "image_%04d.png")
+-    video_filter_string = f"select=not(mod(n\,{interval}))"
++    # filtergraph 中 filter 参数内的逗号必须用 \, 转义（ffmpeg 语法），
++    # Python 侧用 \\, 写出字面反斜杠。
++    video_filter_string = "select=not(mod(n\\," + str(interval) + "))"
+     if downscale:
+-        video_filter_string += ",scale=if(gte(iw\,ih)\,min(1920\,iw)\,-2):if(lt(iw\,ih)\,min(1920\,ih)\,-2)"
++        video_filter_string += ",scale=if(gte(iw\\,ih)\\,min(1920\\,iw)\\,-2):if(lt(iw\\,ih)\\,min(1920\\,ih)\\,-2)"
+     ffmpeg_command = [
+         "ffmpeg",
+         "-i",
+         video_path,
+         "-vf",
+         video_filter_string,
+-        "-vsync",
++        # ffmpeg >= 5 用 -fps_mode 替代已废弃的 -vsync（ffmpeg 9 已彻底移除 -vsync）
++        "-fps_mode",
+         "vfr",
+         output_pattern,
+     ]
+@@ -75,6 +78,7 @@ def extract_frames(video_path, output_dir, target_framecount=None, downscale=Tru
+         logger.info(f"Frame extraction complete. Frames saved to {output_dir}.")
+     except subprocess.CalledProcessError as e:
+         logger.error(f"Error during frame extraction: {e}")
++        raise RuntimeError(f"ffmpeg 抽帧失败: {e}") from e
+ 
+ 
+ def main():
+diff --git a/vid2scene_core/generate_sfm_hloc.py b/vid2scene_core/generate_sfm_hloc.py
+index 15240d6..91ed44f 100644
+--- a/vid2scene_core/generate_sfm_hloc.py
++++ b/vid2scene_core/generate_sfm_hloc.py
+@@ -82,11 +82,19 @@ def custom_run_reconstruction(
+             reconstructions = pycolmap.incremental_mapping(
+                 str(database_path), str(image_dir), str(models_path), options=options
+             )
+-    if len(reconstructions) == 0:
++    # pycolmap 3.x 返回列表，4.x 返回 {model_id: Reconstruction}，统一取注册帧最多的模型。
++    models = (
++        list(reconstructions.values())
++        if isinstance(reconstructions, dict)
++        else list(reconstructions or [])
++    )
++    if len(models) == 0:
+         logger.error("Could not reconstruct any model!")
+         return None
+-    logger.info(f"Reconstructed {len(reconstructions)} model(s).")
+-    return reconstructions[0]
++    logger.info(f"Reconstructed {len(models)} model(s).")
++    largest = max(models, key=lambda model: model.num_reg_images())
++    logger.info(f"Largest model has {largest.num_reg_images()} registered images.")
++    return largest
+ 
+ 
+ 
+diff --git a/vid2scene_core/vid2scene.py b/vid2scene_core/vid2scene.py
+index f2cf4a5..2fa542e 100644
+--- a/vid2scene_core/vid2scene.py
++++ b/vid2scene_core/vid2scene.py
+@@ -12,7 +12,6 @@ from run_command import run_command
+ from preview_data_handler import PreviewDataHandler
+ from watchdog.observers import Observer
+ from apply_pilgram import apply_filters_to_directory, list_available_filters
+-from vggt_to_colmap import run_vggt_to_colmap
+ from quest_to_colmap import run_quest_to_colmap
+ 
+ logger = logging.getLogger(__name__)
+@@ -20,6 +19,13 @@ logger = logging.getLogger(__name__)
+ SPZ_TO_PLY_EXECUTABLE_PATH = os.path.join(os.path.dirname(__file__), os.pardir, "spz", "build_native", "bin", "spz_convert")
+ 
+ 
++def _run_vggt_to_colmap(*args, **kwargs):
++    # 惰性导入：vggt 路径依赖 pyceres/huggingface_hub/vggt 权重，Windows 裸机部署不安装；
++    # 只有显式选择 reconstruction_method=vggt 时才加载。
++    from vggt_to_colmap import run_vggt_to_colmap
++    return run_vggt_to_colmap(*args, **kwargs)
++
++
+ def parse_arguments():
+     parser = argparse.ArgumentParser(
+         description="Wrapper script to run frame extraction, SfM generation, and Gsplat."
+@@ -101,6 +107,14 @@ def parse_arguments():
+         help="Physical size of AprilTag in meters (measure outer black border). "
+              "Example: 0.15 for 15cm tags. Enables automatic scale calibration.",
+     )
++    parser.add_argument(
++        "--no_normalize_world_space",
++        action="store_true",
++        default=False,
++        help="Keep the COLMAP world space during gsplat training instead of "
++             "normalizing to a unit sphere. Needed when downstream consumers "
++             "(e.g. metric measurement) must align cameras with the splat.",
++    )
+     return parser.parse_args()
+ 
+ 
+@@ -200,15 +214,22 @@ def align_sfm_orientation(sfm_output_dir, kill_check=None):
+     logger.info("Running COLMAP orientation alignment to fix up direction...")
+     logger.info(f"Command: {' '.join(align_command)}")
+     
+-    success = run_command(align_command, log_info_output=True, kill_check=kill_check)
++    try:
++        success = run_command(align_command, log_info_output=True, kill_check=kill_check)
++    except Exception as exc:  # noqa: BLE001 - Windows 上 conda 版 aligner 可能访问冲突崩溃，不影响下游
++        logger.warning(f"Orientation alignment crashed or was terminated: {exc}")
++        return
+     
+     if not success:
+         logger.warning("Orientation alignment failed or was terminated")
+         return
+     
+-    # Check if alignment succeeded
+-    if not os.path.exists(aligned_dir):
+-        logger.warning("Aligned directory was not created, keeping original orientation")
++    # Check if alignment succeeded and produced a complete model
++    required = ("cameras.bin", "images.bin", "points3D.bin")
++    if not os.path.exists(aligned_dir) or not all(
++        os.path.isfile(os.path.join(aligned_dir, name)) for name in required
++    ):
++        logger.warning("Aligned directory is missing or incomplete, keeping original orientation")
+         return
+     
+     # Backup original and replace with aligned version
+@@ -318,7 +339,7 @@ def generate_sfm_point_cloud(
+                 return  # Processing was terminated
+         elif reconstruction_method == 'vggt':
+             logger.info("Generating 3D SfM point cloud using VGGT...")
+-            sparse_dir = run_vggt_to_colmap(
++            sparse_dir = _run_vggt_to_colmap(
+                 images_output_dir, sfm_output_dir, kill_check=kill_check, mask_black_bg=False, mask_white_bg=False, mask_sky=False
+             )
+             if sparse_dir is None:
+@@ -478,6 +499,7 @@ def process_video_to_scene(
+     apriltag_size_meters=None,
+     mock=False,
+     quest_project_dir=None,
++    no_normalize_world_space=False,
+ ):
+     """
+     Process a video into a 3D scene.
+@@ -647,7 +669,11 @@ def process_video_to_scene(
+     # Run gsplat with the kill_check function
+     # Disable world space normalization if AprilTag calibration was used or if using Quest reconstruction
+     # (Quest data already comes in world space, AprilTag preserves real-world scale)
+-    normalize = apriltag_size_meters is None and reconstruction_method != 'quest'
++    normalize = (
++        not no_normalize_world_space
++        and apriltag_size_meters is None
++        and reconstruction_method != 'quest'
++    )
+     run_gsplat(gsplat_script, sfm_output_dir, result_dir, save_ply_path, training_max_num_gaussians, training_num_steps,
+                preview_data_path, preview_data_handler, kill_check, normalize=normalize, mcmc_refine_every=mcmc_refine_every)
+     
+@@ -729,4 +755,5 @@ if __name__ == "__main__":
+         reconstruction_method=args.reconstruction_method,
+         apriltag_size_meters=args.apriltag_size,
+         quest_project_dir=args.quest_project_dir,
++        no_normalize_world_space=args.no_normalize_world_space,
+     )
