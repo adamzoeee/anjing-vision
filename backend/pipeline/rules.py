@@ -72,8 +72,12 @@ def evaluate_risks(measures: dict) -> list[dict]:
     return risks
 
 
-def compute_score(measures: dict) -> tuple[float, dict]:
-    """只按已确认风险加权评分；未知项单独计入评估完整度。"""
+def compute_score(measures: dict) -> tuple[float | None, dict]:
+    """只按已确认风险加权评分；未知项单独计入评估完整度。
+
+    仅当所有风险项均为 unknown 时返回 score=None——「无法评分」必须与
+    「零风险」区分，避免给用户一个假满分；部分未知时保持原有加权逻辑。
+    """
     risks = evaluate_risks(measures)
     cat_map = {
         "door_width": "通行性", "passage_width": "通行性", "bathroom_door": "通行性",
@@ -87,7 +91,8 @@ def compute_score(measures: dict) -> tuple[float, dict]:
         worst = min(({"red": 0, "yellow": 0.5, "green": 1.0}[r["level"]]
                      for r in confirmed_risks), default=1.0)
         parts[cat] = round(worst * 100, 1)
-    score = round(sum(parts[c] * WEIGHTS[c] for c in parts), 1)
+    confirmed = [r for r in risks if r["level"] != "unknown"]
+    score = round(sum(parts[c] * WEIGHTS[c] for c in parts), 1) if confirmed else None
     unknown_count = sum(r["level"] == "unknown" for r in risks)
     known_count = len(risks) - unknown_count
     completeness = round(known_count / len(risks) * 100, 1) if risks else 100.0

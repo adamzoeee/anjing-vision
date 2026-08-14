@@ -47,6 +47,8 @@ class _CapturePageState extends State<CapturePage> {
     '3. 覆盖地面、墙角、门框、家具，并保持画面重叠',
     '4. 避免快速甩动、逆光、镜面和长时间拍摄纯白墙',
     '5. 最后回到起点；建议录制 1～3 分钟',
+    '6. 填写的参考物必须完整入镜、不被遮挡：门要保持关闭状态完整拍下门框；'
+        '床、桌子、柜子等要拍全整条被测边（若门开着，改填床长、桌子长等完整可见的尺寸）',
   ];
 
   final List<_ReferenceInput> _references = [
@@ -194,6 +196,11 @@ class _CapturePageState extends State<CapturePage> {
             '尺寸含义：长＝物体最长边，宽＝与长垂直的较短边，高＝从地面到顶部。'
             '例如床填长约 2.0 米、宽约 1.5 米；门通常填高和门洞宽。',
             style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          const Text(
+            '⚠ 每个参考物都必须完整入镜且不被遮挡才能可靠测量：门要关闭并完整拍下'
+            '门框（开着或半遮的门测不准），床/桌/柜要拍全整条被测边。',
+            style: TextStyle(fontSize: 12, color: Colors.orange),
           ),
           const SizedBox(height: 8),
           for (var index = 0; index < _references.length; index++)

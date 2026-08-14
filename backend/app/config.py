@@ -1,12 +1,19 @@
 from enum import Enum
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
+from dotenv import load_dotenv
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
+
+# 把 .env 全部变量注入 os.environ（override=False：显式环境变量优先），
+# 使 VID2SCENE_* / GAUSSIAN_* 这类非 Settings 字段也能通过 .env 配置，
+# 供 pipeline 代码用 os.getenv 读取。
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 
 class EnvironmentMode(str, Enum):

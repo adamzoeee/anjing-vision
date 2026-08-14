@@ -1,5 +1,85 @@
 import numpy as np
-from pipeline.calibrator import compute_scale_from_pixel, estimate_scale_from_references, scale_from_door_prior
+from pipeline.calibrator import (
+    compute_scale_from_pixel,
+    estimate_scale_from_references,
+    fallback_single_reference_scale,
+    scale_from_door_prior,
+)
+
+
+class _FakeRoomFrame:
+    """最小房间框架桩：up 轴 = +Z，原点在原点。"""
+
+    def __init__(self):
+        self.axes = np.eye(3)
+        self.origin = np.zeros(3)
+        self.confidence = "high"
+        self.ground_inlier_ratio = 0.9
+        self.horizontal_method = "plane"
+
+
+def test_fallback_single_reference_picks_plausible_ceiling():
+    """门开着时门高分割不全 → 门比例给出 ~4.7m 层高被拒；床比例给出 ~3.1m 层高被采纳。"""
+    rng = np.random.default_rng(3)
+    # 合成房间点云（任意单位）：净高 8 单位
+    floor = rng.uniform([-3, -3, 0], [3, 3, 0.05], (2000, 3))
+    ceiling = rng.uniform([-3, -3, 8.0], [3, 3, 8.05], (1500, 3))
+    walls = rng.uniform([-3, -3, 0], [3, 3, 8.0], (3000, 3))
+    points = np.concatenate([floor, ceiling, walls])
+    details = {
+        "references": [
+            {"object_type": "door", "dimension": "height", "meters": 2.05,
+             "status": "used", "model_units": 3.5},   # 分割不全 → 比例虚高
+            {"object_type": "bed", "dimension": "length", "meters": 2.0,
+             "status": "used", "model_units": 5.1},   # 大平物 → 可靠
+        ]
+    }
+    scale, meta = fallback_single_reference_scale(details, points, _FakeRoomFrame())
+    assert scale is not None
+    assert abs(scale - 2.0 / 5.1) < 1e-6
+    assert meta["method"] == "single_reference_fallback"
+    assert meta["reference"]["object_type"] == "bed"
+    assert 1.8 <= meta["ceiling_m"] <= 4.5
+
+
+def test_fallback_single_reference_prefers_bed_over_door():
+    """床比例层高合理时优先床；只有床被门禁拒绝后才轮到门（门比例层高虚高也被拒）。"""
+    rng = np.random.default_rng(5)
+    points = rng.uniform([-3, -3, 0], [3, 3, 8.0], (4000, 3))
+    details = {
+        "references": [
+            {"object_type": "door", "dimension": "height", "meters": 2.05,
+             "status": "used", "model_units": 3.5},
+            {"object_type": "bed", "dimension": "length", "meters": 2.0,
+             "status": "used", "model_units": 5.1},
+        ]
+    }
+    # 层高上限压到 2.6m：床(≈3.1m)被拒 → 门(≈4.7m)也被拒 → 无兜底
+    scale, meta = fallback_single_reference_scale(
+        details, points, _FakeRoomFrame(), max_ceiling_m=2.6
+    )
+    assert scale is None
+    rejected = {item["reference"]["object_type"] for item in meta["rejected_candidates"]}
+    assert rejected == {"bed", "door"}
+
+
+def test_fallback_single_reference_rejects_all_when_no_plausible_ceiling():
+    rng = np.random.default_rng(4)
+    points = rng.uniform([-3, -3, 0], [3, 3, 2.8], (2000, 3))
+    details = {
+        "references": [
+            {"object_type": "door", "dimension": "height", "meters": 2.05,
+             "status": "used", "model_units": 3.5},
+            {"object_type": "bed", "dimension": "length", "meters": 2.0,
+             "status": "used", "model_units": 5.1},
+        ]
+    }
+    # 门禁上限压到 2.0m：两个候选层高都超限 → 拒绝全部
+    scale, meta = fallback_single_reference_scale(
+        details, points, _FakeRoomFrame(), max_ceiling_m=2.0
+    )
+    assert scale is None
+    assert len(meta["rejected_candidates"]) == 2
 
 
 def test_compute_scale_from_pixel():

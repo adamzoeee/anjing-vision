@@ -96,3 +96,23 @@ def test_compute_score_excludes_unknown_and_reports_assessment_completeness():
         "bathroom_door",
         "obstacle",
     }
+
+
+def test_compute_score_all_unknown_returns_none_instead_of_fake_perfect():
+    """全部风险未知时不得给出假满分（历史问题：unknown 一律按 default=1.0 计 100 分）。"""
+    measures = {
+        "door_width_m": None,
+        "passage_width_m": None,
+        "threshold_m": None,
+        "slope": None,
+        "uneven_m": None,
+        "obstacles_in_passage": None,
+        "obstacle_assessment_status": "pending_spatial_validation",
+        "bathroom_door_m": None,
+    }
+
+    score, detail = compute_score(measures)
+
+    assert score is None
+    assert detail["assessment_completeness"]["known_count"] == 0
+    assert detail["assessment_completeness"]["percent"] == 0.0

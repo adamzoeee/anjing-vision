@@ -17,6 +17,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True, help="视频文件或照片目录")
     ap.add_argument("--outdir", required=True)
+    ap.add_argument(
+        "--reference",
+        action="append",
+        default=[],
+        metavar="TYPE=DIM=METERS",
+        help="参考物真实尺寸，可重复：如 --reference door=height=2.05 --reference bed=length=2.0",
+    )
     args = ap.parse_args()
 
     import os
@@ -24,8 +31,25 @@ def main():
 
     from app.db import Base, SessionLocal, engine
     from app.models import Organization, Project, Scan
-    from app.storage import save_media
+    from app.storage import save_media_stream
     from app.tasks.pipeline_runner import run_pipeline
+
+    references = []
+    for item in args.reference:
+        parts = item.split("=", 2)
+        if len(parts) != 3:
+            print(f"错误: --reference 格式应为 TYPE=DIM=METERS，收到: {item}")
+            sys.exit(1)
+        try:
+            meters = float(parts[2])
+        except ValueError:
+            print(f"错误: 米数无效: {parts[2]}")
+            sys.exit(1)
+        references.append({
+            "object_type": parts[0],
+            "dimension": parts[1],
+            "meters": meters,
+        })
 
     Base.metadata.create_all(bind=engine)
     src = Path(args.input)
@@ -38,21 +62,34 @@ def main():
     db.flush()
     scan = Scan(project_id=proj.id,
                 capture_type="video" if src.is_file() else "photos")
+    scan.reference_measurements = references
     db.add(scan)
     db.commit()
     if src.is_file():
-        media = save_media(scan.id, src.name, src.read_bytes())
+        import io
+        from app.config import get_settings
+        max_bytes = get_settings().max_upload_bytes
+        stored = save_media_stream(
+            scan.id, src.name, io.BytesIO(src.read_bytes()), max_bytes
+        )
+        media = stored.path
     else:
         # 照片目录：逐张复制到 media/<scan_id>/，media_path 指向目录，
         # 触发 pipeline_runner 的 src.is_dir() 分支（直接以图片为帧）。
+        import io
+        from app.config import get_settings
+        max_bytes = get_settings().max_upload_bytes
         files = (sorted(src.glob("*.jpg")) + sorted(src.glob("*.jpeg"))
                  + sorted(src.glob("*.JPG")))
         if not files:
             print(f"错误: 目录 {src} 中没有 jpg/jpeg/JPG 图片")
             sys.exit(1)
+        media = None
         for f in files:
-            save_media(scan.id, f.name, f.read_bytes())
-        media = f"media/{scan.id}"
+            stored = save_media_stream(
+                scan.id, f.name, io.BytesIO(f.read_bytes()), max_bytes
+            )
+            media = str(Path(stored.path).parent)
     scan.media_path = media
     sid = scan.id  # commit 会 expire 全部属性，先保存主键
     db.commit()

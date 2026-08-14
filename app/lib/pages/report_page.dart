@@ -58,7 +58,18 @@ class _ReportPageState extends State<ReportPage> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  Center(child: ScoreGauge(score: r.score)),
+                  if (r.score != null)
+                    Center(child: ScoreGauge(score: r.score!))
+                  else
+                    const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(12),
+                        child: Text(
+                          '⚠ 关键测量项缺失，暂无法评分',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ),
                   const SizedBox(height: 8),
                   Center(
                     child: Text(

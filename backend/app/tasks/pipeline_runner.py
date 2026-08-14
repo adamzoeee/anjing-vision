@@ -22,11 +22,17 @@ DEFAULT_MAX_TRAINING_VIEWS = 120  # 8GB 显存下约 1.3GB Float32 训练图像�
 MAX_CONFIGURED_TRAINING_VIEWS = 240
 
 STAGES = [
-    ("extracting", 5, "抽帧中"), ("sfm", 25, "相机位姿估计中"),
+    ("extracting", 5, "抽帧中"), ("reconstructing", 25, "3D 重建中"),
+    ("sfm", 25, "相机位姿估计中"),
     ("training", 45, "3D 重建训练中"), ("calibrating", 65, "尺度标定中"),
     ("segmenting", 75, "语义分割中"), ("analyzing", 85, "几何分析中"),
     ("scoring", 90, "风险评分中"), ("reporting", 95, "生成报告中"),
 ]
+
+
+def _vid2scene_enabled() -> bool:
+    """是否使用 vid2scene 端到端重建（环境变量 VID2SCENE_ENABLED 控制回退）。"""
+    return os.getenv("VID2SCENE_ENABLED", "true").strip().lower() not in ("0", "false", "no")
 
 
 def _step_measurements(step: float) -> dict:
@@ -50,6 +56,10 @@ def run_pipeline(scan_id: int) -> None:
         work = Path(s.data_dir) / "work" / str(scan_id)
         work.mkdir(parents=True, exist_ok=True)
         src = media_path(scan.media_path)
+        # 视频输入默认走 vid2scene 端到端重建（自研抽帧/SfM/训练仅作回退开关）
+        if _vid2scene_enabled() and not src.is_dir():
+            _run_vid2scene_pipeline(db, scan, work, src, timings, pipeline_started)
+            return
         frames = work / "frames"
         _stage(db, scan, "extracting", 5, "抽帧中")
 
@@ -288,6 +298,16 @@ def run_pipeline(scan_id: int) -> None:
             else:
                 calibration_quality["reason"] = metric_quality.reason
                 scale = None
+        if scale is None:
+            # 多参考物分歧过大 → 单参考物兜底（层高门禁筛选，见 calibrator）。
+            from pipeline.calibrator import fallback_single_reference_scale
+            fallback, fallback_meta = fallback_single_reference_scale(
+                calibration_details, points, room_frame
+            )
+            if fallback is not None:
+                scale = fallback
+                calibrated_flag = 2
+                calibration_quality = {**calibration_quality, **fallback_meta}
         scale = scale or 1.0
         points = points * scale
         if calibrated_flag:
@@ -359,6 +379,11 @@ def run_pipeline(scan_id: int) -> None:
         score, detail = compute_score(measures)
         measures["assessment_completeness"] = detail["assessment_completeness"]
         advice = [r["advice"] for r in risks if r["level"] in ("red", "yellow")]
+        if calibrated_flag == 2:
+            advice.append(
+                "多个参考尺寸推导的比例不一致，已按单一参考物标定米制尺度（精度较低），"
+                "建议补充参考物或重新录制后复核"
+            )
         # 重建质量分级：低质量不阻断交付，但报告与消息必须携带警示。
         from pipeline.quality import grade_reconstruction
         grade, grade_reasons = grade_reconstruction(
@@ -451,6 +476,310 @@ def _stage(db, scan, status, progress, message):
     db.commit()
 
 
+def _run_vid2scene_pipeline(
+    db, scan, work: Path, src: Path, timings: dict, pipeline_started: float,
+) -> None:
+    """vid2scene 端到端重建分支：重建（vid2scene）→ 语义 → 标定 → 几何 → 评分 → 报告。
+
+    下游 exporter / calibrator / geometry / rules / report 与自研链路完全复用；
+    只有「抽帧 → SfM → 3DGS 训练」被 vid2scene 替换。
+    """
+    from pipeline import vid2scene_runner as vr
+
+    _stage(db, scan, "reconstructing", 10, "3D 重建中（vid2scene）")
+    stage_started = time.perf_counter()
+    last_progress = {"value": 10.0}
+
+    def on_progress(frac: float) -> None:
+        value = 10.0 + 35.0 * float(frac)
+        if value - last_progress["value"] >= 1.0:
+            last_progress["value"] = value
+            _stage(db, scan, "reconstructing", round(value, 1), "3D 重建中（vid2scene）")
+
+    try:
+        outputs = vr.run_reconstruction(src, work / "vid2scene", progress_callback=on_progress)
+    except RuntimeError as exc:
+        _fail(db, scan, f"3D 重建失败：{exc}")
+        return
+    timings["vid2scene_seconds"] = time.perf_counter() - stage_started
+    timings["vid2scene_stage_seconds"] = float(outputs.get("seconds", 0.0))
+
+    _stage(db, scan, "reconstructing", 47, "解析重建结果中")
+    reconstruction = vr.parse_reconstruction(work / "vid2scene")
+    cameras = reconstruction["cameras"]
+    image_dir: Path = reconstruction["image_dir"]
+    frames_on_disk = sorted(
+        list(image_dir.glob("*.png")) + list(image_dir.glob("*.jpg")) + list(image_dir.glob("*.jpeg"))
+    )
+
+    from pipeline.quality import assess_sfm, grade_reconstruction
+    sfm_quality = assess_sfm(
+        cameras, reconstruction["points3D"], len(frames_on_disk), reconstruction["quality"]
+    )
+    if not sfm_quality.ok:
+        _fail(db, scan, sfm_quality.reason)
+        return
+    from pipeline.sfm import filter_trajectory_jumps
+    kept_cameras, dropped_jump_names, jump_diagnostics = filter_trajectory_jumps(cameras)
+    sfm_quality.metrics["trajectory_jump_filter"] = jump_diagnostics
+    cameras = kept_cameras
+
+    # 图像/相机按名字配对；畸变校正与曝光归一化沿用自研链路约定。
+    from PIL import Image
+    from pipeline.sfm import undistort_registered_view
+    from pipeline.trainer import normalize_exposure
+    name_to_camera = {camera["name"]: camera for camera in cameras}
+    imgs, cams = [], []
+    for path in frames_on_disk:
+        camera = name_to_camera.get(path.name)
+        if camera is None:
+            continue
+        imgs.append(np.asarray(Image.open(path).convert("RGB")))
+        cams.append(camera)
+    if len(cams) < 5:
+        _fail(db, scan, "vid2scene 注册相机过少，无法继续评估")
+        return
+    rectified = [undistort_registered_view(image, camera) for image, camera in zip(imgs, cams)]
+    imgs = [item[0] for item in rectified]
+    cams = [item[1] for item in rectified]
+    imgs, exposure_diagnostics = normalize_exposure(imgs)
+
+    # 测量点云取自训练后的高斯中心（不透明度过滤），替代自研训练导出。
+    splat = reconstruction["gaussian"]
+    from pipeline.vid2scene_runner import point_cloud_from_splat
+    splat_points, splat_colors = point_cloud_from_splat(splat, opacity_threshold=0.01)
+    import open3d as o3d
+    from pipeline.exporter import statistical_filter
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(splat_points)
+    pcd.colors = o3d.utility.Vector3dVector(splat_colors.astype(np.float64) / 255.0)
+    pcd = statistical_filter(pcd)
+    points = np.asarray(pcd.points)
+    point_colors = np.asarray(pcd.colors)
+    if len(points) < 100:
+        _fail(db, scan, "重建点云过少，评估失败")
+        return
+    o3d.io.write_point_cloud(str(work / "pointcloud.ply"), pcd)
+    semantic_points = points.copy()
+
+    # 高斯张量（供质量门禁/预览导出复用自研 exporter 契约）
+    import torch
+    opacities = np.clip(splat["opacities"], 1e-7, 1 - 1e-7)
+    sh_rest = splat["sh_rest"]
+    # vid2scene 训练器的 SH 阶数可能不是 3（如 MCMC 默认 degree 2 → 24 个
+    # f_rest 分量），列数必须从 PLY 动态读取：(N, 3*K) → (N, K, 3)。
+    rest_channels = sh_rest.shape[1] // 3 if sh_rest.shape[1] else 0
+    sh_rest_tensor = (
+        torch.from_numpy(sh_rest.astype(np.float32))
+        .reshape(-1, 3, rest_channels)
+        .transpose(1, 2)
+        if rest_channels else torch.zeros(len(splat["means"]), 15, 3)
+    )
+    gaussians = {
+        "means": torch.from_numpy(splat["means"].astype(np.float32)),
+        "scales": torch.from_numpy(np.log(np.clip(splat["scales"], 1e-6, None)).astype(np.float32)),
+        "quats": torch.from_numpy(splat["quats"].astype(np.float32)),
+        "opacities": torch.from_numpy(np.log(opacities / (1 - opacities)).astype(np.float32)),
+        "sh0": torch.from_numpy(splat["sh0"].astype(np.float32)).unsqueeze(1),
+        "sh_rest": sh_rest_tensor,
+        "opacity_logits": True,
+        "training_metrics": {
+            "backend": "vid2scene",
+            "iterations": int(os.getenv("VID2SCENE_TRAINING_STEPS", "20000")),
+            "gaussian_count": int(len(splat["means"])),
+            "training_view_count": len(cams),
+            "exposure_normalization": exposure_diagnostics,
+            "timings": {**timings, "total_seconds": time.perf_counter() - pipeline_started},
+        },
+    }
+    from pipeline.quality import assess_gaussians
+    gaussian_quality = assess_gaussians(
+        gaussians["means"].numpy(), reconstruction["points3D"], gaussians["training_metrics"]
+    )
+    if not gaussian_quality.ok:
+        _fail(db, scan, gaussian_quality.reason)
+        return
+
+    _stage(db, scan, "segmenting", 60, "语义分割与参考物识别中")
+    semantic_result = _find_obstacles(imgs, cams, semantic_points)
+
+    from pipeline.spatial_measurement import (
+        estimate_room_frame,
+        measure_room,
+        measure_semantic_objects,
+    )
+    room_frame = estimate_room_frame(points, cams)
+    object_measurements = measure_semantic_objects(
+        points, semantic_result["semantic_point_ids"], room_frame
+    )
+    for result in object_measurements.values():
+        if result.get("status") == "measured":
+            result["unit"] = "model_units"
+
+    _stage(db, scan, "calibrating", 70, "多参考物尺度标定中")
+    from pipeline.calibrator import estimate_scale_from_references
+    from pipeline.quality import assess_metric_scene
+    scale, calibration_details = estimate_scale_from_references(
+        points,
+        semantic_result["semantic_point_ids"],
+        scan.reference_measurements or [],
+        object_measurements=object_measurements,
+    )
+    calibration_quality = {"method": "known_objects", **calibration_details}
+    calibrated_flag = 0
+    if scale is not None:
+        metric_quality = assess_metric_scene(points * scale, calibrated=1)
+        if metric_quality.ok:
+            calibrated_flag = 3
+        else:
+            calibration_quality["reason"] = metric_quality.reason
+            scale = None
+    if scale is None:
+        # 多参考物分歧过大 → 单参考物兜底（层高门禁筛选，见 calibrator）。
+        from pipeline.calibrator import fallback_single_reference_scale
+        fallback, fallback_meta = fallback_single_reference_scale(
+            calibration_details, points, room_frame
+        )
+        if fallback is not None:
+            scale = fallback
+            calibrated_flag = 2
+            calibration_quality = {**calibration_quality, **fallback_meta}
+    scale = scale or 1.0
+    points = points * scale
+    if calibrated_flag:
+        for result in object_measurements.values():
+            if result.get("status") == "measured":
+                result["dimensions"] = {
+                    name: float(value) * scale
+                    for name, value in result["dimensions"].items()
+                }
+                result["unit"] = "meters"
+        metric_room_frame = None if room_frame is None else type(room_frame)(
+            origin=room_frame.origin * scale,
+            axes=room_frame.axes,
+            ground_inlier_ratio=room_frame.ground_inlier_ratio,
+            confidence=room_frame.confidence,
+            horizontal_method=room_frame.horizontal_method,
+        )
+    else:
+        metric_room_frame = room_frame
+    if calibrated_flag:
+        gaussians["means"] = gaussians["means"] * scale
+        gaussians["scales"] = gaussians["scales"] + np.log(scale)
+
+    _stage(db, scan, "analyzing", 85, "几何分析中")
+    references = scan.reference_measurements or []
+    door_w = _known_reference_value(references, "door", "width")
+    room_dimensions = measure_room(points, metric_room_frame) if calibrated_flag else {
+        "status": "unknown", "confidence": "low", "reason": "metric_scale_unavailable"
+    }
+    measures = {
+        "door_width_m": door_w,
+        "passage_width_m": None,
+        "threshold_m": None,
+        "stairs_exist": None,
+        "slope": None,
+        "uneven_m": None,
+        "scale_status": "metric_references" if calibrated_flag else "relative",
+        "calibration_quality": calibration_quality,
+        "reference_measurements": references,
+        "room_dimensions": room_dimensions,
+        "reconstruction_extent_m": _robust_scene_extents(points) if calibrated_flag else None,
+        "object_dimensions": object_measurements,
+        "room_coordinate_system": None if room_frame is None else {
+            "status": "estimated",
+            "confidence": room_frame.confidence,
+            "ground_inlier_ratio": room_frame.ground_inlier_ratio,
+            "horizontal_method": room_frame.horizontal_method,
+        },
+        "reconstruction_quality": {
+            "sfm": sfm_quality.metrics,
+            "gaussian": gaussian_quality.metrics,
+            "training": gaussians.get("training_metrics", {}),
+        },
+        "geometry_assessment_status": "pending_spatial_validation",
+        "obstacles_in_passage": semantic_result["obstacles_in_passage"],
+        "obstacle_assessment_status": semantic_result["obstacle_assessment_status"],
+        "detected_objects": semantic_result["detected_objects"],
+        "semantic_point_counts": semantic_result["semantic_point_counts"],
+        "bathroom_door_m": None,
+    }
+
+    _stage(db, scan, "scoring", 90, "风险评分中")
+    from pipeline.rules import compute_score, evaluate_risks
+    risks = evaluate_risks(measures)
+    score, detail = compute_score(measures)
+    measures["assessment_completeness"] = detail["assessment_completeness"]
+    advice = [r["advice"] for r in risks if r["level"] in ("red", "yellow")]
+    if calibrated_flag == 2:
+        advice.append(
+            "多个参考尺寸推导的比例不一致，已按单一参考物标定米制尺度（精度较低），"
+            "建议补充参考物或重新录制后复核"
+        )
+    grade, grade_reasons = grade_reconstruction(
+        sfm_quality.metrics,
+        gaussian_quality.metrics,
+        calibration_quality,
+    )
+    measures["reconstruction_quality"]["grade"] = grade
+    measures["reconstruction_quality"]["grade_reasons"] = grade_reasons
+    if grade == "low":
+        advice.extend(grade_reasons)
+
+    _stage(db, scan, "reporting", 95, "生成报告中")
+    from pipeline.exporter import export_gaussian_ply
+    from pipeline.trainer import prune_gaussians
+    from pipeline.report_builder import build_preview_assets, render_annotation_images
+    img_dir = work / "images"
+    images = render_annotation_images(points, risks, img_dir)
+    preview_dir = work / "preview"
+    gaussian_filename = "scene_gaussian.ply"
+    gaussians, prune_diagnostics = prune_gaussians(gaussians, reconstruction["points3D"])
+    gaussians["training_metrics"]["gaussian_pruning"] = prune_diagnostics
+    export_gaussian_ply(
+        gaussians, preview_dir / gaussian_filename, max_gaussians=600_000
+    )
+    preview = build_preview_assets(
+        points,
+        preview_dir,
+        title=scan.project.name,
+        colors=point_colors,
+        gaussian_filename=gaussian_filename,
+        scale_status="metric_references" if calibrated_flag else "relative",
+        cameras=cams,
+        image_shapes=[image.shape[:2] for image in imgs],
+        camera_scale=scale,
+        max_points=800_000,
+        quality={
+            "sfm": sfm_quality.metrics,
+            "gaussian": gaussian_quality.metrics,
+            "training": gaussians.get("training_metrics", {}),
+            "calibration": calibration_quality,
+            "grade": grade,
+            "grade_reasons": grade_reasons,
+        },
+    )
+
+    _upsert_report(
+        db,
+        scan_id=scan.id,
+        score=score,
+        risks=risks,
+        measures=measures,
+        advice=advice,
+        images=[str(p) for p in images],
+        preview=preview,
+        calibrated=calibrated_flag,
+    )
+    _stage(
+        db,
+        scan,
+        "done",
+        100,
+        "评估完成（重建质量较低，建议重新录制）" if grade == "low" else "评估完成",
+    )
+
+
 def _fail(db, scan, message):
     scan.status, scan.progress, scan.message = "failed", 100, message
     db.commit()
@@ -481,7 +810,7 @@ def _upsert_report(
     db,
     *,
     scan_id: int,
-    score: float,
+    score: float | None,
     risks: list,
     measures: dict,
     advice: list,
