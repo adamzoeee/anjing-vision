@@ -242,6 +242,11 @@ void main() {
     expect(find.textContaining('训练视角 80'), findsOneWidget);
     expect(find.textContaining('PSNR 24.51'), findsOneWidget);
     expect(find.textContaining('SSIM 0.812'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.textContaining('实际迭代 8000'),
+      200,
+      scrollable: find.byType(Scrollable),
+    );
     expect(find.textContaining('实际迭代 8000'), findsOneWidget);
   });
 
@@ -270,8 +275,18 @@ void main() {
           'calibration_quality': {
             'used_count': 2,
             'references': [
-              {'object_type': 'door', 'dimension': 'height', 'meters': 2.0, 'status': 'used'},
-              {'object_type': 'door', 'dimension': 'width', 'meters': 0.9, 'status': 'used'},
+              {
+                'object_type': 'door',
+                'dimension': 'height',
+                'meters': 2.0,
+                'status': 'used',
+              },
+              {
+                'object_type': 'door',
+                'dimension': 'width',
+                'meters': 0.9,
+                'status': 'used',
+              },
             ],
           },
           'reconstruction_extent_m': [4.2, 3.1, 2.6],
@@ -310,7 +325,12 @@ void main() {
             'used_count': 0,
             'reason': '至少需要两个被模型成功识别的参考尺寸',
             'references': [
-              {'object_type': 'bed', 'dimension': 'length', 'meters': 2.0, 'status': 'not_detected'},
+              {
+                'object_type': 'bed',
+                'dimension': 'length',
+                'meters': 2.0,
+                'status': 'not_detected',
+              },
             ],
           },
         },
@@ -323,5 +343,94 @@ void main() {
     expect(find.text('至少需要两个被模型成功识别的参考尺寸'), findsOneWidget);
     expect(find.text('2.00 m'), findsOneWidget);
     expect(find.text('未在重建结果中识别到对应参考物'), findsOneWidget);
+  });
+
+  testWidgets('第二阶段语义空间：显示实例卡片与门洞宽高', (tester) async {
+    adapter.onGet(
+      '/api/reports/scans/12',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 90,
+        'risks': [],
+        'advice': [],
+        'images': [],
+        'calibrated': 4,
+        'measures': {
+          'room_dimensions': {
+            'status': 'measured',
+            'confidence': 'high',
+            'dimensions': {'length': 4.82, 'width': 3.61, 'height': 2.74},
+          },
+          'semantic_space': {
+            'unit': 'meters',
+            'metric_available': true,
+            'objects': [
+              {
+                'instance_id': 'bed_01',
+                'label': '床',
+                'status': 'measured',
+                'dimensions': {
+                  'length_m': 2.03,
+                  'width_m': 1.51,
+                  'height_m': 0.48,
+                },
+                'measurement_confidence': 'high',
+                'supporting_views': 5,
+                'metadata': {},
+              },
+              {
+                'instance_id': 'door_01',
+                'label': '门',
+                'status': 'measured',
+                'dimensions': {
+                  'length_m': null,
+                  'width_m': 0.86,
+                  'height_m': 2.04,
+                },
+                'measurement_confidence': 'medium',
+                'supporting_views': 4,
+                'metadata': {
+                  'door_measurement': {
+                    'method': 'door_jamb_columns',
+                    'estimated_opening_width_m': 0.86,
+                    'estimated_opening_height_m': 2.04,
+                  },
+                },
+              },
+              {
+                'instance_id': 'cabinet_01',
+                'label': '柜子',
+                'status': 'unknown',
+                'reason': 'too_few_points',
+                'dimensions': {
+                  'length_m': null,
+                  'width_m': null,
+                  'height_m': null,
+                },
+                'measurement_confidence': 'low',
+                'supporting_views': 1,
+                'metadata': {},
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    await tester.pumpWidget(reportApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('bed_01 · 床'), findsOneWidget);
+    expect(find.textContaining('长 2.03m'), findsOneWidget);
+    expect(find.textContaining('宽 1.51m'), findsOneWidget);
+    expect(find.textContaining('测量置信度：高'), findsOneWidget);
+    expect(find.textContaining('支持视角 5'), findsOneWidget);
+    expect(find.text('door_01 · 门'), findsOneWidget);
+    expect(find.textContaining('门洞净宽 0.86m'), findsOneWidget);
+    expect(find.textContaining('净高 2.04m'), findsOneWidget);
+    // 未可靠测量的实例不显示尺寸卡片
+    expect(find.textContaining('cabinet_01'), findsNothing);
+    // 有语义空间数据时不回退旧 object_dimensions 逻辑
+    expect(find.text('床自动测量'), findsNothing);
   });
 }

@@ -66,7 +66,10 @@ class _ReportPageState extends State<ReportPage> {
                         padding: EdgeInsets.all(12),
                         child: Text(
                           '⚠ 关键测量项缺失，暂无法评分',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
@@ -184,6 +187,7 @@ class _ReportPageState extends State<ReportPage> {
     final calibration = calibrationRaw is Map ? calibrationRaw : const {};
     final calibrationReferences = calibration['references'] is List
         ? calibration['references'] as List
+        : const [];
     final labels = {
       'bed': '床',
       'table': '桌子',
@@ -258,12 +262,22 @@ class _ReportPageState extends State<ReportPage> {
         ),
       );
     }
-    final objects = report.measures['object_dimensions'] as Map?;
-    if (objects != null) {
-      for (final entry in objects.entries) {
-        final result = entry.value;
-        if (result is Map && result['status'] == 'measured') {
-          tiles.add(_dimensionTile(entry.key.toString(), result));
+    // 第二阶段语义空间优先：实例级卡片（含门洞宽高、置信度、支持视角）。
+    final semantic = report.measures['semantic_space'] as Map?;
+    final semanticObjects = semantic?['objects'];
+    if (semanticObjects is List && semanticObjects.isNotEmpty) {
+      for (final entry in semanticObjects.whereType<Map>()) {
+        if (entry['status'] != 'measured') continue;
+        tiles.add(_semanticObjectTile(entry));
+      }
+    } else {
+      final objects = report.measures['object_dimensions'] as Map?;
+      if (objects != null) {
+        for (final entry in objects.entries) {
+          final result = entry.value;
+          if (result is Map && result['status'] == 'measured') {
+            tiles.add(_dimensionTile(entry.key.toString(), result));
+          }
         }
       }
     }
@@ -311,6 +325,71 @@ class _ReportPageState extends State<ReportPage> {
       leading: const Icon(Icons.architecture),
       title: Text('$label自动测量'),
       subtitle: Text('置信度：${result['confidence'] ?? 'unknown'}'),
+      trailing: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 240),
+        child: Text(valueText, textAlign: TextAlign.end),
+      ),
+    );
+  }
+
+  String _confidenceZh(String? value) => switch (value) {
+    'high' => '高',
+    'medium' => '中',
+    'low' => '低',
+    _ => '未知',
+  };
+
+  Widget _semanticObjectTile(Map object) {
+    final instanceId = object['instance_id']?.toString() ?? '';
+    final label = object['label']?.toString() ?? '';
+    final dims = object['dimensions'] is Map
+        ? object['dimensions'] as Map
+        : const {};
+    final metadata = object['metadata'] is Map
+        ? object['metadata'] as Map
+        : const {};
+    final door = metadata['door_measurement'] is Map
+        ? metadata['door_measurement'] as Map
+        : const {};
+    final supportingViews = object['supporting_views'];
+    final confidence = _confidenceZh(
+      object['measurement_confidence']?.toString(),
+    );
+
+    String? fmt(String key) {
+      final value = dims[key];
+      return value is num ? value.toStringAsFixed(2) : null;
+    }
+
+    String valueText;
+    final openingWidth = (door['estimated_opening_width_m'] ?? dims['width_m']);
+    final openingHeight =
+        (door['estimated_opening_height_m'] ?? dims['height_m']);
+    final isDoor = label == '门' || door.isNotEmpty;
+    if (isDoor && (openingWidth is num || openingHeight is num)) {
+      final width = openingWidth is num ? openingWidth.toStringAsFixed(2) : '—';
+      final height = openingHeight is num
+          ? openingHeight.toStringAsFixed(2)
+          : '—';
+      valueText = '门洞净宽 ${width}m · 净高 ${height}m';
+    } else {
+      final parts = <String>[
+        if (fmt('length_m') != null) '长 ${fmt('length_m')}m',
+        if (fmt('width_m') != null) '宽 ${fmt('width_m')}m',
+        if (fmt('height_m') != null) '高 ${fmt('height_m')}m',
+      ];
+      valueText = parts.isEmpty ? '无法可靠测量' : parts.join(' · ');
+    }
+
+    final subtitleParts = ['测量置信度：$confidence'];
+    if (supportingViews is num) {
+      subtitleParts.add('支持视角 $supportingViews');
+    }
+    return ListTile(
+      dense: true,
+      leading: const Icon(Icons.architecture),
+      title: Text('$instanceId · $label'),
+      subtitle: Text(subtitleParts.join(' · ')),
       trailing: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 240),
         child: Text(valueText, textAlign: TextAlign.end),
