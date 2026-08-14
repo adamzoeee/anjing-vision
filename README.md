@@ -2,13 +2,13 @@
 
 用普通手机拍摄一段房间视频，自动重建 3D 场景，评估老人居住空间的**通行安全性**——检测门宽、通道宽度、门槛高度、地面坡度、台阶与临时障碍物，生成带可视化标注的评估报告与改造建议。
 
-本项目使用 **3D Gaussian Splatting（3DGS）** 取代 Apple RoomPlan 等专有方案：任何手机（无需 LiDAR）拍摄的视频即可重建，全部算法基于开源 Python 生态，Windows + NVIDIA GPU 即可本地运行。
+本项目使用 **3D Gaussian Splatting（3DGS）** 取代 Apple RoomPlan 等专有方案：任何手机（无需 LiDAR）拍摄的视频即可重建。重建核心采用开源项目 [vid2scene](https://github.com/samuelm2/vid2scene)（Apache-2.0）的端到端管线（HLoc 检索式 SfM + gsplat MCMC 训练），全部算法基于开源 Python 生态，**Windows + NVIDIA GPU 即可本地部署**。
 
 ## 特性
 
-- **视频采集为主**：绕房间随意录 1~3 分钟视频即可，自动抽帧与清晰度过滤；也支持逐张拍照模式
-- **3D 高斯泼溅重建**：pycolmap 恢复相机位姿 → gsplat 训练 3D 高斯场 → 导出稠密点云
-- **真实尺度标定**：用户填写 2～3 个门、床或家具真实尺寸，多参考物一致性校验后恢复米制比例
+- **视频采集为主**：绕房间随意录 1~3 分钟视频即可，自动抽帧；也支持逐张拍照模式
+- **端到端 3D 重建**：vid2scene（EigenPlaces 检索 + ALIKED/LightGlue 匹配 + COLMAP SfM + gsplat MCMC 训练，带 bilateral grid 外观建模与高斯数量上限）
+- **真实尺度标定**：用户填写 2～3 个门、床或家具真实尺寸，多参考物一致性校验后恢复米制比例；分歧超限时自动退化为单参考物 + 层高门禁兜底
 - **8 类风险规则**：门宽 / 通道净宽 / 门槛高度 / 台阶 / 地面坡度 / 地面高差 / 通道障碍物 / 卫生间门口，按「通行性 40% + 跌倒风险 40% + 无障碍 20%」加权评分
 - **语义辅助**：GroundingDINO 零样本识别纸箱、杂物、宠物等临时障碍物，SAM 实例分割
 - **可视化报告**：多视角标注渲染图 + 交互式 3D 点云预览（WebGL，无外部依赖）
@@ -21,14 +21,14 @@
 |----|------|------|
 | 采集端 | Flutter 3.x（Dart） | 视频录制引导、上传、进度轮询、报告展示 |
 | 后端 | Python 3.12 + FastAPI | REST API、JWT 认证、多机构数据隔离 |
-| 任务队列 | Celery + Redis | 管道异步编排，同步模式（开发兜底） |
-| 3D 重建 | gsplat 1.5 + pycolmap 4.1 | 3D 高斯泼溅训练与增量式 SFM |
+| 任务队列 | Celery + Redis（可选） | 管道异步编排；本地部署默认同步执行，无需 Redis |
+| 3D 重建 | vid2scene（Apache-2.0） | 端到端重建：抽帧 → HLoc SfM → gsplat MCMC 训练，运行在独立 conda 环境 |
 | 深度学习 | PyTorch 2.7（cu128）+ segment-anything + transformers | GPU 训练与零样本语义分割 |
 | 点云处理 | Open3D 0.19 | RANSAC 平面提取、几何测量、渲染 |
 | 视频处理 | ffmpeg | 抽帧、格式兼容 |
-| 数据库 | PostgreSQL 16（生产）/ SQLite（开发） | 元数据、报告、用户 |
-| 对象存储 | MinIO（生产）/ 本地文件（开发） | 视频、点云、渲染图 |
-| 部署 | Docker Compose（GPU 直通） | 一键启动全部服务 |
+| 数据库 | SQLite（开发，默认）/ PostgreSQL 16（生产） | 元数据、报告、用户 |
+| 对象存储 | 本地文件（开发，默认）/ MinIO（生产） | 视频、点云、渲染图 |
+| 部署 | 本地裸机（conda 双环境，默认） | Docker Compose 作为生产形态备选 |
 
 ## 系统架构
 
@@ -38,106 +38,180 @@
 │  (iOS + Android)    │
 └──────────┬──────────┘
            │ REST + JWT
-┌──────────▼──────────┐
-│  FastAPI 后端        │  auth / projects / scans / reports
-└──────────┬──────────┘
-           │ Celery（任务队列）
-┌──────────▼──────────┐      ┌──────────────────────┐
-│  管道 Worker         │─────►│  GPU：gsplat 3DGS 训练 │
-│  抽帧→SFM→训练→分析→报告│      └──────────────────────┘
-└──────────┬──────────┘
-           │
-┌──────────▼──────────────────────────────────┐
-│  PostgreSQL（元数据） Redis（队列） MinIO（媒体） │
-└─────────────────────────────────────────────┘
+┌──────────▼──────────────────────────────────────────┐
+│  FastAPI 后端（backend/.venv）                       │
+│  auth / projects / scans / reports + 管道编排        │
+└──────────┬──────────────────────────────────────────┘
+           │ subprocess 调用
+┌──────────▼──────────────────────────┐
+│  vid2scene 独立 conda 环境（GPU）    │
+│  抽帧 → HLoc SfM → gsplat MCMC 训练  │
+│  → COLMAP 相机模型 + splat.ply       │
+└──────────┬──────────────────────────┘
+           │ 解析为下游契约（cameras/points3D/高斯）
+┌──────────▼──────────────────────────────────────────┐
+│  语义分割 → 多参考物标定 → 几何测量 → 规则评分 → 报告  │
+└─────────────────────────────────────────────────────┘
 ```
 
 ### 管道链路
 
 ```
-视频/照片 → ffmpeg 抽帧 → Laplacian 清晰度过滤 → pycolmap SFM（相机位姿 + 稀疏点云）
-→ gsplat 3DGS 训练 → 点云导出与统计滤波 → 多参考物米制标定 → GroundingDINO/SAM 语义分割
-→ 几何分析（门宽/门槛/坡度/高差）→ 规则评分 → 报告（标注图 + 交互 3D 预览）
+视频 → vid2scene 端到端重建（抽帧 → EigenPlaces 检索配对 → ALIKED+LightGlue 特征匹配
+→ COLMAP SfM → gsplat MCMC 训练 + bilateral grid 外观建模）
+→ 解析 COLMAP 相机模型与 splat.ply → 点云导出与统计滤波 → GroundingDINO/SAM 语义分割
+→ 多参考物米制标定（分歧超限自动单参考物兜底）→ 几何分析（门宽/门槛/坡度/高差）
+→ 规则评分 → 报告（标注图 + 交互 3D 预览）
 ```
 
-## 快速开始
+## 本地部署教程
 
-### 环境要求
+> 目标形态：一台 Windows 11 + NVIDIA GPU 的机器，跑通「Flutter App → FastAPI → vid2scene 重建 → 报告」完整链路。
 
-- Python 3.12（open3d 不支持 3.13+）
-- NVIDIA GPU（RTX 30 系及以上，需 CUDA 12.8 + MSVC Build Tools，详见 `backend/ENV_SETUP.md`）
-- Flutter 3.x（可选，仅构建 App 时需要）
-- ffmpeg
+### 0. 前置条件
 
-### 本地开发（最快路径）
-
-```bash
-cd backend
-py -3.12 -m venv .venv
-.venv/Scripts/pip install -r requirements.txt -r requirements-dev.txt
-
-# 复制配置并启用同步管道（无需 Redis/Celery）
-cp .env.example .env   # 设置 TASK_SYNC=true
-
-# 启动 API（文档：http://localhost:8000/docs）
-.venv/Scripts/uvicorn app.main:app --reload
-
-# 端到端管道（真实数据验证）
-.venv/Scripts/python scripts/run_pipeline.py --input 你的房间视频.mp4 --outdir out/
-```
-
-### Flutter App
-
-```bash
-cd app
-flutter pub get
-flutter run   # 连接后端：默认 http://10.0.2.2:8000（Android 模拟器访问宿主机）
-```
-
-## 部署方式
-
-### 方案一：Docker Compose（推荐生产形态）
-
-包含 PostgreSQL、Redis、MinIO、API、GPU Worker 五个服务，一键启动：
-
-```bash
-cd backend
-# 需要 NVIDIA Container Toolkit（GPU 训练在 worker 容器内执行）
-docker compose up -d --build
-```
-
-服务说明：
-
-| 服务 | 端口 | 说明 |
+| 组件 | 要求 | 说明 |
 |------|------|------|
-| `db` | 5432 | PostgreSQL 16，元数据存储 |
-| `redis` | 6379 | Celery 任务队列 |
-| `minio` | 9000 / 9001 | 对象存储（媒体/点云/报告），控制台 :9001 |
-| `api` | 8000 | FastAPI 服务，OpenAPI 文档在 `/docs` |
-| `worker` | - | Celery Worker，GPU 直通执行重建管道 |
+| 操作系统 | Windows 10/11 | 无需 Docker、无需 WSL2 |
+| GPU | NVIDIA，RTX 30 系及以上 | **RTX 50 系（sm_120）必须 torch 2.7+cu128**，本教程已固定该版本 |
+| CUDA Toolkit | 12.8 | 安装到默认路径 `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8` |
+| MSVC | Visual Studio Build Tools 2022（C++ 生成工具） | 编译 gsplat / fused-ssim / fused-bilagrid 用 |
+| Miniconda | 最新版 | 创建 vid2scene 隔离环境 |
+| Git | 最新版 | 含 submodule 支持 |
+| ffmpeg | ≥ 5.x（推荐 9.x） | 抽帧用；推荐安装到 `C:\ffmpeg\bin` |
+| 磁盘 | ≥ 50GB 可用 | 环境 ~15GB + 模型权重 ~1GB + 扫描数据 |
+| Python | 3.12 | 后端 venv 用（open3d 不支持 3.13+） |
 
-环境变量通过 `docker compose` 内联配置，`SECRET_KEY` 需在启动前通过环境变量注入：
+### 1. 克隆本项目
 
-```bash
-export SECRET_KEY='你的高强度随机密钥'
-docker compose up -d --build
+```powershell
+git clone git@github.com:adamzoeee/anjing-vision.git
+cd anjing-vision
 ```
 
-### 方案二：裸机部署（无 Docker）
+### 2. 获取 vid2scene 源码并打 Windows 补丁
 
-```bash
-cd backend
-# 依赖 PostgreSQL、Redis、MinIO 自行安装，.env 指向对应地址
-.venv/Scripts/uvicorn app.main:app --host 0.0.0.0 --port 8000
-# Windows 本地 3DGS worker：启动前自动加载 VS 2022 x64、CUDA、Ninja 并预检 gsplat
-scripts/start_local_worker.cmd
+vid2scene 是独立仓库，固定在 `E:\.PJs\vid2scene`（可用环境变量 `VID2SCENE_CORE_DIR` 覆盖）：
+
+```powershell
+git clone https://github.com/samuelm2/vid2scene.git E:\.PJs\vid2scene
+cd E:\.PJs\vid2scene
+git submodule update --init gsplat glomap Hierarchical-Localization spz
+git -C gsplat submodule update --init        # gsplat 内部依赖的 glm 头文件
+
+# Windows 原生适配补丁（存放在本项目 backend/scripts/vid2scene/）：
+git apply <本仓库>\backend\scripts\vid2scene\vid2scene-core-windows.patch
+git -C gsplat apply <本仓库>\backend\scripts\vid2scene\gsplat-windows.patch
 ```
 
-### 采集与评估流程
+三个补丁解决的问题：
+- ffmpeg ≥ 7 移除 `-vsync`（改用 `-fps_mode`）、filtergraph 逗号转义、抽帧失败显式报错
+- pycolmap 4.x 返回 dict 时选取注册帧最多的模型；`model_orientation_aligner` 在 Windows 上崩溃时优雅跳过
+- 新增 `--no_normalize_world_space` 保留 COLMAP 世界坐标（下游几何测量必需）；vggt 路径惰性导入
+- 训练器 DataLoader 在 Windows spawn 多进程时管道溢出（数百相机的畸变矫正映射可达数 GB）→ 自动回退单进程加载
+
+### 3. 一键搭建 vid2scene conda 环境
+
+```powershell
+cd <本仓库>\backend\scripts\vid2scene
+powershell -NoProfile -ExecutionPolicy Bypass -File setup_vid2scene.ps1
+```
+
+脚本会完成：`conda create`（Python 3.12 + COLMAP 4.1.1 CLI）→ torch 2.7.1+cu128 →
+Python 依赖（hloc/pycolmap/opencv 等）→ pycolmap_parser（HEAD + 补丁）→
+MSVC 编译 fused-ssim / fused-bilagrid / gsplat fork → 冒烟自检。全程日志在
+`E:\.PJs\vid2scene\setup_vid2scene.log`。
+
+脚本要点（换机器排错时对照）：
+- 自动探测最新 CUDA（`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*`）与 vcvars64.bat
+- 所有 pip 调用使用 `python -I` 并清空 `PYTHONPATH`，避免其他 Python 环境串入
+- `DISTUTILS_USE_SDK=1` 是 MSVC 下编译 torch 扩展的必需项
+
+**首次运行会联网下载模型权重**（EigenPlaces/ALIKED/LightGlue，约 500MB，缓存在
+`C:\Users\<你>\.cache\torch\hub`，之后不再下载）。仅重建本身**不需要** HuggingFace
+账号（glomm/vggt 才需要，默认不使用）。
+
+### 4. 配置后端
+
+```powershell
+cd <本仓库>\backend
+py -3.12 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt
+Copy-Item .env.example .env
+```
+
+`.env` 中需要确认/修改：
+
+```ini
+DATABASE_URL=sqlite:///./anjing.db   # 本地部署默认 SQLite，无需安装数据库
+TASK_SYNC=true                       # 同步执行管道，无需 Redis/Celery
+DATA_DIR=./data
+
+# ---- vid2scene 重建（默认开启）----
+VID2SCENE_ENABLED=true
+VID2SCENE_CORE_DIR=E:\.PJs\vid2scene\vid2scene_core
+VID2SCENE_GSPLAT_SCRIPT=E:\.PJs\vid2scene\gsplat\examples\simple_trainer.py
+VID2SCENE_FRAMECOUNT=300             # 抽帧数
+VID2SCENE_TRAINING_STEPS=20000       # 训练步数
+VID2SCENE_MAX_GAUSSIANS=1200000      # 高斯数量上限
+VID2SCENE_RECONSTRUCTION_METHOD=colmap
+```
+
+### 5. 启动后端
+
+```powershell
+cd <本仓库>\backend
+.venv\Scripts\uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+API 文档：<http://localhost:8000/docs>
+
+### 6. 端到端验证（不启动 App 也能测）
+
+```powershell
+cd <本仓库>\backend
+.venv\Scripts\python scripts\run_pipeline.py `
+  --input 你的房间视频.mp4 `
+  --outdir out `
+  --reference door=height=2.05 `
+  --reference bed=length=2.0
+```
+
+输出 `out\report.json`：评分、风险项、米制测量、预览资源清单。参考耗时：2.5 分钟
+1080p 视频在 RTX 5080 Laptop 上约 **24 分钟**（重建 23.7 分钟 + 语义/报告约 1 分钟）。
+
+### 7. Flutter App（可选）
+
+```powershell
+cd <本仓库>\app
+flutter pub get
+flutter run   # Android 模拟器默认连 http://10.0.2.2:8000
+```
+
+### 常见问题
+
+| 现象 | 处理 |
+|------|------|
+| `未找到 vid2scene conda 环境` | 重跑第 3 步，或设置 `VID2SCENE_PYTHON` 指向 `...\envs\vid2scene\python.exe` |
+| 重建报 `ffmpeg ... Unrecognized option 'vsync'` | 补丁未生效：重新执行第 2 步的 `git apply` |
+| 训练报 `num_workers`/管道错误 | gsplat 补丁未生效：`git -C E:\.PJs\vid2scene\gsplat apply gsplat-windows.patch` |
+| 首次重建很慢 | 正常：首次要下载模型权重；另确认 GPU 未被其他程序占用 |
+| 想回退自研重建管线 | `.env` 设 `VID2SCENE_ENABLED=false`（旧 `sfm.py`/`trainer.py` 保留可回退） |
+
+## 生产部署（可选）
+
+本地单机模式适合评估机构内网使用。多实例/公网部署时：
+
+- 数据库换 PostgreSQL、对象存储换 MinIO（`.env` 指向对应地址）
+- 关闭 `TASK_SYNC`，启动 Celery worker 消费 Redis 队列
+- 或使用 `backend/docker-compose.yml`（PostgreSQL + Redis + MinIO + API + GPU Worker 五服务）
+- 公网暴露必须更换 `SECRET_KEY` 与默认密码，并限制 CORS
+
+## 采集与评估流程
 
 1. 注册机构账号 → 新建评估项目（如「王奶奶家」）
 2. 进入采集页，填写 2～3 个门、床或家具的已知尺寸，再录制或选择 1～3 分钟单房间视频（无需放置 A4 纸）
-3. 上传后实时查看进度（抽帧 → 位姿估计 → 3D 重建 → 标定 → 分析 → 评分）
+3. 上传后实时查看进度（3D 重建 → 语义分割 → 标定 → 分析 → 评分）
 4. 查看报告：安全评分、风险项列表、改造建议、标注图、交互式 3D 预览
 5. 改造完成后再次扫描，使用「改造前后对比」查看评分变化
 
@@ -147,22 +221,21 @@ scripts/start_local_worker.cmd
 ├── backend/
 │   ├── app/                 # FastAPI 应用
 │   │   ├── routers/         # auth / projects / scans / reports API
-│   │   └── tasks/           # Celery 任务与管道编排器
+│   │   └── tasks/           # Celery 任务与管道编排器（含 vid2scene 分支）
 │   ├── pipeline/            # 核心算法（无框架依赖，可独立测试）
-│   │   ├── frame_extractor.py   # ffmpeg 抽帧 + 清晰度过滤
-│   │   ├── sfm.py               # pycolmap 相机位姿估计
-│   │   ├── trainer.py           # gsplat 3DGS 训练
-│   │   ├── exporter.py          # 高斯场 → 点云
-│   │   ├── calibrator.py        # 多参考物米制尺度标定（兼容旧 A4 工具）
+│   │   ├── vid2scene_runner.py  # vid2scene 适配层：subprocess 调用 + 产物解析
+│   │   ├── sfm.py / trainer.py  # 自研管线（仅 VID2SCENE_ENABLED=false 回退时使用）
+│   │   ├── exporter.py          # 高斯场 → 点云 / 预览 PLY 导出
+│   │   ├── calibrator.py        # 多参考物米制标定 + 单参考物兜底
 │   │   ├── semantic.py          # GroundingDINO + SAM 语义分割
-│   │   ├── geometry.py          # 点云几何测量
-│   │   ├── rules.py             # 风险规则与评分
-│   │   └── report_builder.py    # 标注图与预览资源
+│   │   ├── geometry.py / spatial_measurement.py  # 点云几何测量
+│   │   ├── rules.py             # 风险规则与评分（全 unknown 时不可评分）
+│   │   └── report_builder.py    # 标注图与预览资源（含抽稀）
 │   ├── scripts/             # CLI：run_pipeline / download_models
-│   ├── tests/               # 58 个测试
-│   ├── docker-compose.yml
-│   ├── Dockerfile
-│   └── ENV_SETUP.md         # Windows GPU 环境搭建记录
+│   │   └── vid2scene/       # vid2scene 部署：一键环境脚本 + Windows 补丁
+│   ├── tests/               # 207 个测试
+│   ├── docker-compose.yml   # 生产形态（可选）
+│   └── ENV_SETUP.md         # 历史：Windows GPU 环境搭建记录
 └── app/                     # Flutter 客户端
     ├── lib/api/             # Dio 客户端与数据模型
     ├── lib/pages/           # 登录/项目/采集/上传/报告/对比页
@@ -174,7 +247,7 @@ scripts/start_local_worker.cmd
 
 ```bash
 # 后端
-cd backend && .venv/Scripts/python -m pytest tests/ -v
+cd backend && .venv/Scripts/python -m pytest tests/ -v   # 207 passed
 
 # Flutter
 cd app && flutter test
@@ -183,57 +256,25 @@ cd app && flutter test
 ## 已知限制
 
 - 管道需要 GPU（gsplat 光栅化依赖 CUDA），无 GPU 环境无法完成训练阶段
-- 米制标定依赖 GroundingDINO/SAM 检出至少两个已填写参考物；参考物漏拍或尺寸估计不一致时保留相对尺度并明确提示，不伪造米制结果
+- 米制标定依赖 GroundingDINO/SAM 检出至少两个已填写参考物；参考物漏拍或尺寸估计不一致时保留相对尺度并明确提示，不伪造米制结果（门开着时门高测不准，见采集页引导）
 - 重建质量受拍摄条件影响：光线充足、慢速移动、避免反光面效果最佳
 - 3D 交互预览目前是独立 Web 页面（`app/web/preview/index.html`），App 内的 webview 集成待完成
+- 自研抽帧/SfM/训练代码保留但仅作回退（`VID2SCENE_ENABLED=false`），新功能不再投入
 
-## 3D 重建后端：vid2scene（替代自研管线）
+## 重建后端：vid2scene（替代自研管线）
 
-自研的「抽帧 → pycolmap SfM → gsplat 训练」已被 [vid2scene](https://github.com/samuelm2/vid2scene)（Apache-2.0）端到端重建替代：视频直接送入，内部完成抽帧 → HLoc（EigenPlaces 检索 + ALIKED/LightGlue 匹配）→ COLMAP SfM → gsplat MCMC 训练（带 bilateral grid 外观建模、高斯数量上限）。下游的语义分割、尺度标定、几何测量、风险规则与报告全部保留，只消费 vid2scene 产出的 COLMAP 相机模型与 `splat.ply`。
-
-### 部署形态
-
-vid2scene 运行在独立的 conda 环境（`vid2scene`），与本后端 venv 完全隔离，通过 subprocess 调用（`backend/pipeline/vid2scene_runner.py`）：
-
-| 组件 | 说明 |
-|------|------|
-| conda env `vid2scene` | Python 3.12 + torch 2.7.1(cu128) + colmap 4.1.1 + pycolmap + hloc + gsplat(fork 1.5.3) + fused_ssim |
-| `E:\.PJs\vid2scene\` | vid2scene 源码（clone + submodule），含少量 Windows 适配补丁 |
-| `VID2SCENE_*` 环境变量 | 见 `backend/.env`：开关、源码路径、帧数/训练步数/高斯上限/SfM 方法 |
-
-### 环境搭建（Windows 原生，无 Docker/WSL）
-
-```powershell
-git clone https://github.com/samuelm2/vid2scene.git E:\.PJs\vid2scene
-cd E:\.PJs\vid2scene
-git submodule update --init gsplat glomap Hierarchical-Localization spz
-git -C gsplat submodule update --init   # gsplat 内部的 glm
-# 然后依次执行仓库内 setup_env.ps1 / setup_env3.ps1（或按 setup_env*.log 记录的
-# 步骤手动执行）：conda create → conda install colmap → pip torch/deps →
-# fused-ssim 与 gsplat fork 用 MSVC+CUDA12.8 编译（注意 DISTUTILS_USE_SDK=1、
-# TORCH_CUDA_ARCH_LIST=12.0+PTX、CUDA_HOME 指向真实 CUDA 路径）
-```
-
-注意事项（已踩坑）：
-- RTX 50 系（sm_120）必须用 torch 2.7+cu128；vid2scene 官方锁的 torch 2.5.1+cu124 不含 sm_120 内核
-- `pycolmap_parser` 需用最新 HEAD（旧 pin 在 numpy 2.x 下 `np.uint64(-1)` 溢出）
-- ffmpeg ≥ 7 已移除 `-vsync`，`extract_frames.py` 已改用 `-fps_mode`
-- 首次运行会从 HuggingFace/GitHub 下载 EigenPlaces/ALIKED/LightGlue 权重（约 500MB，缓存后不再下载）
-
-### 回退开关
-
-`VID2SCENE_ENABLED=false` 时回退到自研管线（`sfm.py` + `trainer.py`）；vid2scene 失败会以明确的「3D 重建失败」消息落库，不会静默降级。
+自研的「抽帧 → pycolmap SfM → gsplat 训练」已被 [vid2scene](https://github.com/samuelm2/vid2scene)（Apache-2.0）端到端重建替代：视频直接送入，内部完成抽帧 → HLoc（EigenPlaces 检索 + ALIKED/LightGlue 匹配）→ COLMAP SfM → gsplat MCMC 训练（bilateral grid 外观建模、高斯数量硬上限）。下游的语义分割、尺度标定、几何测量、风险规则与报告全部保留，只消费 vid2scene 产出的 COLMAP 相机模型与 `splat.ply`，通过 `backend/pipeline/vid2scene_runner.py` 适配。
 
 ### 与自研管线的实测对比（吕昊东房间.mp4，2.5 分钟，同机 RTX 5080 Laptop）
 
-| 指标 | 自研（Scan 11） | vid2scene（最终实测，Scan 18） |
+| 指标 | 自研（Scan 11） | vid2scene（Scan 18） |
 |------|----------------|-----------|
 | 总耗时 | 4 小时 10 分 | **约 24 分钟**（重建 23.7 分钟 + 语义/报告约 1 分钟） |
 | SfM | 699 帧 68 分钟、漂移严重（跳变比 12.5） | 282/282 帧注册、跳变比 4.8、重投影误差 1.16px |
-| 训练 | 3 小时、损失 0.199、PSNR 16.5dB | 约 19 分钟、损失 0.03~0.12（MCMC + bilateral grid 外观建模） |
+| 训练 | 3 小时、损失 0.199、PSNR 16.5dB | 约 19 分钟、损失 0.03~0.12 |
 | 高斯数 | 566 万（膨胀 37 倍） | **91 万**（硬上限 120 万） |
-| 标定 | 26.3% 分歧 → 失败 | **10.1% 分歧 → 标定成功**（门高 2.05m、床长 2.0m 一致），分歧超限时自动退化为单参考物+层高门禁兜底 |
-| 报告 | 全部 unknown 假 100 分 | 米制房间 6.99×6.58m、床 2.22×0.76m、门宽 0.85m；全 unknown 不再产出分数 |
+| 标定 | 26.3% 分歧 → 失败 | **10.1% 分歧 → 标定成功**（米制房间 6.99×6.58m、床 2.22×0.76m、门宽 0.85m） |
+| 报告 | 全部 unknown 假 100 分 | 全 unknown 不再产出分数（显示"无法评分"） |
 | 预览体积 | 168MB + 1.4GB | **24MB scene.ply + 74MB gaussian ply** |
 
 ## 许可证
