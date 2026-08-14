@@ -1,0 +1,2 @@
+# git apply 对行尾敏感：patch 文件始终按 LF 检出，避免 Windows 上 CRLF 转换
+*.patch -text
