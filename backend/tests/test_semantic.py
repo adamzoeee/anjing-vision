@@ -11,9 +11,31 @@ from pipeline.semantic import (
     merge_votes,
     normalize_prompt_label,
     postprocess_detections,
+    preflight_semantic_models,
     project_mask_to_points,
     segment_detections,
 )
+
+
+def test_preflight_reports_missing_models(monkeypatch, tmp_path):
+    missing = tmp_path / "missing"
+    monkeypatch.setenv("SAM_CHECKPOINT", str(missing / "sam_vit_h_4b8939.pth"))
+    monkeypatch.setenv("HF_HOME", str(missing / "hf"))
+    problems = preflight_semantic_models()
+    assert len(problems) == 2
+    assert any("SAM 权重缺失" in problem for problem in problems)
+    assert any("GroundingDINO 模型未缓存" in problem for problem in problems)
+
+
+def test_preflight_passes_when_models_ready(monkeypatch, tmp_path):
+    sam = tmp_path / "sam_vit_h_4b8939.pth"
+    sam.write_bytes(b"x" * int(2e8))
+    dino_snapshot = tmp_path / "hf" / "models--IDEA-Research--grounding-dino-base" / "snapshots" / "abc"
+    dino_snapshot.mkdir(parents=True)
+    (dino_snapshot / "model.safetensors").write_bytes(b"y" * int(2e8))
+    monkeypatch.setenv("SAM_CHECKPOINT", str(sam))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    assert preflight_semantic_models() == []
 
 
 def test_project_mask_to_points_basic():
