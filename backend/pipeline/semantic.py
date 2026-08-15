@@ -651,3 +651,33 @@ def model_runtime_info() -> dict:
         "sam_device": sam_device,
         "sam_eval": bool(_sam_predictor is not None and not _sam_predictor.model.training),
     }
+
+
+def preflight_semantic_models() -> list[str]:
+    """重建前预检语义模型可用性；返回问题描述列表（空 = 就绪）。
+
+    只检查权重文件与缓存是否存在，不实际加载模型（避免提前占用显存/时间）。
+    """
+    problems: list[str] = []
+    sam_checkpoint = Path(
+        os.environ.get("SAM_CHECKPOINT", _BACKEND_ROOT / "models" / "sam_vit_h_4b8939.pth")
+    )
+    if not sam_checkpoint.is_file() or sam_checkpoint.stat().st_size < 1e8:
+        problems.append(
+            f"SAM 权重缺失或损坏：{sam_checkpoint}"
+            "（运行 backend/scripts/download_models.py 下载）"
+        )
+    cache_dir = Path(os.environ.get("HF_HOME", _BACKEND_ROOT / ".cache" / "huggingface"))
+    dino_dir = cache_dir / "models--IDEA-Research--grounding-dino-base"
+    has_weights = False
+    if dino_dir.is_dir():
+        for snapshot in dino_dir.glob("snapshots/*/model.safetensors"):
+            if snapshot.is_file() and snapshot.stat().st_size > 1e8:
+                has_weights = True
+                break
+    if not has_weights:
+        problems.append(
+            f"GroundingDINO 模型未缓存：{dino_dir}"
+            "（首次运行需要联网下载约 900MB，或预先放入缓存目录）"
+        )
+    return problems

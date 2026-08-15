@@ -3,6 +3,7 @@
 每个阶段更新 Scan.status/progress；失败置 failed 并记录 message。
 """
 import logging
+import os
 import time
 import re
 import traceback
@@ -90,6 +91,13 @@ def _run_vid2scene_pipeline(
     只有「抽帧 → SfM → 3DGS 训练」被 vid2scene 替换。
     """
     from pipeline import vid2scene_runner as vr
+
+    # 重建（可能耗时数十分钟）之前先预检语义模型，避免重建完成后才失败。
+    from pipeline.semantic import preflight_semantic_models
+    semantic_problems = preflight_semantic_models()
+    if semantic_problems:
+        _fail(db, scan, "语义模型未就绪：" + "；".join(semantic_problems))
+        return
 
     _stage(db, scan, "reconstructing", 10, "3D 重建中（vid2scene）")
     stage_started = time.perf_counter()
@@ -398,7 +406,9 @@ def _run_vid2scene_pipeline(
     gaussians, prune_diagnostics = prune_gaussians(gaussians, reconstruction["points3D"])
     gaussians["training_metrics"]["gaussian_pruning"] = prune_diagnostics
     export_gaussian_ply(
-        gaussians, preview_dir / gaussian_filename, max_gaussians=600_000
+        gaussians,
+        preview_dir / gaussian_filename,
+        max_gaussians=int(os.getenv("PREVIEW_MAX_GAUSSIANS", "800000")),
     )
     preview = build_preview_assets(
         points,
@@ -542,6 +552,8 @@ def _find_obstacles(imgs, cams, points=None, *, frame_stride: int | None = None)
 
     if frame_stride is None:
         frame_stride = max(1, len(imgs) // 16)
+        # 真实验收时可调采样密度（更小=检测更多帧=召回更高但更慢）。
+        frame_stride = max(1, int(os.getenv("SEMANTIC_FRAME_STRIDE", str(frame_stride))))
     if frame_stride <= 0:
         raise ValueError("frame_stride must be positive")
     summaries = {}
