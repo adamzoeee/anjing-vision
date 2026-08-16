@@ -89,38 +89,34 @@ git clone git@github.com:adamzoeee/anjing-vision.git
 cd anjing-vision
 ```
 
-### 2. 获取 vid2scene 源码并打 Windows 补丁
+### 2. 获取 vid2scene 源码并打 Windows 补丁（已并入一键脚本，无需手动执行）
 
-vid2scene 是独立仓库，固定在 `E:\.PJs\vid2scene`（可用环境变量 `VID2SCENE_CORE_DIR` 覆盖）：
+vid2scene 是独立仓库（Apache-2.0）。旧版部署文档曾固定克隆到 `E:\.PJs\vid2scene`，
+**该路径已废弃**——现在由第 3 节的一键脚本自动完成：克隆主仓库 →
+初始化子模块（gsplat/glomap/Hierarchical-Localization/spz 及 gsplat 的 glm）→
+应用本项目 `backend/scripts/vid2scene/` 下的三个 Windows 补丁：
 
-```powershell
-git clone https://github.com/samuelm2/vid2scene.git E:\.PJs\vid2scene
-cd E:\.PJs\vid2scene
-git submodule update --init gsplat glomap Hierarchical-Localization spz
-git -C gsplat submodule update --init        # gsplat 内部依赖的 glm 头文件
+- `vid2scene-core-windows.patch`：ffmpeg ≥7 参数适配；pycolmap 4.x 多模型选主；
+  `model_orientation_aligner` Windows 崩溃优雅跳过；新增 `--no_normalize_world_space`
+  保留 COLMAP 世界坐标（下游几何测量必需）；vggt 路径惰性导入；
+  训练器 DataLoader Windows spawn 管道溢出自动回退单进程
+- `gsplat-windows.patch`：gsplat CUDA 扩展 MSVC 编译适配
+- `pycolmap-parser-windows.patch`：pycolmap_parser Windows/numpy2/pycolmap4.x 适配
 
-# Windows 原生适配补丁（存放在本项目 backend/scripts/vid2scene/）：
-git apply <本仓库>\backend\scripts\vid2scene\vid2scene-core-windows.patch
-git -C gsplat apply <本仓库>\backend\scripts\vid2scene\gsplat-windows.patch
-```
-
-三个补丁解决的问题：
-- ffmpeg ≥ 7 移除 `-vsync`（改用 `-fps_mode`）、filtergraph 逗号转义、抽帧失败显式报错
-- pycolmap 4.x 返回 dict 时选取注册帧最多的模型；`model_orientation_aligner` 在 Windows 上崩溃时优雅跳过
-- 新增 `--no_normalize_world_space` 保留 COLMAP 世界坐标（下游几何测量必需）；vggt 路径惰性导入
-- 训练器 DataLoader 在 Windows spawn 多进程时管道溢出（数百相机的畸变矫正映射可达数 GB）→ 自动回退单进程加载
-
-### 3. 一键搭建 vid2scene conda 环境
+### 3. 一键搭建 vid2scene conda 环境（含源码克隆）
 
 ```powershell
 cd <本仓库>\backend\scripts\vid2scene
-powershell -NoProfile -ExecutionPolicy Bypass -File setup_vid2scene.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File setup_vid2scene.ps1 -RepoRoot D:\vid2scene
 ```
 
-脚本会完成：`conda create`（Python 3.12 + COLMAP 4.1.1 CLI）→ torch 2.7.1+cu128 →
-Python 依赖（hloc/pycolmap/opencv 等）→ pycolmap_parser（HEAD + 补丁）→
-MSVC 编译 fused-ssim / fused-bilagrid / gsplat fork → 冒烟自检。全程日志在
-`E:\.PJs\vid2scene\setup_vid2scene.log`。
+`-RepoRoot` 改为你机器上的目标目录（**必填，不再有默认路径**）；
+已克隆过源码时可加 `-SkipClone`。脚本会完成：克隆 vid2scene + 子模块 + 补丁 →
+`conda create`（Python 3.12 + COLMAP 4.1.1 CLI，失败自动重试并提示换源）→
+torch 2.7.1+cu128 → Python 依赖（hloc/pycolmap/opencv 等）→
+pycolmap_parser（HEAD + 补丁）→ MSVC 编译 fused-ssim / fused-bilagrid / gsplat fork →
+冒烟自检。**每一步失败都会立即报错停止**（不再静默继续），日志在
+`<RepoRoot>\setup_vid2scene.log`。
 
 脚本要点（换机器排错时对照）：
 - 自动探测最新 CUDA（`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*`）与 vcvars64.bat
@@ -129,7 +125,7 @@ MSVC 编译 fused-ssim / fused-bilagrid / gsplat fork → 冒烟自检。全程�
 
 **首次运行会联网下载模型权重**（EigenPlaces/ALIKED/LightGlue，约 500MB，缓存在
 `C:\Users\<你>\.cache\torch\hub`，之后不再下载）。仅重建本身**不需要** HuggingFace
-账号（glomm/vggt 才需要，默认不使用）。
+账号（glomap/vggt 才需要，默认不使用）。
 
 ### 4. 配置后端
 
@@ -137,6 +133,8 @@ MSVC 编译 fused-ssim / fused-bilagrid / gsplat fork → 冒烟自检。全程�
 cd <本仓库>\backend
 py -3.12 -m venv .venv
 .venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt
+# 后端语义模型用 GPU：torch 必须是 cu128 版（RTX 50 系为 Blackwell sm_120）
+.venv\Scripts\pip install torch==2.7.* --index-url https://download.pytorch.org/whl/cu128
 Copy-Item .env.example .env
 ```
 
@@ -149,8 +147,9 @@ DATA_DIR=./data
 
 # ---- vid2scene 重建（默认开启）----
 VID2SCENE_ENABLED=true
-VID2SCENE_CORE_DIR=<部署目录>\vid2scene\vid2scene_core
-VID2SCENE_GSPLAT_SCRIPT=<部署目录>\vid2scene\gsplat\examples\simple_trainer.py
+VID2SCENE_PYTHON=<RepoRoot>\envs\vid2scene\python.exe   # conda 环境 python（setup 脚本结尾会打印实际路径）
+VID2SCENE_CORE_DIR=<RepoRoot>\vid2scene\vid2scene_core
+VID2SCENE_GSPLAT_SCRIPT=<RepoRoot>\vid2scene\gsplat\examples\simple_trainer.py
 VID2SCENE_FRAMECOUNT=300             # 抽帧数
 VID2SCENE_TRAINING_STEPS=20000       # 训练步数
 VID2SCENE_MAX_GAUSSIANS=1200000      # 高斯数量上限
@@ -193,11 +192,12 @@ flutter run   # Android 模拟器默认连 http://10.0.2.2:8000
 
 | 现象 | 处理 |
 |------|------|
-| `未找到 vid2scene conda 环境` | 重跑第 3 步，或设置 `VID2SCENE_PYTHON` 指向 `...\envs\vid2scene\python.exe` |
-| 重建报 `ffmpeg ... Unrecognized option 'vsync'` | 补丁未生效：重新执行第 2 步的 `git apply` |
-| 训练报 `num_workers`/管道错误 | gsplat 补丁未生效：`git -C E:\.PJs\vid2scene\gsplat apply gsplat-windows.patch` |
+| `未找到 vid2scene conda 环境` | 重跑第 3 步，或设置 `VID2SCENE_PYTHON` 指向 `<RepoRoot>\envs\vid2scene\python.exe`（setup 脚本结尾会打印实际路径） |
+| 重建报 `ffmpeg ... Unrecognized option 'vsync'` | 补丁未生效：重跑第 3 步的 setup 脚本（会自动重试补丁） |
+| 训练报 `num_workers`/管道错误 | gsplat 补丁未生效：重跑第 3 步的 setup 脚本（自动应用 gsplat-windows.patch） |
 | 首次重建很慢 | 正常：首次要下载模型权重；另确认 GPU 未被其他程序占用 |
 | 尺度标定失败 | 确认使用 tagStandard41h12 / ID 00000 标准打印版、100% 比例打印，并让完整 Tag 在多个视角清晰可见 |
+| 抽帧里有模糊帧 | 新版 setup 已自动应用清晰度过滤补丁；确认 `setup_vid2scene.log` 出现 `blur filter` 字样，或重跑第 3 步脚本 |
 
 ## 生产部署（可选）
 
