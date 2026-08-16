@@ -19,6 +19,14 @@ from pathlib import Path
 
 import numpy as np
 
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+try:  # CLI/worker 直跑时也读取 backend/.env 中的 VID2SCENE_* 配置（FastAPI 已加载时无副作用）
+    from dotenv import load_dotenv
+
+    load_dotenv(_BACKEND_ROOT / ".env", override=False)
+except ImportError:  # 无 dotenv 时退化为纯环境变量
+    pass
+
 logger = logging.getLogger("anjing.pipeline.vid2scene")
 
 SH_C0 = 0.28209479177387814
