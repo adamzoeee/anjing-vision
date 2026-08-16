@@ -27,4 +27,5 @@ torch==2.7.*
 torchvision==0.22.*
 segment-anything==1.0
 transformers==4.48.*
+python-dotenv
 psycopg2-binary==2.9.*
