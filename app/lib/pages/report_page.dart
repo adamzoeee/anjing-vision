@@ -129,28 +129,20 @@ class _ReportPageState extends State<ReportPage> {
                     width: double.infinity,
                     color: Colors.black,
                     alignment: Alignment.center,
-                    child: r.previewPly == null
+                    child: r.previewViewer == null
                         ? const Text(
                             '暂无 3D 预览',
                             style: TextStyle(color: Colors.white54),
                           )
                         : ElevatedButton.icon(
                             onPressed: () {
-                              final gaussianPly = r.previewGaussianPly;
-                              final cameras = r.previewCameras;
-                              final model = Uri.encodeComponent(
-                                '/static/${r.scanId}/preview/'
-                                '${gaussianPly ?? r.previewPly}',
-                              );
+                              // 新 3D 预览：高密度点云 + SpatialLM 墙/门/窗/家具框
                               final token = Uri.encodeComponent(
                                 api.token ?? '',
                               );
-                              final cameraQuery = cameras == null
-                                  ? ''
-                                  : '&cameras=${Uri.encodeComponent('/static/${r.scanId}/preview/$cameras')}';
-                              final previewUrl = gaussianPly == null
-                                  ? '${api.dio.options.baseUrl}/preview/?ply=$model&token=$token'
-                                  : '${api.dio.options.baseUrl}/preview/gaussian.html?url=$model$cameraQuery#token=$token';
+                              final previewUrl =
+                                  '${api.dio.options.baseUrl}${r.previewViewer}'
+                                  '?scan=${r.scanId}&token=$token';
                               openPreview(context, previewUrl);
                             },
                             icon: const Icon(Icons.view_in_ar),
@@ -440,7 +432,7 @@ class _ReportPageState extends State<ReportPage> {
         leading: const Icon(Icons.timer_outlined),
         title: Text('实际迭代 ${training['iterations'] ?? '未知'}'),
         subtitle: Text(
-          seconds is num ? '3DGS ${seconds.toStringAsFixed(1)} 秒' : '训练耗时未知',
+          seconds is num ? '重建 ${seconds.toStringAsFixed(1)} 秒' : '重建耗时未知',
         ),
       ),
     ];
