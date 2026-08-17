@@ -558,10 +558,12 @@ def fuse_multiview_semantics(
         valid_ids = np.where(valid)[0]
         # ``uv`` 对无效点使用 NaN。不能先对整列 astype(int)，否则即使随后
         # 用 np.where 丢弃无效值，NumPy 仍会先转换 NaN 并产生运行时警告。
+        # rint 会把边界像素（如 1919.6）舍入到图像尺寸外，必须 clamp。
+        height, width = image_shape
         pixel_x = np.zeros(point_count, dtype=int)
         pixel_y = np.zeros(point_count, dtype=int)
-        pixel_x[valid_ids] = np.rint(uv[valid_ids, 0]).astype(int)
-        pixel_y[valid_ids] = np.rint(uv[valid_ids, 1]).astype(int)
+        pixel_x[valid_ids] = np.clip(np.rint(uv[valid_ids, 0]).astype(int), 0, width - 1)
+        pixel_y[valid_ids] = np.clip(np.rint(uv[valid_ids, 1]).astype(int), 0, height - 1)
         for detection in detections:
             mask = np.asarray(detection.get("mask"), dtype=bool)
             if mask.shape != image_shape or not bool(np.any(mask)):

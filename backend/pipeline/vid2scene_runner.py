@@ -52,7 +52,10 @@ APRILTAG_ENABLED = os.getenv("APRILTAG_ENABLED", "true").strip().lower() not in 
 }
 APRILTAG_FAMILY = os.getenv("APRILTAG_FAMILY", "tagStandard41h12").strip()
 APRILTAG_SIZE_M = float(os.getenv("APRILTAG_SIZE_M", "0.09"))
-_APRILTAG_SCALE_PATTERN = re.compile(r"Applied scale factor:\s*([0-9.eE+-]+)")
+# 引擎有两处尺度输出：apriltag_calibration 的 print("Scale factor: ...") 与
+# vid2scene.py 的 logger.info("✓ Applied scale factor: ...")；两者都要识别，
+# 否则标定实际成功却被误判失败（训练完的模型也会被丢弃）。
+_APRILTAG_SCALE_PATTERN = re.compile(r"(?:Applied\s+)?[Ss]cale\s+factor:\s*([0-9.eE+-]+)")
 
 # stdout 标记 → 重建阶段内的进度（0..1）。gsplat 的 step 行另行解析。
 _STAGE_MARKERS = [
@@ -277,6 +280,7 @@ def run_reconstruction(
         "scale_factor": apriltag_scale_factor,
         "scale_applied_by": "vid2scene" if apriltag_enabled else None,
     }
+    work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "metric_calibration.json").write_text(
         json.dumps(calibration, ensure_ascii=False, indent=2), encoding="utf-8"
     )

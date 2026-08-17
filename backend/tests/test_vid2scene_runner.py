@@ -233,6 +233,63 @@ def test_run_reconstruction_rejects_missing_apriltag_calibration(tmp_path, monke
     assert metadata["coordinate_unit"] == "model_units"
 
 
+def test_apriltag_scale_pattern_matches_both_engine_outputs():
+    # 引擎 print 版（apriltag_calibration.py）
+    match = vr._APRILTAG_SCALE_PATTERN.search("Scale factor: 1.2345 (from 1 tag)")
+    assert match is not None and float(match.group(1)) == 1.2345
+    # 引擎 logger 版（vid2scene.py）
+    match = vr._APRILTAG_SCALE_PATTERN.search("INFO:__main__:✓ Applied scale factor: 2.3456")
+    assert match is not None and float(match.group(1)) == 2.3456
+
+
+def test_run_reconstruction_accepts_print_style_scale_output(tmp_path, monkeypatch):
+    """引擎只打印 print 版 "Scale factor:" 时，标定必须判定成功而非误报失败。"""
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "vid2scene.py").write_text(
+        "print('Triangulating AprilTag corners...')\n"
+        "print('Scale factor: 1.2345 (from 1 tag)')\n"
+        "print('Rescaling reconstruction by factor 1.2345...')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(vr, "VID2SCENE_CORE_DIR", core_dir)
+    monkeypatch.setenv("VID2SCENE_PYTHON", str(Path(__import__("sys").executable)))
+    outputs = vr.run_reconstruction(tmp_path / "video.mp4", tmp_path / "work")
+    calibration = __import__("json").loads(
+        (tmp_path / "work" / "metric_calibration.json").read_text(encoding="utf-8")
+    )
+    assert calibration["status"] == "metric_apriltag"
+    assert calibration["coordinate_unit"] == "meters"
+    assert calibration["scale_factor"] == 1.2345
+    assert outputs["metric_calibration"]["scale_factor"] == 1.2345
+
+
+def test_export_gaussian_ply_preserves_log_scale(tmp_path):
+    """渲染器会对 scale 做 exp；导出必须直通 log 尺度。
+
+    双重 log 会让渲染尺寸趋近于 0，画面全黑（真实验收事故），本测试锁定。
+    """
+    import torch
+
+    from pipeline.exporter import export_gaussian_ply
+
+    gaussians = {
+        "means": torch.zeros(3, 3),
+        "scales": torch.full((3, 3), -4.8),  # vid2scene 输出：已是 log 尺度
+        "quats": torch.zeros(3, 4),
+        "opacities": torch.zeros(3, 1),
+        "sh0": torch.zeros(3, 1, 3),
+        "sh_rest": torch.zeros(3, 15, 3),
+        "opacity_logits": True,
+    }
+    out = tmp_path / "g.ply"
+    export_gaussian_ply(gaussians, out)
+    data, _names = vr._read_binary_ply(out)
+    assert np.allclose(data["scale_0"], -4.8)
+    assert np.allclose(data["scale_1"], -4.8)
+    assert np.allclose(data["scale_2"], -4.8)
+
+
 def test_parse_reconstruction_exposes_relative_scale_contract(tmp_path, monkeypatch):
     work = tmp_path / "work"
     monkeypatch.setattr(vr, "parse_sparse_model", lambda _path: {

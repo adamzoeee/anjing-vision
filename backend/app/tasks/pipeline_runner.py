@@ -128,16 +128,17 @@ def _run_vid2scene_pipeline(
     )
 
     from pipeline.quality import assess_sfm, grade_reconstruction
+    from pipeline.sfm import filter_trajectory_jumps
+    # 先剔除跳变帧再评估：快速转身/快速甩动产生的跳变帧本来就该由
+    # filter_trajectory_jumps 修复，不能在其之前就把整条轨迹判死。
+    cameras, dropped_jump_names, jump_diagnostics = filter_trajectory_jumps(cameras)
     sfm_quality = assess_sfm(
         cameras, reconstruction["points3D"], len(frames_on_disk), reconstruction["quality"]
     )
+    sfm_quality.metrics["trajectory_jump_filter"] = jump_diagnostics
     if not sfm_quality.ok:
         _fail(db, scan, sfm_quality.reason)
         return
-    from pipeline.sfm import filter_trajectory_jumps
-    kept_cameras, dropped_jump_names, jump_diagnostics = filter_trajectory_jumps(cameras)
-    sfm_quality.metrics["trajectory_jump_filter"] = jump_diagnostics
-    cameras = kept_cameras
 
     # 图像/相机按名字配对；畸变校正与曝光归一化沿用自研链路约定。
     from PIL import Image
@@ -192,7 +193,9 @@ def _run_vid2scene_pipeline(
     )
     gaussians = {
         "means": torch.from_numpy(splat["means"].astype(np.float32)),
-        "scales": torch.from_numpy(np.log(np.clip(splat["scales"], 1e-6, None)).astype(np.float32)),
+        # vid2scene 的 splat.ply 里 scale 字段已是 log 尺度（渲染器会 exp），
+        # 这里直接透传，绝不能再次 log——双重 log 会让渲染尺寸趋近于 0，画面全黑。
+        "scales": torch.from_numpy(splat["scales"].astype(np.float32)),
         "quats": torch.from_numpy(splat["quats"].astype(np.float32)),
         "opacities": torch.from_numpy(np.log(opacities / (1 - opacities)).astype(np.float32)),
         "sh0": torch.from_numpy(splat["sh0"].astype(np.float32)).unsqueeze(1),
