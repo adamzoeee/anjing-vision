@@ -52,10 +52,7 @@ APRILTAG_ENABLED = os.getenv("APRILTAG_ENABLED", "true").strip().lower() not in 
 }
 APRILTAG_FAMILY = os.getenv("APRILTAG_FAMILY", "tagStandard41h12").strip()
 APRILTAG_SIZE_M = float(os.getenv("APRILTAG_SIZE_M", "0.09"))
-# 引擎有两处尺度输出：apriltag_calibration 的 print("Scale factor: ...") 与
-# vid2scene.py 的 logger.info("✓ Applied scale factor: ...")；两者都要识别，
-# 否则标定实际成功却被误判失败（训练完的模型也会被丢弃）。
-_APRILTAG_SCALE_PATTERN = re.compile(r"(?:Applied\s+)?[Ss]cale\s+factor:\s*([0-9.eE+-]+)")
+_APRILTAG_SCALE_PATTERN = re.compile(r"Applied scale factor:\s*([0-9.eE+-]+)")
 
 # stdout 标记 → 重建阶段内的进度（0..1）。gsplat 的 step 行另行解析。
 _STAGE_MARKERS = [
@@ -119,7 +116,8 @@ def _child_environment() -> dict:
     env.pop("PYTHONPATH", None)
     env.pop("PYTHONHOME", None)
     python = vid2scene_env_python()
-    env_root = python.parent.parent
+    # Conda on Windows places python.exe directly in the environment root.
+    env_root = python.parent
     extra = [
         str(env_root / "Library" / "bin"),
         str(env_root / "Scripts"),
@@ -130,6 +128,21 @@ def _child_environment() -> dict:
     current = env.get("PATH", "")
     env["PATH"] = os.pathsep.join([*extra, current])
     env["GSPLAT_SCRIPT"] = str(VID2SCENE_GSPLAT_SCRIPT)
+
+    # Keep temporary files and any lazily rebuilt CUDA extensions on the
+    # project drive.  Windows always defines TEMP/TMP, so the values in the
+    # project's .env (loaded with override=False) cannot replace the C: drive
+    # defaults by themselves.
+    project_root = _BACKEND_ROOT.parent
+    temp_dir = project_root / ".tmp"
+    torch_extensions_dir = project_root / ".cache" / "torch_extensions"
+    cuda_cache_dir = project_root / ".cache" / "cuda"
+    for directory in (temp_dir, torch_extensions_dir, cuda_cache_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    env["TEMP"] = str(temp_dir)
+    env["TMP"] = str(temp_dir)
+    env["TORCH_EXTENSIONS_DIR"] = str(torch_extensions_dir)
+    env["CUDA_CACHE_PATH"] = str(cuda_cache_dir)
     return env
 
 
@@ -258,6 +271,8 @@ def run_reconstruction(
         logger.error("vid2scene_failed exit=%s\n%s", return_code, detail)
         raise RuntimeError(f"vid2scene 重建失败（退出码 {return_code}），日志尾部：\n{detail[-2000:]}")
     if apriltag_enabled and apriltag_scale_factor is None:
+        # 标定失败降级：记录原因，继续以相对尺度返回重建结果，
+        # 下游管道据此生成相对尺度报告（不中止重建）。
         failed_calibration = {
             "status": "calibration_failed",
             "coordinate_unit": "model_units",
@@ -270,17 +285,25 @@ def run_reconstruction(
         (work_dir / "metric_calibration.json").write_text(
             json.dumps(failed_calibration, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        raise RuntimeError("尺度标定失败，需要重新拍摄/检查标定纸。")
+        logger.warning(
+            "apriltag_calibration_failed family=%s tag_size_m=%s -> relative scale",
+            APRILTAG_FAMILY,
+            apriltag_size_m,
+        )
     elapsed = time.perf_counter() - started
+    calibrated = apriltag_enabled and apriltag_scale_factor is not None
     calibration = {
-        "status": "metric_apriltag" if apriltag_enabled else "relative",
-        "coordinate_unit": "meters" if apriltag_enabled else "model_units",
-        "family": APRILTAG_FAMILY if apriltag_enabled else None,
-        "tag_size_m": float(apriltag_size_m) if apriltag_enabled else None,
+        "status": (
+            "metric_apriltag"
+            if calibrated
+            else ("calibration_failed" if apriltag_enabled else "relative")
+        ),
+        "coordinate_unit": "meters" if calibrated else "model_units",
+        "family": APRILTAG_FAMILY if calibrated else None,
+        "tag_size_m": float(apriltag_size_m) if calibrated else None,
         "scale_factor": apriltag_scale_factor,
-        "scale_applied_by": "vid2scene" if apriltag_enabled else None,
+        "scale_applied_by": "vid2scene" if calibrated else None,
     }
-    work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "metric_calibration.json").write_text(
         json.dumps(calibration, ensure_ascii=False, indent=2), encoding="utf-8"
     )

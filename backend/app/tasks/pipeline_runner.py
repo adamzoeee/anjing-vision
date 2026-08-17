@@ -128,17 +128,16 @@ def _run_vid2scene_pipeline(
     )
 
     from pipeline.quality import assess_sfm, grade_reconstruction
-    from pipeline.sfm import filter_trajectory_jumps
-    # 先剔除跳变帧再评估：快速转身/快速甩动产生的跳变帧本来就该由
-    # filter_trajectory_jumps 修复，不能在其之前就把整条轨迹判死。
-    cameras, dropped_jump_names, jump_diagnostics = filter_trajectory_jumps(cameras)
     sfm_quality = assess_sfm(
         cameras, reconstruction["points3D"], len(frames_on_disk), reconstruction["quality"]
     )
-    sfm_quality.metrics["trajectory_jump_filter"] = jump_diagnostics
     if not sfm_quality.ok:
         _fail(db, scan, sfm_quality.reason)
         return
+    from pipeline.sfm import filter_trajectory_jumps
+    kept_cameras, dropped_jump_names, jump_diagnostics = filter_trajectory_jumps(cameras)
+    sfm_quality.metrics["trajectory_jump_filter"] = jump_diagnostics
+    cameras = kept_cameras
 
     # 图像/相机按名字配对；畸变校正与曝光归一化沿用自研链路约定。
     from PIL import Image
@@ -193,9 +192,7 @@ def _run_vid2scene_pipeline(
     )
     gaussians = {
         "means": torch.from_numpy(splat["means"].astype(np.float32)),
-        # vid2scene 的 splat.ply 里 scale 字段已是 log 尺度（渲染器会 exp），
-        # 这里直接透传，绝不能再次 log——双重 log 会让渲染尺寸趋近于 0，画面全黑。
-        "scales": torch.from_numpy(splat["scales"].astype(np.float32)),
+        "scales": torch.from_numpy(np.log(np.clip(splat["scales"], 1e-6, None)).astype(np.float32)),
         "quats": torch.from_numpy(splat["quats"].astype(np.float32)),
         "opacities": torch.from_numpy(np.log(opacities / (1 - opacities)).astype(np.float32)),
         "sh0": torch.from_numpy(splat["sh0"].astype(np.float32)).unsqueeze(1),
@@ -377,6 +374,19 @@ def _run_vid2scene_pipeline(
         "bathroom_door_m": None,
     }
 
+    # 第三阶段接入：通路测量（通道净宽/门槛/台阶/坡度）+ 视觉风险 3D 判定。
+    # 失败自动降级（保持 pending/None），不影响评分与报告主流程。
+    _analyze_passage_and_visual(
+        points_metric=points,
+        room_frame=metric_room_frame,
+        semantic_point_ids=semantic_result["semantic_point_ids"],
+        semantic_space=semantic_space,
+        imgs=imgs,
+        cams=cams,
+        measures=measures,
+        calibrated_flag=calibrated_flag,
+    )
+
     _stage(db, scan, "scoring", 90, "风险评分中")
     from pipeline.rules import compute_score, evaluate_risks
     risks = evaluate_risks(measures)
@@ -404,6 +414,36 @@ def _run_vid2scene_pipeline(
     from pipeline.report_builder import build_preview_assets, render_annotation_images
     img_dir = work / "images"
     images = render_annotation_images(points, risks, img_dir)
+    # 第四阶段接入：3D 风险标注图 + PDF 报告（失败自动降级为旧标注图，不影响主流程）
+    try:
+        from pipeline.report_composer import compose_report
+
+        composed = compose_report(
+            title=scan.project.name,
+            score=score,
+            risks=risks,
+            measures=measures,
+            advice=advice,
+            points=points,
+            out_dir=work / "report",
+            colors=point_colors,
+            semantic_objects=_composer_semantic_objects(semantic_space),
+        )
+        if composed.risk_images:
+            images.extend(composed.risk_images)
+        if composed.pdf_path:
+            measures["pdf_report_path"] = "report/report.pdf"
+        measures["report_composer"] = {
+            "status": composed.status,
+            "reason": composed.reason,
+            "risk_image_count": len(composed.risk_images),
+        }
+    except Exception as exc:  # noqa: BLE001 - 增强报告失败不阻断
+        logger.warning(
+            "composed_report_failed scan_id=%s error=%s",
+            scan.id,
+            _sanitize_log_text(str(exc)),
+        )
     preview_dir = work / "preview"
     gaussian_filename = "scene_gaussian.ply"
     gaussians, prune_diagnostics = prune_gaussians(gaussians, reconstruction["points3D"])
@@ -474,6 +514,183 @@ def _user_failure_message(stage: str, exc: Exception) -> str:
             return "3DGS训练失败：gsplat CUDA扩展不可用，请检查CUDA/Ninja/MSVC环境"
         return "3DGS训练失败，请查看后端日志"
     return "管道处理失败，请稍后重试"
+
+
+def _analyze_passage_and_visual(
+    *,
+    points_metric: np.ndarray,
+    room_frame,
+    semantic_point_ids: dict[str, list[int]],
+    semantic_space: dict,
+    imgs: list,
+    cams: list[dict],
+    measures: dict,
+    calibrated_flag: int,
+) -> None:
+    """第三阶段接入：通路测量（passage_metrics）+ 视觉风险（visual_risks）。
+
+    就地更新 measures（passage_width_m/threshold_m/stairs_exist/slope/visual_risks）。
+    任何一步失败都保留 pending 状态，绝不让新增分析阻断主流程。
+    """
+    try:
+        from pipeline.passage_metrics import analyze_passage
+        from pipeline.visual_risks import (
+            VISUAL_RISK_PROMPTS,
+            analyze_visual_risks,
+        )
+
+        if room_frame is None:
+            return
+        # 世界坐标 → 房间坐标（z 向上、地面 z≈0）
+        room_points = (room_frame.axes.T @ (np.asarray(points_metric) - room_frame.origin).T).T
+
+        door_ids = semantic_point_ids.get("门", [])
+        if len(door_ids) < 3:
+            return  # 门不可用：通路/门槛无法可靠测量，保持 pending
+        door_room = room_points[np.asarray(door_ids, dtype=int)]
+
+        # 通行目标：优先床，其次最大语义物体，最后房间中心地面点
+        from pipeline.passage_metrics import OBSTACLE_LABELS as PASSAGE_OBSTACLES
+
+        target_ids = semantic_point_ids.get("床") or []
+        if len(target_ids) < 3:
+            target_ids = []
+            for label, ids in sorted(
+                semantic_point_ids.items(),
+                key=lambda item: len(item[1]),
+                reverse=True,
+            ):
+                if label not in PASSAGE_OBSTACLES and label != "门":
+                    target_ids = ids
+                    break
+        if len(target_ids) < 3:
+            # 活动区近似：房间 XY 中心附近的地面点
+            xy_center = np.median(room_points[:, :2], axis=0)
+            dist = np.linalg.norm(room_points[:, :2] - xy_center, axis=1)
+            low = room_points[room_points[:, 2] < 0.15]
+            if len(low) >= 10:
+                target_room = low[np.argsort(dist[room_points[:, 2] < 0.15])[: max(30, len(low) // 20)]]
+                passage_report = analyze_passage(
+                    room_points, door_room, target_room,
+                    exclude_ids=_passage_exclude_ids(semantic_point_ids, door_ids),
+                )
+            else:
+                return
+        else:
+            target_room = room_points[np.asarray(target_ids, dtype=int)]
+            passage_report = analyze_passage(
+                room_points, door_room, target_room,
+                exclude_ids=_passage_exclude_ids(semantic_point_ids, door_ids),
+                target_ids=np.asarray(target_ids, dtype=int),
+            )
+
+        if passage_report.status == "ok":
+            measures["passage_width_m"] = passage_report.passage_width_m
+            measures["narrowest_point"] = passage_report.narrowest_point
+            measures["passage_path_3d"] = passage_report.path_3d
+            measures["geometry_assessment_status"] = "spatial_validated"
+        measures["threshold_m"] = passage_report.threshold_m
+        measures["stairs_exist"] = passage_report.stairs_exist
+        measures["slope"] = passage_report.slope
+
+        # 视觉风险：采样帧检测（积水/湿滑/电线/拖鞋等）→ 3D 定位 → 侵占判定
+        if passage_report.status != "ok":
+            return  # 无自由区域时无法做侵占判定，跳过视觉风险
+        from pipeline.passage_metrics import floor_occupancy, passage_to
+        from pipeline.visual_risks import judge_in_passage, locate_visual_risks
+
+        grid, origin, cell = floor_occupancy(
+            room_points,
+            exclude_ids=_passage_exclude_ids(semantic_point_ids, door_ids),
+        )
+        path = passage_to(grid, origin, cell, door_room[:, :2], target_room[:, :2])
+
+        detections: list[list[dict]] = []
+        sampled_cams: list[dict] = []
+        visual_texts = [prompt for prompt, _label in VISUAL_RISK_PROMPTS]
+        from pipeline.semantic import detect_objects, normalize_prompt_label, segment_detections
+
+        for img, cam in zip(imgs[::30], cams[::30]):
+            frame_dets = []
+            for det in detect_objects(img, texts=visual_texts):
+                label = normalize_prompt_label(det["label"])
+                if label is None:
+                    continue
+                frame_dets.append({"label": label, "bbox": det["bbox"], "score": det["score"]})
+            if not frame_dets:
+                sampled_cams.append(cam)
+                detections.append([])
+                continue
+            segmented = segment_detections(img, frame_dets)
+            frame_masks = []
+            for item in segmented:
+                if item.get("mask_valid"):
+                    frame_masks.append({
+                        "label": item["label"],
+                        "mask": item["mask"],
+                        "score": item.get("score", item.get("mask_score", 0.0)),
+                    })
+            detections.append(frame_masks)
+            sampled_cams.append(cam)
+
+        visual_risks = locate_visual_risks(detections, sampled_cams, ground_height=0.0)
+        if visual_risks:
+            free_mask = ~grid
+            judge_in_passage(
+                visual_risks, free_mask, origin, cell, path,
+                corridor_half_width_m=0.6,
+            )
+            measures["visual_risks"] = [
+                {
+                    "label": risk.label,
+                    "ground_position": risk.ground_position,
+                    "detections": risk.detections,
+                    "views": risk.views,
+                    "in_passage": risk.in_passage,
+                    "distance_to_path_m": risk.distance_to_path_m,
+                    "confidence": risk.confidence,
+                }
+                for risk in visual_risks.values()
+            ]
+    except Exception as exc:  # noqa: BLE001 - 新分析失败不阻断主流程
+        logger.warning(
+            "passage_visual_analysis_failed error=%s",
+            _sanitize_log_text(str(exc)),
+        )
+
+
+def _passage_exclude_ids(
+    semantic_point_ids: dict[str, list[int]], door_ids: list[int]
+) -> np.ndarray:
+    """通路测量需排除的点索引：门 + 临时障碍物（墙/家具保留为结构）。"""
+    from pipeline.passage_metrics import OBSTACLE_LABELS
+
+    collected = list(door_ids)
+    for label in OBSTACLE_LABELS:
+        collected.extend(semantic_point_ids.get(label, []))
+    return np.unique(np.asarray(collected, dtype=np.int64)) if collected else np.zeros(0, dtype=np.int64)
+
+
+def _composer_semantic_objects(semantic_space: dict) -> dict:
+    """semantic_space 的实例列表 → report_composer 需要的 {label: {center, axes, extents}}。
+
+    尺寸取 dimensions 的三个值（无米制尺度时 dimensions 为 None → 跳过该对象）。
+    """
+    adapted: dict[str, dict] = {}
+    for obj in semantic_space.get("objects", []) or []:
+        label = obj.get("label")
+        center = obj.get("center_3d")
+        axes = obj.get("axes_3d")
+        dims = obj.get("dimensions") or {}
+        values = [dims.get(name) for name in ("length", "width", "height")]
+        if label is None or center is None or axes is None or any(v is None for v in values):
+            continue
+        adapted[label] = {
+            "center": center,
+            "axes": axes,
+            "extents": [float(v) / 2.0 for v in values],  # OBB 半轴
+        }
+    return adapted
 
 
 def _sanitize_log_text(value: str) -> str:
