@@ -16,7 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import Settings, get_settings
 from .db import Base, engine, get_db
-from .routers import auth, projects, reports, scans
+from .routers import auth, preview, projects, reports, scans
 
 logger = logging.getLogger("anjing.api")
 
@@ -152,6 +152,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     application.include_router(projects.router, prefix="/api/projects", tags=["projects"])
     application.include_router(scans.router, prefix="/api/scans", tags=["scans"])
+    application.include_router(preview.router, prefix="/api/preview", tags=["preview"])
     application.include_router(reports.router, prefix="/api/reports", tags=["reports"])
     application.include_router(
         reports.assets_router,
@@ -159,15 +160,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tags=["report-assets"],
     )
 
-    # 3D 预览渲染器（自研 WebGL）：由后端托管，
-    # 避免 Flutter web 的 SPA fallback 劫持 /preview/ 目录请求
-    preview_dir = Path(__file__).resolve().parent.parent.parent / "app" / "web" / "preview"
-    if preview_dir.is_dir():
-        application.mount(
-            "/preview",
-            StaticFiles(directory=str(preview_dir), html=True),
-            name="preview",
-        )
+    # 3D 预览渲染器（three.js 高密度点云 + SpatialLM 结构框）：由后端托管
+    preview_static_dir = Path(__file__).resolve().parent / "static" / "preview"
+    application.mount(
+        "/preview-static",
+        StaticFiles(directory=str(preview_static_dir)),
+        name="preview-static",
+    )
+
+    @application.get("/preview/{scan_id}", include_in_schema=False)
+    def preview_page(scan_id: int):
+        from fastapi.responses import FileResponse
+
+        return FileResponse(preview_static_dir / "index.html")
 
     @application.get("/api/health")
     def health():

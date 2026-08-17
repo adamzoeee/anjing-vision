@@ -1,19 +1,19 @@
 # 安龄智境后端
 
-老人居住空间通行安全自动评估：视频/照片采集 → 3D 高斯泼溅重建 → 点云几何分析 → 风险评分与改造建议。
+老人居住空间 3D 化：视频采集 → SLAM3R 稠密重建 → 点云清理/方向对齐 → SpatialLM 空间结构识别 → 3D 预览。
 
 ## 本地开发（最快路径，无 Docker）
 
 1. `py -3.12 -m venv .venv && .venv/Scripts/pip install -r requirements.txt -r requirements-dev.txt`
-   （GPU 环境准备详见 `ENV_SETUP.md`，RTX 50 系需 cu128 版 torch）
-2. 复制 `.env.example` 为 `.env`，设置 `TASK_SYNC=true`（管道同步执行，无需 Redis/Celery）
-3. `python scripts/download_models.py` 下载 SAM checkpoint（约 2.5GB，放 `models/`）
+2. 用 `backend\scripts\slam3r\setup_slam3r_stack.ps1` 一键搭建重建栈（SLAM3R / SpatialLM 源码 + 两个独立 conda 环境 + 权重）
+3. 复制 `.env.example` 为 `.env`，确认 `SLAM3R_*` / `SPATIALLM_*` 路径，设置 `TASK_SYNC=true`
 4. `uvicorn app.main:app --reload` 启动 API（文档：http://localhost:8000/docs）
 5. 端到端管道：`python scripts/run_pipeline.py --input 你的视频.mp4 --outdir out/`
+6. 3D 预览：`http://localhost:8000/preview/{scan_id}`（登录后在报告页打开，或 URL 带 `?scan={id}&token={jwt}`）
 
 ## Docker Compose（生产形态：PostgreSQL + Redis + MinIO + GPU worker）
 
-需要 NVIDIA Container Toolkit；GPU 训练在 worker 容器内执行。
+需要 NVIDIA Container Toolkit；GPU 重建在 worker 容器内执行（重建子进程要求两个 conda 环境，建议本地裸机形态）。
 
 `docker compose up -d --build`
 
@@ -24,9 +24,11 @@
 ## 架构
 
 ```
-Flutter App → FastAPI (REST+JWT) → Celery → 管道：ffmpeg 抽帧 → pycolmap SFM
-→ gsplat 3DGS 训练 → 点云导出 → 多参考物米制标定 → SAM 语义 → 几何分析 → 规则评分 → 报告
-存储：PostgreSQL（元数据）+ Redis（队列）+ MinIO（媒体/点云/报告）
+Flutter App → FastAPI (REST+JWT) → 管道：ffmpeg 抽帧(4fps)
+→ SLAM3R（slam3r conda 环境，稠密点云）→ Open3D 后处理（去噪/z-up/贴轴/层高缩放）
+→ SpatialLM1.1-Qwen-0.5B（spatiallm conda 环境，墙/门/窗/家具 3D 框）
+→ three.js 高密度点云预览（/preview/{scan_id}）
+存储：PostgreSQL/SQLite（元数据）+ Redis（队列，可选）+ MinIO/本地（媒体/点云/报告）
 ```
 
 ## 测试
