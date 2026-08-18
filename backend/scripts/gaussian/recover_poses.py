@@ -174,6 +174,10 @@ if __name__ == "__main__":
         r"D:\部署文件\anjing-vision-3d-fix\backend\data\work\32")
     preds = work / "slam3r" / "scene" / "preds"
     out = work / "gaussian"
+    # SLAM3R 融合点云落位随场景名派生（如 slam3r/scene/39_frames_recon.ply），递归检索
+    raw_candidates = sorted(work.rglob("*_recon.ply"))
+    if not raw_candidates:
+        raise RuntimeError(f"未找到 SLAM3R 融合点云 *_recon.ply（{work}）")
     result = recover_poses(preds, out, work / "postprocess" / "alignment.json",
-                           work / "frames_recon.ply")
+                           raw_candidates[-1])
     print(json.dumps(result, ensure_ascii=False))
