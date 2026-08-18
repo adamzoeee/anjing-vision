@@ -221,9 +221,11 @@ def run_reconstruction(
     command = [
         str(slam3r_env_python()),
         str(SLAM3R_DIR / "recon.py"),
-        "--img_dir", str(frames_dir),
+        # SLAM3R 的 Seq_Data 用 '/' 切分 img_dir 推导场景名；Windows 反斜杠会
+        # 让场景名变成整条带盘符路径，最终 scene_recon.ply 被写到意料之外的位置。
+        "--img_dir", str(frames_dir).replace("\\", "/"),
         "--test_name", test_name,
-        "--save_dir", str(work_dir),
+        "--save_dir", str(work_dir).replace("\\", "/"),
         "--i2p_weights", str(i2p),
         "--l2w_weights", str(l2w),
         "--keyframe_stride", str(int(keyframe_stride)),
@@ -275,9 +277,12 @@ def run_reconstruction(
         raise RuntimeError(f"SLAM3R 重建失败（退出码 {return_code}），日志尾部：\n{detail[-2000:]}")
     elapsed = time.perf_counter() - started
 
-    # scene 名由输入目录派生（room_frames 之类），Windows 下用 glob 兜底
+    # scene 名由输入目录派生（room_frames 之类）；Windows 下场景名可能带路径
+    # 导致 ply 落到 work_dir 其他位置，做递归兜底检索。
     result_dir = work_dir / test_name
     candidate_plys = sorted(result_dir.glob("*_recon.ply")) if result_dir.is_dir() else []
+    if not candidate_plys:
+        candidate_plys = sorted(p for p in work_dir.rglob("*_recon.ply") if p.is_file())
     ply = candidate_plys[-1] if candidate_plys else result_dir / "scene_recon.ply"
     if not ply.is_file():
         raise RuntimeError(f"SLAM3R 未产出稠密点云 PLY：{ply}（结果目录 {result_dir}）")
