@@ -6,10 +6,13 @@
 
 1. `py -3.12 -m venv .venv && .venv/Scripts/pip install -r requirements.txt -r requirements-dev.txt`
 2. 用 `backend\scripts\slam3r\setup_slam3r_stack.ps1` 一键搭建重建栈（SLAM3R / SpatialLM 源码 + 两个独立 conda 环境 + 权重）
-3. 复制 `.env.example` 为 `.env`，确认 `SLAM3R_*` / `SPATIALLM_*` 路径，设置 `TASK_SYNC=true`
-4. `uvicorn app.main:app --reload` 启动 API（文档：http://localhost:8000/docs）
-5. 端到端管道：`python scripts/run_pipeline.py --input 你的视频.mp4 --outdir out/`
-6. 3D 预览：`http://localhost:8000/preview/{scan_id}`（登录后在报告页打开，或 URL 带 `?scan={id}&token={jwt}`）
+3. **Gaussian 连续场景分支**：`backend\scripts\gaussian\setup_gaussian.ps1`
+   （克隆 slam3r 环境到纯 ASCII 路径 `D:\conda\slam3r` 并源码编译 gsplat；中文用户名/中文路径下必须走这一步，
+   编译依赖系统 CUDA 12.8 + MSVC）。确认 `.env` 中 `GAUSSIAN_PYTHON=D:\conda\slam3r\python.exe`（默认即该路径）。
+4. 复制 `.env.example` 为 `.env`，确认 `SLAM3R_*` / `SPATIALLM_*` 路径，设置 `TASK_SYNC=true`
+5. `uvicorn app.main:app --reload` 启动 API（文档：http://localhost:8000/docs）
+6. 端到端管道：`python scripts/run_pipeline.py --input 你的视频.mp4 --outdir out/`
+7. 3D 预览：`http://localhost:8000/preview/{scan_id}`（默认 Gaussian 连续场景，可切“几何/调试模式”看点云）
 
 ## Docker Compose（生产形态：PostgreSQL + Redis + MinIO + GPU worker）
 
