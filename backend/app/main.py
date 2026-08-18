@@ -174,6 +174,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return FileResponse(preview_static_dir / "index.html")
 
+    @application.get("/preview/", include_in_schema=False)
+    def preview_page_legacy():
+        """兼容旧 Web 构建生成的 /preview/?ply=... 预览链接。"""
+        from fastapi.responses import FileResponse
+
+        return FileResponse(preview_static_dir / "index.html")
+
     @application.get("/api/health")
     def health():
         return {"ok": True}
