@@ -41,7 +41,12 @@ def preview_manifest(
         else {}
     )
     preview_ply = work / "postprocess" / "scene_preview.ply"
-    layout_json = work / "postprocess" / "layout_boxes.json"
+    layout_json = next(
+        (p for p in (
+            work / "postprocess" / "layout_boxes.json",
+            work / "postprocess" / "layout.json",
+        ) if p.is_file()), None
+    )
     if not preview_ply.is_file():
         raise HTTPException(404, "预览尚未生成")
     return {
@@ -82,7 +87,12 @@ def preview_layout(
     if scan is None or scan.project.org_id != org_id:
         raise HTTPException(404, "扫描任务不存在")
     work = _work_dir(scan_id, settings)
-    path = (work / "postprocess" / "layout_boxes.json").resolve()
-    if not path.is_relative_to(work) or not path.is_file():
+    path = next(
+        (p for p in (
+            work / "postprocess" / "layout_boxes.json",
+            work / "postprocess" / "layout.json",
+        ) if p.is_file()), None
+    )
+    if path is None or not path.is_relative_to(work):
         raise HTTPException(404, "结构识别结果不存在")
     return FileResponse(path, media_type="application/json")
