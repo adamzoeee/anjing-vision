@@ -1,4 +1,4 @@
-﻿<#
+<#
   安龄智境新重建栈一键部署：SLAM3R + SpatialLM1.1-Qwen-0.5B
 
   产物：
@@ -96,13 +96,34 @@ if (-not $SkipEnv) {
     }
     Write-Host '=== spatiallm deps ==='
     & $spatiallmPy -m pip install $torchWheel $tvWheel
-    & $spatiallmPy -m pip install "transformers==4.46.1" "tokenizers==0.20.3" safetensors pandas einops numpy==1.26.4 scipy scikit-learn toml "huggingface_hub>=0.25.0" "rerun-sdk>=0.21.0" shapely bbox terminaltables open3d addict
-    & $spatiallmPy -m pip install spconv-cu128
+    # timm 是 Sonata 点云编码器（spatiallm_qwen）的硬依赖，官方推理会 import timm
+    & $spatiallmPy -m pip install "transformers==4.46.1" "tokenizers==0.20.3" safetensors pandas einops numpy==1.26.4 scipy scikit-learn toml "huggingface_hub>=0.25.0" "rerun-sdk>=0.21.0" shapely bbox terminaltables open3d addict timm
+    # PyPI 无 spconv-cu128 轮子；spconv-cu126 自带 CUDA 运行时，与 torch cu128 兼容
+    & $spatiallmPy -m pip install spconv-cu126
     & $spatiallmPy -m pip install torch_scatter -f https://data.pyg.org/whl/torch-2.7.0+cu128.html
+
+    # torch>=2.6 默认 weights_only=True，SLAM3R 检查点内含 argparse.Namespace 会拒绝加载，
+    # 必须给 recon 入口的 torch.load 追加 weights_only=False
+    foreach ($entry in @(
+        'E:\.PJs\slam3r\recon.py',
+        'E:\.PJs\slam3r\slam3r\pipeline\recon_offline_pipeline.py',
+        'E:\.PJs\slam3r\slam3r\pipeline\recon_online_pipeline.py'
+    )) {
+        if (Test-Path $entry) {
+            $text = Get-Content $entry -Raw
+            if ($text -notmatch 'weights_only=False') {
+                $text = $text.Replace(
+                    'torch.load(weights, map_location=device)',
+                    'torch.load(weights, map_location=device, weights_only=False)')
+                Set-Content -Path $entry -Value $text -NoNewline
+                Write-Host "=== patched torch.load weights_only: $entry ==="
+            }
+        }
+    }
 
     # 冒烟自检
     & $slam3rPy -c "import torch, cv2, open3d, trimesh, einops, roma, imageio; print('slam3r env OK', torch.__version__, torch.cuda.is_available())"
-    & $spatiallmPy -c "import torch, transformers, open3d, rerun, spconv, torch_scatter; print('spatiallm env OK', torch.__version__, torch.cuda.is_available())"
+    & $spatiallmPy -c "import torch, transformers, open3d, rerun, spconv, torch_scatter, timm; print('spatiallm env OK', torch.__version__, torch.cuda.is_available())"
 }
 
 # ---------- 3. 权重 ----------
@@ -127,8 +148,8 @@ l2w = Local2WorldModel(pos_embed='RoPE100', img_size=(224,224), head_type='linea
     depth_mode=('exp', float('-inf'), float('inf')), conf_mode=('exp', 1, float('inf')),
     enc_embed_dim=1024, enc_depth=24, enc_num_heads=16, dec_embed_dim=768, dec_depth=12, dec_num_heads=12,
     mv_dec1='MultiviewDecoderBlock_max', mv_dec2='MultiviewDecoderBlock_max', enc_minibatch=11, need_encoder=False)
-c1 = torch.load(r'E:\.PJs\models\slam3r_i2p\slam3r_i2p.pth', map_location='cpu')
-c2 = torch.load(r'E:\.PJs\models\slam3r_l2w\slam3r_l2w.pth', map_location='cpu')
+c1 = torch.load(r'E:\.PJs\models\slam3r_i2p\slam3r_i2p.pth', map_location='cpu', weights_only=False)
+c2 = torch.load(r'E:\.PJs\models\slam3r_l2w\slam3r_l2w.pth', map_location='cpu', weights_only=False)
 print(i2p.load_state_dict(c1['model'], strict=False))
 print(l2w.load_state_dict(c2['model'], strict=False))
 print('SLAM3R models load OK')
@@ -136,6 +157,7 @@ print('SLAM3R models load OK')
 & $spatiallmPy -c @"
 import sys; sys.path.insert(0, r'E:\.PJs\spatiallm')
 import torch
+import spatiallm  # 必须先导入以注册 spatiallm_qwen 架构到 AutoConfig/AutoModel
 from transformers import AutoTokenizer, AutoModelForCausalLM
 m = AutoModelForCausalLM.from_pretrained(r'E:\.PJs\models\SpatialLM1.1-Qwen-0.5B', torch_dtype=torch.bfloat16)
 print('SpatialLM model load OK', sum(p.numel() for p in m.parameters())/1e6, 'M params')
