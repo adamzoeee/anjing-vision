@@ -6,6 +6,14 @@
 
   var params = new URLSearchParams(location.search);
   var scanId = params.get('scan');
+  // 兼容旧 Flutter Web 构建使用的 /preview/?ply=/static/<id>/... 链接。
+  // 历史版本还可能把 /static/... 与 /api/preview/... 错误拼接；只从中
+  // 提取 scan id，实际数据统一通过当前受鉴权的 manifest API 加载。
+  if (!scanId) {
+    var legacyPly = params.get('ply') || '';
+    var legacyMatch = legacyPly.match(/(?:\/api\/preview\/|\/static\/)(\d+)(?:\/|$)/);
+    if (legacyMatch) scanId = legacyMatch[1];
+  }
   var token = params.get('token') || '';
   var manifestUrl = scanId ? '/api/preview/' + encodeURIComponent(scanId) + '/manifest.json' : null;
 
@@ -16,6 +24,8 @@
   var labelGroup = null;
   var pointMaterial = null;
   var rafId = null;
+  var resizeHandler = null;
+  var sceneDisposed = false;
 
   function $(id) { return document.getElementById(id); }
   function setProgress(fraction, text) {
@@ -27,16 +37,87 @@
     $('error').style.display = 'block';
     $('error').textContent = message;
     $('bar-outer').style.display = 'none';
+    $('btn-retry').style.display = 'block';
+  }
+
+  function createRenderer() {
+    // 只创建一个 canvas/context。连续 new WebGLRenderer 会额外消耗浏览器的
+    // WebGL context 配额，多次打开预览后可能直接得到“Error creating WebGL context”。
+    var canvas = document.createElement('canvas');
+    var attributes = {
+      alpha: false,
+      antialias: false,
+      depth: true,
+      stencil: false,
+      powerPreference: 'high-performance',
+      failIfMajorPerformanceCaveat: false,
+      preserveDrawingBuffer: false,
+    };
+    var context = canvas.getContext('webgl2', attributes) ||
+      canvas.getContext('webgl', attributes) ||
+      canvas.getContext('experimental-webgl', attributes);
+    if (!context) {
+      throw new Error('浏览器未能创建 WebGL 上下文。请关闭旧的 3D 预览标签页后重试；若仍失败，请在 Edge/Chrome 设置中开启图形加速并重启浏览器');
+    }
+    return new THREE.WebGLRenderer({
+      canvas: canvas,
+      context: context,
+      antialias: false,
+      powerPreference: 'high-performance',
+    });
+  }
+
+  function disposeMaterial(material) {
+    if (!material) return;
+    Object.keys(material).forEach(function (key) {
+      var value = material[key];
+      if (value && value.isTexture && typeof value.dispose === 'function') value.dispose();
+    });
+    if (typeof material.dispose === 'function') material.dispose();
+  }
+
+  function disposeScene() {
+    if (sceneDisposed) return;
+    sceneDisposed = true;
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    if (resizeHandler) window.removeEventListener('resize', resizeHandler);
+    if (controls && typeof controls.dispose === 'function') controls.dispose();
+    if (scene && typeof scene.traverse === 'function') {
+      scene.traverse(function (object) {
+        if (object.geometry && typeof object.geometry.dispose === 'function') object.geometry.dispose();
+        if (Array.isArray(object.material)) object.material.forEach(disposeMaterial);
+        else disposeMaterial(object.material);
+      });
+    }
+    if (renderer) {
+      var canvas = renderer.domElement;
+      renderer.dispose();
+      // 主动释放 GPU context，避免刷新/返回/重复打开预览后耗尽配额。
+      if (typeof renderer.forceContextLoss === 'function') renderer.forceContextLoss();
+      if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas);
+    }
   }
 
   function initScene(alignment) {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x10141b);
     camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.01, 500);
-    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer = createRenderer();
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.setSize(window.innerWidth, window.innerHeight);
     $('canvas').appendChild(renderer.domElement);
+    renderer.domElement.addEventListener('webglcontextlost', function (event) {
+      event.preventDefault();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = null;
+      fail('3D 图形上下文已被浏览器回收。请关闭其他 3D 预览标签页，然后刷新本页重试');
+    }, false);
+    renderer.domElement.addEventListener('webglcontextrestored', function () {
+      location.reload();
+    }, false);
 
     // 数据为 z-up 米制；three.js 是 y-up，整组绕 X 转 -90°
     worldGroup = new THREE.Group();
@@ -62,34 +143,52 @@
     worldGroup.add(boxesGroup);
     worldGroup.add(labelGroup);
 
-    window.addEventListener('resize', function () {
+    resizeHandler = function () {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
-    });
+    };
+    window.addEventListener('resize', resizeHandler);
     animate();
   }
 
   function animate() {
+    if (sceneDisposed || !renderer || !controls) return;
     rafId = requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
   }
 
   /* ---------------- PLY 流式解析 ---------------- */
+  var PLY_TYPE_SIZES = {
+    char: 1, uchar: 1, short: 2, ushort: 2,
+    int: 4, uint: 4, float: 4, double: 8,
+  };
   function parsePlyHeader(headerText) {
     var lines = headerText.split('\n');
     if (lines[0].indexOf('ply') !== 0) throw new Error('不是 PLY 文件');
     var format = null, vertexCount = 0, properties = [];
+    var currentElement = null;
     for (var i = 1; i < lines.length; i++) {
       var line = lines[i].trim();
       if (!line) continue;
       var parts = line.split(/\s+/);
       if (parts[0] === 'format') format = parts[1];
-      else if (parts[0] === 'element' && parts[1] === 'vertex') vertexCount = parseInt(parts[2], 10);
-      else if (parts[0] === 'property' && parts[1] === 'float' && ['x', 'y', 'z'].indexOf(parts[2]) >= 0) properties.push({ type: 'float32', name: parts[2], offset: properties.reduce(function (s, p) { return s + p.size; }, 0), size: 4 });
-      else if (parts[0] === 'property' && parts[1] === 'uchar' && ['red', 'green', 'blue'].indexOf(parts[2]) >= 0) properties.push({ type: 'uint8', name: parts[2], offset: properties.reduce(function (s, p) { return s + p.size; }, 0), size: 1 });
-      else if (parts[0] === 'property') { /* 其他属性（normal 等）按 float 处理 */ properties.push({ type: 'float32', name: parts[2], offset: properties.reduce(function (s, p) { return s + p.size; }, 0), size: 4 }); }
+      else if (parts[0] === 'element') {
+        currentElement = parts[1];
+        if (parts[1] === 'vertex') vertexCount = parseInt(parts[2], 10);
+      }
+      else if (parts[0] === 'property' && currentElement === 'vertex') {
+        // Open3D 会输出 property double x/y/z（8 字节）；旧解析只认 float 会导致
+        // 步长错位、全部坐标变成垃圾（星空/放射线症状）。按真实类型定步长。
+        var size = PLY_TYPE_SIZES[parts[1]];
+        properties.push({
+          type: parts[1],
+          name: parts[2],
+          size: typeof size === 'number' ? size : 4,
+          offset: properties.reduce(function (s, p) { return s + p.size; }, 0),
+        });
+      }
       else if (parts[0] === 'end_header') break;
     }
     var stride = properties.reduce(function (s, p) { return s + p.size; }, 0);
@@ -172,20 +271,39 @@
     var colors = new Float32Array(CHUNK * 3);
     var added = 0;
 
+    function readProp(prop, base) {
+      if (!prop) return 0;
+      switch (prop.type) {
+        case 'double': return dv.getFloat64(base + prop.offset, true);
+        case 'float': return dv.getFloat32(base + prop.offset, true);
+        case 'uchar': return dv.getUint8(base + prop.offset);
+        case 'char': return dv.getInt8(base + prop.offset);
+        case 'ushort': return dv.getUint16(base + prop.offset, true);
+        case 'short': return dv.getInt16(base + prop.offset, true);
+        case 'uint': return dv.getUint32(base + prop.offset, true);
+        case 'int': return dv.getInt32(base + prop.offset, true);
+        default: return 0;
+      }
+    }
+
     function feedChunk() {
       var start = added;
       var end = Math.min(added + CHUNK, total);
       var count = end - start;
       var posArr = count === CHUNK ? positions : new Float32Array(count * 3);
       var colArr = count === CHUNK ? colors : new Float32Array(count * 3);
+      // uchar 颜色是 0..255，需要 /255；float/double 颜色已经是 0..1
+      var colorScale = function (prop) {
+        return (prop && prop.type !== 'float' && prop.type !== 'double') ? 1 / 255 : 1;
+      };
       for (var i = 0; i < count; i++) {
         var base = (start + i) * stride;
-        posArr[i * 3] = dv.getFloat32(base + px.offset, true);
-        posArr[i * 3 + 1] = dv.getFloat32(base + py.offset, true);
-        posArr[i * 3 + 2] = dv.getFloat32(base + pz.offset, true);
-        colArr[i * 3] = (pr ? dv.getUint8(base + pr.offset) : 200) / 255;
-        colArr[i * 3 + 1] = (pg ? dv.getUint8(base + pg.offset) : 200) / 255;
-        colArr[i * 3 + 2] = (pb ? dv.getUint8(base + pb.offset) : 200) / 255;
+        posArr[i * 3] = readProp(px, base);
+        posArr[i * 3 + 1] = readProp(py, base);
+        posArr[i * 3 + 2] = readProp(pz, base);
+        colArr[i * 3] = (pr ? readProp(pr, base) : 200) * colorScale(pr);
+        colArr[i * 3 + 1] = (pg ? readProp(pg, base) : 200) * colorScale(pg);
+        colArr[i * 3 + 2] = (pb ? readProp(pb, base) : 200) * colorScale(pb);
       }
       var geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
@@ -296,6 +414,7 @@
 
   /* ---------------- 主流程 ---------------- */
   function main() {
+    $('btn-retry').addEventListener('click', function () { location.reload(); });
     if (!manifestUrl) { fail('缺少 scan 参数：请在 URL 中带上 ?scan=<扫描ID>'); return; }
     setProgress(0.02, '获取场景清单');
     fetch(manifestUrl, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
@@ -346,9 +465,16 @@
       .catch(function (error) { fail(error && error.message ? error.message : String(error)); });
   }
 
-  if (document.readyState === 'loading') {
+  // 几何点云模式由 gaussian_main.js 编排：Gaussian 模式时不自启动，
+  // 切换“几何/调试模式”时通过 window.__startPointsViewer__ 手动拉起。
+  window.__startPointsViewer__ = main;
+  if (window.__PREVIEW_MODE__ === 'gaussian') {
+    /* 等待用户切换 */
+  } else if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', main);
   } else {
     main();
   }
+  window.addEventListener('pagehide', disposeScene);
+  window.addEventListener('beforeunload', disposeScene);
 })();

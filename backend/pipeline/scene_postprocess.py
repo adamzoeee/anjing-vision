@@ -231,12 +231,14 @@ def build_outputs(
     points = scale_info["points"]
 
     # 供 SpatialLM 的完整点云（轻度体素化，5mm）
+    # 用 tensor API 写出 float32 PLY：legacy 写入器会把点强制转成 double
+    # （property double x/y/z），部分前端解析器只认 float 会造成步长错位。
     aligned_pcd = o3d.geometry.PointCloud()
     aligned_pcd.points = o3d.utility.Vector3dVector(points)
     aligned_pcd.colors = o3d.utility.Vector3dVector(colors)
     aligned_pcd = aligned_pcd.voxel_down_sample(spatiallm_voxel_m)
     aligned_ply = out_dir / "scene_aligned.ply"
-    o3d.io.write_point_cloud(str(aligned_ply), aligned_pcd)
+    o3d.t.io.write_point_cloud(str(aligned_ply), o3d.t.geometry.PointCloud.from_legacy(aligned_pcd))
 
     # 供 Web 预览的高密度点云（8mm 体素 + 上限）
     preview_pcd = aligned_pcd.voxel_down_sample(preview_voxel_m)
@@ -245,7 +247,7 @@ def build_outputs(
         keep = np.random.default_rng(42).choice(len(preview_points), preview_max_points, replace=False)
         preview_pcd = preview_pcd.select_by_index(keep)
     preview_ply = out_dir / "scene_preview.ply"
-    o3d.io.write_point_cloud(str(preview_ply), preview_pcd)
+    o3d.t.io.write_point_cloud(str(preview_ply), o3d.t.geometry.PointCloud.from_legacy(preview_pcd))
 
     extents = np.percentile(points, [1, 99], axis=0)
     metadata = {

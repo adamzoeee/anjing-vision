@@ -49,14 +49,33 @@ def preview_manifest(
     )
     if not preview_ply.is_file():
         raise HTTPException(404, "预览尚未生成")
+    gaussian_ply = work / "gaussian" / "gaussian.ply"
     return {
         "scan_id": scan_id,
         "name": scan.project.name if scan.project else f"扫描 #{scan_id}",
         "ply": f"/api/preview/{scan_id}/scene.ply",
+        "gaussian_ply": f"/api/preview/{scan_id}/gaussian.ply" if gaussian_ply.is_file() else None,
         "layout": f"/api/preview/{scan_id}/layout.json" if layout_json.is_file() else None,
         "alignment": alignment,
         "status": scan.status,
     }
+
+
+@router.get("/{scan_id}/gaussian.ply", response_class=FileResponse)
+def preview_gaussian(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    scan = db.get(Scan, scan_id)
+    if scan is None or scan.project.org_id != org_id:
+        raise HTTPException(404, "扫描任务不存在")
+    work = _work_dir(scan_id, settings)
+    path = (work / "gaussian" / "gaussian.ply").resolve()
+    if not path.is_relative_to(work) or not path.is_file():
+        raise HTTPException(404, "Gaussian 场景不存在")
+    return FileResponse(path, media_type="application/octet-stream")
 
 
 @router.get("/{scan_id}/scene.ply", response_class=FileResponse)

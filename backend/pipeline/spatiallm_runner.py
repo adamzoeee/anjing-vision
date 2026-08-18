@@ -155,6 +155,7 @@ def run_inference(
         raise RuntimeError("SpatialLM 未产出 layout 文件")
     elapsed = time.perf_counter() - started
     boxes = parse_layout(output_txt)
+    boxes = _filter_objects(point_cloud, boxes)
     boxes_json = output_txt.with_suffix(".json")
     payload = {
         "backend": "spatiallm1.1-qwen-0.5b",
@@ -184,6 +185,62 @@ def _floats(text: str, count: int) -> list[float]:
     if len(values) != count:
         raise ValueError(f"expected {count} numbers, got {values}")
     return values
+
+
+_OBJECT_WHITELIST = tuple(
+    name.strip().lower()
+    for name in os.getenv("SPATIALLM_OBJECT_WHITELIST", "").split(",")
+    if name.strip()
+)
+
+
+def _filter_objects(point_cloud: Path, boxes: dict) -> dict:
+    """过滤 SpatialLM 幻觉物体框。
+
+    1. 若配置 SPATIALLM_OBJECT_WHITELIST（逗号分隔），仅保留白名单类别；
+    2. 密度支撑门槛：统计对齐点云在框内的点数，低于 min_points 的框视为
+       凭空生成的幻觉（如不存在的 washing_machine）并丢弃。
+    """
+    objects = boxes.get("objects", [])
+    if not objects:
+        return boxes
+    try:
+        import numpy as np
+        import open3d as o3d
+
+        pcd = o3d.io.read_point_cloud(str(point_cloud))
+        pts = np.asarray(pcd.points, dtype=np.float64)
+    except Exception as exc:  # noqa: BLE001 - 过滤失败不阻断识别结果
+        logger.warning("spatiallm_object_filter_unavailable: %s", exc)
+        return boxes
+
+    kept: list[dict] = []
+    for item in objects:
+        category = str(item.get("category", "")).lower()
+        if _OBJECT_WHITELIST and category not in _OBJECT_WHITELIST:
+            logger.info("drop object %s (not in whitelist)", category)
+            continue
+        center = np.asarray(item["center"], dtype=np.float64)
+        half = np.asarray(item["size"], dtype=np.float64) / 2.0
+        theta = math.radians(float(item.get("rotation_z_deg", 0.0)))
+        cos_t, sin_t = math.cos(theta), math.sin(theta)
+        delta = pts - center
+        local_x = delta[:, 0] * cos_t + delta[:, 1] * sin_t
+        local_y = -delta[:, 0] * sin_t + delta[:, 1] * cos_t
+        inside = (
+            (np.abs(local_x) <= max(half[0], 0.01))
+            & (np.abs(local_y) <= max(half[1], 0.01))
+            & (np.abs(delta[:, 2]) <= max(half[2], 0.01))
+        )
+        support = int(inside.sum())
+        item = dict(item)
+        item["support_points"] = support
+        if support < 200:
+            logger.info("drop object %s (support=%d, likely hallucination)", category, support)
+            continue
+        kept.append(item)
+    boxes["objects"] = kept
+    return boxes
 
 
 def parse_layout(layout_txt: Path) -> dict:

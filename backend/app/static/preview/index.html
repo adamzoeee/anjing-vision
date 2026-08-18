@@ -7,7 +7,10 @@
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #10141b; color: #e8eaf0;
     font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+  #pcanvas-wrap { position: absolute; inset: 0; display: block; }
   #canvas { position: absolute; inset: 0; }
+  #gcontainer { position: absolute; inset: 0; display: none; }
+  #gcontainer canvas { width: 100%; height: 100%; display: block; }
   #hud { position: absolute; top: 12px; left: 12px; z-index: 10; pointer-events: none; }
   #hud h1 { font-size: 16px; font-weight: 600; margin: 0 0 2px; text-shadow: 0 1px 4px rgba(0,0,0,.8); }
   #hud .sub { font-size: 12px; opacity: .75; }
@@ -31,25 +34,29 @@
   #bar { height: 100%; width: 0%; background: linear-gradient(90deg,#4f9cf9,#7dd3fc); transition: width .15s; }
   #overlay .status { margin-top: 10px; font-size: 12.5px; opacity: .8; }
   #error { color: #ff8fa3; font-size: 13px; max-width: 520px; text-align: center; display: none; }
+  #btn-retry { display: none; width: auto; margin-top: 14px; padding: 7px 18px; }
   .hint { position: absolute; bottom: 10px; left: 12px; z-index: 10; font-size: 11.5px; opacity: .55; pointer-events: none; }
 </style>
 </head>
 <body>
-<div id="canvas"></div>
+<div id="pcanvas-wrap"><div id="canvas"></div></div>
+<div id="gcontainer"></div>
 <div id="hud">
   <h1 id="scene-title">3D 房间预览</h1>
   <div class="sub" id="scene-sub">加载中…</div>
 </div>
 <div id="panel">
   <h2>显示图层</h2>
-  <div class="row"><label><input type="checkbox" id="ck-pcd" checked> <span class="swatch" style="background:#aab4c8"></span> 稠密点云</label></div>
+  <div class="row" id="row-pcd"><label><input type="checkbox" id="ck-pcd" checked> <span class="swatch" style="background:#aab4c8"></span> 稠密点云</label></div>
   <div class="row"><label><input type="checkbox" id="ck-walls" checked> <span class="swatch" style="background:#4f9cf9"></span> 墙</label></div>
   <div class="row"><label><input type="checkbox" id="ck-doors" checked> <span class="swatch" style="background:#ffb703"></span> 门</label></div>
   <div class="row"><label><input type="checkbox" id="ck-windows" checked> <span class="swatch" style="background:#5ce98a"></span> 窗</label></div>
   <div class="row"><label><input type="checkbox" id="ck-objects" checked> <span class="swatch" style="background:#ff8fa3"></span> 家具</label></div>
   <div class="row"><label><input type="checkbox" id="ck-labels" checked> 家具标签</label></div>
-  <div class="row"><span>点大小</span><input type="range" id="point-size" min="0.5" max="6" step="0.5" value="1.6"></div>
-  <div class="row"><label><input type="checkbox" id="ck-rotate" checked> 自动旋转</label></div>
+  <div class="row" id="row-point-size"><span>点大小</span><input type="range" id="point-size" min="0.5" max="6" step="0.5" value="1.6"></div>
+  <div class="row" id="row-rotate"><label><input type="checkbox" id="ck-rotate" checked> 自动旋转</label></div>
+  <button class="btn" id="btn-mode-points">几何/调试模式（点云）</button>
+  <button class="btn" id="btn-mode-gaussian" style="display:none">Gaussian 连续场景</button>
   <button class="btn" id="btn-reset">重置视角</button>
   <button class="btn" id="btn-shot">保存截图</button>
   <div id="stats"></div>
@@ -60,9 +67,14 @@
   <div id="bar-outer"><div id="bar"></div></div>
   <div class="status" id="overlay-status">初始化</div>
   <div id="error"></div>
+  <button class="btn" id="btn-retry" type="button">重新加载 3D 场景</button>
 </div>
+<script type="importmap">
+{"imports": {"three": "/preview-static/three.module.js"}}
+</script>
 <script src="/preview-static/three.min.js"></script>
 <script src="/preview-static/OrbitControls.js"></script>
-<script src="/preview-static/viewer.js"></script>
+<script src="/preview-static/gaussian_main.js?v=20260818b"></script>
+<script src="/preview-static/viewer.js?v=20260818-gaussian-mode"></script>
 </body>
 </html>
