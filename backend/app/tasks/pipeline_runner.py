@@ -210,6 +210,27 @@ def _run_slam3r_pipeline(
         return
     timings["spatiallm_seconds"] = time.perf_counter() - stage_started
 
+    # ---- 4.5. Gaussian 连续场景重建（best-effort，失败不阻断理解链）----
+    _stage(db, scan, "gaussian", 92, "Gaussian 场景重建中")
+    stage_started = time.perf_counter()
+    gaussian_meta: dict | None = None
+
+    def on_gaussian_progress(_name: str, _line: str) -> None:
+        pass  # 进度由扫描状态粗粒度呈现
+
+    try:
+        from pipeline import gaussian_runner
+
+        gaussian_meta = gaussian_runner.run_gaussian(
+            work / "slam3r" / "scene" / "preds",
+            work,
+            progress_callback=on_gaussian_progress,
+        )
+        timings["gaussian_seconds"] = gaussian_meta["seconds"]
+    except RuntimeError as exc:
+        logger.warning("gaussian_skipped scan_id=%s reason=%s", scan.id, str(exc)[:300])
+        timings["gaussian_seconds"] = time.perf_counter() - stage_started
+
     # ---- 5. 报告与预览清单 ----
     _stage(db, scan, "previewing", 95, "生成 3D 预览中")
     boxes = spatial["boxes"]
@@ -244,6 +265,11 @@ def _run_slam3r_pipeline(
             "preview": post["metadata"]["points_preview"],
         },
         "timings": {**timings, "total_seconds": round(time.perf_counter() - pipeline_started, 1)},
+        "gaussian": {
+            "available": bool(gaussian_meta),
+            "views": gaussian_meta["views"] if gaussian_meta else None,
+            "seconds": gaussian_meta["seconds"] if gaussian_meta else None,
+        },
         # 长度测量、风险识别与评分：暂缓实现（后续阶段在此扩展）。
         "deferred": ["length_measurement", "risk_identification", "scoring"],
     }
@@ -251,6 +277,7 @@ def _run_slam3r_pipeline(
         "viewer": f"/preview/{scan.id}",
         "manifest": f"/api/preview/{scan.id}/manifest.json",
         "ply": f"/api/preview/{scan.id}/scene.ply",
+        "gaussian_ply": f"/api/preview/{scan.id}/gaussian.ply" if gaussian_meta else None,
         "layout": f"/api/preview/{scan.id}/layout.json",
         "backend": "slam3r",
     }
