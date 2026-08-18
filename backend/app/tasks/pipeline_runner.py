@@ -168,7 +168,7 @@ def _run_slam3r_pipeline(
         value = 15.0 + 58.0 * float(frac)
         if value - last_progress["value"] >= 1.0:
             last_progress["value"] = value
-            _stage(db, scan, "reconstructing", round(value, 1), "SLAM3R 稠密重建中")
+            _stage(db, scan, "reconstructing", int(round(value)), "SLAM3R 稠密重建中")
 
     try:
         recon = slam3r_runner.run_reconstruction(
