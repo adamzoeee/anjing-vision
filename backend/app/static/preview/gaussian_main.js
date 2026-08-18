@@ -8,6 +8,7 @@
 
   var params = new URLSearchParams(location.search);
   var scanId = params.get('scan');
+  var requestedMode = params.get('mode') || '';
   var token = params.get('token') || '';
   var manifestUrl = scanId ? '/api/preview/' + encodeURIComponent(scanId) + '/manifest.json' : null;
   var authHeaders = token ? { Authorization: 'Bearer ' + token } : {};
@@ -148,19 +149,32 @@
 
     setStatus('加载 Gaussian 场景', 0.15);
     gaussianViewer = new GS3D.Viewer({
-      container: container,
+      rootElement: container,
       cameraUp: [0, 0, 1],
-      initialCameraPos: eye,
+      initialCameraPosition: eye,
       initialCameraLookAt: target,
       selfDrivenMode: true,
       renderMode: GS3D.RenderMode.OnChange,
+      // localhost 页面没有 COOP/COEP，不能让排序 Worker 使用 SharedArrayBuffer。
+      // 显式使用可移植的普通 ArrayBuffer 通信，避免 Worker 永远不 ready。
+      sharedMemoryForWorkers: false,
+      enableSIMDInSort: false,
+      freeIntermediateSplatData: true,
     });
     var url = manifest.gaussian_ply + (token ? '' : '');
     await gaussianViewer.addSplatScene(url, {
-      format: GS3D.SceneFormat.Ply,
+      format: url.toLowerCase().endsWith('.splat') ? GS3D.SceneFormat.Splat : GS3D.SceneFormat.Ply,
+      progressiveLoad: true,
       splatAlphaRemovalThreshold: 20,
       showLoadingUI: false,
       headers: authHeaders,
+      onProgress: function (percent, label, loaderStatus) {
+        if (loaderStatus === 0) {
+          setStatus('下载 Gaussian 场景 ' + (label || Math.round(percent) + '%'), 0.15 + percent * 0.0045);
+        } else if (loaderStatus === 1) {
+          setStatus('解析 Gaussian 场景', 0.62);
+        }
+      },
     });
     setStatus('渲染 Gaussian 场景', 0.7);
     gaussianViewer.start();
@@ -201,7 +215,15 @@
   async function main() {
     if (!manifestUrl) { fail('缺少 scan 参数'); return; }
     $('btn-mode-points').addEventListener('click', startPoints);
-    $('btn-mode-gaussian').addEventListener('click', function () { location.reload(); });
+    $('btn-mode-gaussian').addEventListener('click', function () {
+      var next = new URL(location.href);
+      next.searchParams.delete('mode');
+      location.href = next.toString();
+    });
+    if (requestedMode === 'points') {
+      startPoints();
+      return;
+    }
     try {
       setStatus('获取场景清单', 0.02);
       var resp = await fetch(manifestUrl, { headers: authHeaders });
