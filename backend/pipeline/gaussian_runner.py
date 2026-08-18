@@ -122,3 +122,57 @@ def run_gaussian(preds_dir: Path, work_dir: Path, *, iters: int = DEFAULT_ITERS,
         "views": len(cameras),
         "seconds": round(time.perf_counter() - started, 1),
     }
+
+
+def run_pose_recovery(work_dir: Path, *, max_frames: int = 600,
+                      timeout_s: float = 1200.0, progress_callback=None) -> dict:
+    """只恢复逐帧相机位姿（视频证据），不训练 Gaussian。
+
+    测量阶段“点云+视频融合”的通用数据通路：每个视频都能得到 cameras.json
+    （对齐米制系位姿）+ 对应帧图像，供 video_box_refiner 修正家具尺寸。
+    Gaussian 开关只控制后续 3DGS 训练，与位姿恢复无关。
+    """
+    work_dir = Path(work_dir).resolve()
+    gaussian_dir = work_dir / "gaussian"
+    gaussian_dir.mkdir(parents=True, exist_ok=True)
+    cameras_json = gaussian_dir / "cameras.json"
+    if cameras_json.is_file():
+        cameras = json.loads(cameras_json.read_text(encoding="utf-8"))
+        return {"cameras_json": cameras_json, "views": len(cameras), "reused": True}
+    preds_npy = work_dir / "slam3r" / "scene" / "preds" / "registered_pcds.npy"
+    if not preds_npy.is_file():
+        raise RuntimeError("registered_pcds.npy 不存在，无法恢复位姿")
+    raw_ply = next(iter(sorted(work_dir.rglob("*_recon.ply"))), None)
+    alignment = work_dir / "postprocess" / "alignment.json"
+    if raw_ply is None or not alignment.is_file():
+        raise RuntimeError("位姿恢复依赖缺失（*_recon.ply / alignment.json）")
+    python = env_python()
+    cmd = [str(python), str(SCRIPTS / "recover_poses.py"), str(work_dir)]
+    started = time.perf_counter()
+    logger.info("pose_recovery command=%s", " ".join(cmd))
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
+        env=_child_environment(),
+    )
+    assert proc.stdout is not None
+    tail: list[str] = []
+    for raw in proc.stdout:
+        line = raw.rstrip("\r\n")
+        if "\r" in line:
+            line = line.split("\r")[-1]
+        tail.append(line)
+        tail = tail[-40:]
+        if progress_callback is not None:
+            progress_callback("pose_recovery", line)
+        if timeout_s and time.perf_counter() - started > timeout_s:
+            proc.terminate()
+            raise RuntimeError(f"位姿恢复超过 {timeout_s:.0f} 秒限制")
+    code = proc.wait()
+    if code != 0 or not cameras_json.is_file():
+        detail = "\n".join(tail)
+        logger.error("pose_recovery_failed exit=%s\n%s", code, detail)
+        raise RuntimeError(f"位姿恢复失败（退出码 {code}）：{detail[-1500:]}")
+    cameras = json.loads(cameras_json.read_text(encoding="utf-8"))
+    return {"cameras_json": cameras_json, "views": len(cameras),
+            "seconds": round(time.perf_counter() - started, 1)}

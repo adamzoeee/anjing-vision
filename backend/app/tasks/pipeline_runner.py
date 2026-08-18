@@ -188,6 +188,19 @@ def _run_slam3r_pipeline(
     post = build_outputs(recon["ply"], work / "postprocess")
     timings["postprocess_seconds"] = time.perf_counter() - stage_started
 
+    # ---- 3.5. 视频证据：恢复逐帧相机位姿（点云+视频融合测量用，与 Gaussian 开关无关）----
+    pose_meta: dict | None = None
+    _stage(db, scan, "cleaning", 78, "恢复视频视角位姿中")
+    stage_started = time.perf_counter()
+    try:
+        from pipeline.gaussian_runner import run_pose_recovery
+
+        pose_meta = run_pose_recovery(work)
+        timings["pose_recovery_seconds"] = time.perf_counter() - stage_started
+    except Exception as exc:  # noqa: BLE001 - 位姿恢复失败退化为纯点云测量
+        logger.warning("pose_recovery_skipped scan_id=%s reason=%s", scan.id, str(exc)[:300])
+        timings["pose_recovery_seconds"] = time.perf_counter() - stage_started
+
     # ---- 4. SpatialLM 空间结构识别 ----
     _stage(db, scan, "understanding", 88, "SpatialLM 空间结构识别中")
     stage_started = time.perf_counter()
@@ -210,26 +223,96 @@ def _run_slam3r_pipeline(
         return
     timings["spatiallm_seconds"] = time.perf_counter() - stage_started
 
-    # ---- 4.5. Gaussian 连续场景重建（best-effort，失败不阻断理解链）----
-    _stage(db, scan, "gaussian", 92, "Gaussian 场景重建中")
-    stage_started = time.perf_counter()
+    # 定向家具识别：避免 detect_type=all 只输出窗帘/地毯等显著类别而漏掉床和柜子。
+    furniture_json: Path | None = None
+    try:
+        furniture = spatiallm_runner.run_inference(
+            post["aligned_ply"], work / "postprocess" / "layout_furniture.txt",
+            detect_type="object",
+            categories=[
+                "bed", "multifunctional_combination_bed", "sofa", "combination_sofa",
+                "chair", "dining_chair", "bar_chair", "stool", "wardrobe", "nightstand",
+                "tv_cabinet", "cupboard", "sideboard", "bookcase", "coffee_table",
+                "dining_table", "side_table", "desk",
+            ],
+            temperature=0.2, top_k=3,
+        )
+        furniture_json = furniture["boxes_json"]
+    except RuntimeError as exc:
+        logger.warning("targeted_furniture_detection_skipped scan_id=%s reason=%s", scan.id, str(exc)[:300])
+
+    # ---- 4.25. 点云几何验证后的 2.5D 结构契约（含点云+视频融合的长度修正）----
+    from pipeline.structure_builder import build_structure
+    structure = build_structure(
+        post["aligned_ply"], spatial["boxes_json"], work / "postprocess" / "alignment.json",
+        work / "postprocess" / "structure.json",
+        furniture_json,
+        cameras_json=(work / "gaussian" / "cameras.json") if pose_meta else None,
+        images_dir=(work / "gaussian" / "images") if pose_meta else None,
+    )
+
+    # ---- 4.3. 用户实测参考值 → 统一米/当前单位比例 → 长度结果 ----
+    # 前两个参考用于求统一比例；第三个（如有）保留为独立验收，避免拿答案自测。
+    from pipeline.measurement_builder import build_measurements_file
+    reference_measurements = list(scan.reference_measurements or [])
+    validation_keys = {
+        (str(item.get("object_type")), str(item.get("dimension")))
+        for item in reference_measurements[2:]
+    }
+    measurements = build_measurements_file(
+        work / "postprocess" / "structure.json",
+        work / "postprocess" / "measurements.json",
+        reference_measurements,
+        validation_keys=validation_keys,
+        calibrated_structure_json=work / "postprocess" / "structure_calibrated.json",
+    )
+    # 通路与净距：家具 footprint 净距、可行走面积、门→床路径与最窄通道宽
+    try:
+        from pipeline.passage_builder import build_passage_metrics
+
+        measurements = build_passage_metrics(
+            post["aligned_ply"],
+            work / "postprocess" / "structure_calibrated.json"
+            if (work / "postprocess" / "structure_calibrated.json").is_file()
+            else work / "postprocess" / "structure.json",
+            work / "postprocess" / "measurements.json",
+        )
+    except Exception as exc:  # noqa: BLE001 - 通路失败不阻断主链
+        logger.warning("passage_builder_failed scan_id=%s reason=%s", scan.id, str(exc)[:300])
+    # 2.5D 结构图（中文标注 + 家具尺寸）
+    try:
+        from pipeline.structure_figure import render_structure_plan
+
+        render_structure_plan(
+            work / "postprocess" / "measurements.json",
+            work / "postprocess" / "structure_calibrated.json"
+            if (work / "postprocess" / "structure_calibrated.json").is_file()
+            else work / "postprocess" / "structure.json",
+            work / "postprocess" / "structure_plan.png",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("structure_figure_failed scan_id=%s reason=%s", scan.id, str(exc)[:300])
+
+    # ---- 4.5. Gaussian 仅保留为显式实验分支；正式双视图不依赖它 ----
     gaussian_meta: dict | None = None
 
     def on_gaussian_progress(_name: str, _line: str) -> None:
         pass  # 进度由扫描状态粗粒度呈现
 
-    try:
-        from pipeline import gaussian_runner
+    if os.getenv("GAUSSIAN_EXPERIMENTAL_ENABLED", "false").lower() in {"1", "true", "yes", "on"}:
+        _stage(db, scan, "gaussian", 92, "Gaussian 实验场景重建中")
+        stage_started = time.perf_counter()
+        try:
+            from pipeline import gaussian_runner
 
-        gaussian_meta = gaussian_runner.run_gaussian(
-            work / "slam3r" / "scene" / "preds",
-            work,
-            progress_callback=on_gaussian_progress,
-        )
-        timings["gaussian_seconds"] = gaussian_meta["seconds"]
-    except RuntimeError as exc:
-        logger.warning("gaussian_skipped scan_id=%s reason=%s", scan.id, str(exc)[:300])
-        timings["gaussian_seconds"] = time.perf_counter() - stage_started
+            gaussian_meta = gaussian_runner.run_gaussian(
+                work / "slam3r" / "scene" / "preds", work,
+                progress_callback=on_gaussian_progress,
+            )
+            timings["gaussian_seconds"] = gaussian_meta["seconds"]
+        except RuntimeError as exc:
+            logger.warning("gaussian_skipped scan_id=%s reason=%s", scan.id, str(exc)[:300])
+            timings["gaussian_seconds"] = time.perf_counter() - stage_started
 
     # ---- 5. 报告与预览清单 ----
     _stage(db, scan, "previewing", 95, "生成 3D 预览中")
@@ -246,7 +329,7 @@ def _run_slam3r_pipeline(
 
     measures = {
         "coordinate_unit": "meters",
-        "scale_status": "estimated_ceiling_height",
+        "scale_status": measurements.get("scale", {}).get("status", "calibration_failed"),
         "reconstruction_backend": "slam3r",
         "understanding_backend": "spatiallm1.1-qwen-0.5b",
         "spatial_understanding": {
@@ -257,6 +340,8 @@ def _run_slam3r_pipeline(
             "windows": boxes["windows"],
             "objects": boxes["objects"],
         },
+        "structure": structure,
+        "measurements": measurements,
         "alignment": post["metadata"]["alignment"],
         "scale": post["metadata"]["scale"],
         "extents_m": post["metadata"]["extents_m"],
@@ -270,8 +355,8 @@ def _run_slam3r_pipeline(
             "views": gaussian_meta["views"] if gaussian_meta else None,
             "seconds": gaussian_meta["seconds"] if gaussian_meta else None,
         },
-        # 长度测量、风险识别与评分：暂缓实现（后续阶段在此扩展）。
-        "deferred": ["length_measurement", "risk_identification", "scoring"],
+        # 风险识别与评分需等待家具几何验收；长度与通道已经接入。
+        "deferred": ["risk_identification", "scoring"],
     }
     preview = {
         "viewer": f"/preview/{scan.id}",
@@ -279,6 +364,8 @@ def _run_slam3r_pipeline(
         "ply": f"/api/preview/{scan.id}/scene.ply",
         "gaussian_ply": f"/api/preview/{scan.id}/gaussian.ply" if gaussian_meta else None,
         "layout": f"/api/preview/{scan.id}/layout.json",
+        "structure": f"/api/preview/{scan.id}/structure.json",
+        "measurements": f"/api/preview/{scan.id}/measurements.json",
         "backend": "slam3r",
     }
     _upsert_report(
@@ -290,7 +377,7 @@ def _run_slam3r_pipeline(
         advice=[],
         images=[],
         preview=preview,
-        calibrated=0,
+        calibrated=1 if measurements.get("scale", {}).get("status") == "metric_references" else 0,
     )
     _stage(db, scan, "done", 100, "重建完成")
     logger.info(
