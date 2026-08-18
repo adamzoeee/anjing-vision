@@ -159,6 +159,12 @@ def train(work_dir: Path, iters: int = 8000) -> dict:
             means_e, scales_e, quats_e, opa_e, sh0_e, shN_e,
             format="ply", save_to=str(work_dir / "gaussian.ply"),
         )
+        # export_splats 保存的是 gsplat 激活值；网页查看器需要 INRIA 的
+        # log-scale/logit-opacity/SH 颜色以及 xyzw 四元数表示。
+        from convert_web_ply import convert as convert_web_ply
+        convert_web_ply(work_dir / "gaussian.ply", work_dir / "gaussian_web.ply")
+        from convert_web_ply import convert_splat as convert_web_splat
+        convert_web_splat(work_dir / "gaussian.ply", work_dir / "gaussian_web.splat")
     elapsed = time.perf_counter() - started
     print(f"TRAIN_DONE iters={iters} gauss={means_e.shape[0]} seconds={elapsed:.0f}", flush=True)
     return {"gaussian_ply": str(work_dir / "gaussian.ply"), "gaussians": int(means_e.shape[0]),
