@@ -97,6 +97,46 @@ def estimate_reference_scale(
     }
 
 
+def _estimate_forced_reference_scale(
+    structure: dict, references: Iterable[dict], *, original_failure: dict,
+) -> tuple[float | None, dict]:
+    """兼容旧版输出：仅从已接受的结构对象中选择一个参考恢复近似尺度。"""
+    references = [dict(item) for item in references]
+    # 门的结构几何通常比语义家具片段稳定；没有门时才退到已接受家具。
+    ordered = sorted(references, key=lambda item: 0 if item.get("object_type") == "door" else 1)
+    details: list[dict] = []
+    for reference in ordered:
+        object_type, dimension = _reference_key(reference)
+        if object_type == "door":
+            item = next(iter(structure.get("doors", [])), None)
+        else:
+            wanted = TYPE_LABELS.get(object_type, object_type)
+            item = next((
+                candidate for candidate in structure.get("objects", [])
+                if candidate.get("label") == wanted
+            ), None)
+        measured = _measured_dimension(item, object_type, dimension) if item else None
+        if measured is None:
+            details.append({**reference, "status": "not_detected"})
+            continue
+        scale = float(reference["meters"]) / measured
+        details.append({
+            **reference, "status": "used_forced", "model_units": measured, "scale": scale,
+        })
+        return scale, {
+            "status": METRIC_SCALE_STATUS,
+            "scale": scale,
+            "max_relative_disagreement": None,
+            "references": details,
+            "forced_estimate": True,
+            "confidence": "low",
+            "method": "single_accepted_reference_compatibility",
+            "reason": "强制兼容模式：仅使用一个已接受参考尺寸，结果仅供估算",
+            "original_failure": original_failure,
+        }
+    return None, original_failure
+
+
 def _scale_item(item: dict, scale: float) -> None:
     for key in ("center", "size"):
         if isinstance(item.get(key), list):
@@ -160,18 +200,34 @@ def _measurement_gate(instance: dict, metric_available: bool) -> tuple[str, str]
     return "verified", "confidence_chain_verified"
 
 
-def _formal_object_measurement(instance: dict, scale: float | None) -> tuple[dict, dict]:
+def _formal_object_measurement(
+    instance: dict, scale: float | None, *, force_legacy_measurements: bool = False,
+) -> tuple[dict, dict]:
     metric_available = scale is not None
     status, reason = _measurement_gate(instance, metric_available)
     semantic_confidence = _semantic_confidence(instance)
-    dimensions = _dims_from_size(instance, scale=float(scale)) if status == "verified" else _empty_dimensions()
+    geometry_source = instance
+    forced_estimate = False
+    if (
+        force_legacy_measurements and metric_available and status != "verified"
+        and instance.get("status") == "stable"
+        and isinstance(instance.get("estimated_size"), list)
+    ):
+        geometry_source = {**instance, "size": instance["estimated_size"]}
+        status, reason = "verified", "forced_low_confidence_geometry_estimate"
+        forced_estimate = True
+    dimensions = (
+        _dims_from_size(geometry_source, scale=float(scale))
+        if status == "verified" else _empty_dimensions()
+    )
+    center_source = geometry_source.get("center") or geometry_source.get("estimated_center") or []
     result = {
         "id": instance.get("instance_id"), "instance_id": instance.get("instance_id"),
         "type": instance.get("normalized_label") or instance.get("label"), **dimensions,
-        "center": [float(value) * float(scale) for value in instance.get("center", [])]
+        "center": [float(value) * float(scale) for value in center_source]
         if status == "verified" else None,
-        "rotation_z_deg": instance.get("rotation_z_deg"),
-        "confidence": "high" if status == "verified" else "low",
+        "rotation_z_deg": geometry_source.get("rotation_z_deg", geometry_source.get("estimated_rotation_z_deg")),
+        "confidence": "low" if forced_estimate else "high" if status == "verified" else "low",
         "measurement_status": status, "measurement_reason": reason,
         "semantic_status": "reliable" if semantic_confidence in {"high", "medium"} else "insufficient",
         "semantic_confidence": semantic_confidence,
@@ -181,8 +237,9 @@ def _formal_object_measurement(instance: dict, scale: float | None) -> tuple[dic
         "geometry_confidence": instance.get("geometry_confidence"),
         "scale_status": METRIC_SCALE_STATUS if metric_available else "failed",
         "measurement_ready": bool(instance.get("measurement_ready")),
-        "risk_eligibility": "eligible" if status == "verified" else "not_evaluable",
-        "source": "semantic_instance_confidence_chain",
+        "risk_eligibility": "not_evaluable" if forced_estimate else "eligible" if status == "verified" else "not_evaluable",
+        "source": "forced_legacy_geometry_estimate" if forced_estimate else "semantic_instance_confidence_chain",
+        "forced_estimate": forced_estimate,
     }
     diagnostic = {
         **{key: result.get(key) for key in (
@@ -198,11 +255,104 @@ def _formal_object_measurement(instance: dict, scale: float | None) -> tuple[dic
     return result, diagnostic
 
 
+def _attach_geometry_estimates(instances: list[dict], geometry_diagnostics: dict | None) -> list[dict]:
+    """把阶段4诊断中的临时几何作为估算候选，不改变正式 bbox/size。"""
+    diagnostics = (geometry_diagnostics or {}).get("instances", [])
+    by_id = {str(item.get("instance_id")): item for item in diagnostics}
+    enriched: list[dict] = []
+    for source in instances:
+        instance = dict(source)
+        diagnostic = by_id.get(str(instance.get("instance_id")), {})
+        values = [diagnostic.get(key) for key in ("length", "width", "height")]
+        if all(isinstance(value, (int, float)) and float(value) > 0 for value in values):
+            instance["estimated_size"] = [float(value) for value in values]
+            rectangle = diagnostic.get("xy_rectangle") or {}
+            z_range = diagnostic.get("z_range") or {}
+            center_xy = rectangle.get("center_xy")
+            z_bottom, z_top = z_range.get("z_bottom"), z_range.get("z_top")
+            if (
+                isinstance(center_xy, list) and len(center_xy) >= 2
+                and isinstance(z_bottom, (int, float)) and isinstance(z_top, (int, float))
+            ):
+                instance["estimated_center"] = [
+                    float(center_xy[0]), float(center_xy[1]), float(z_bottom + z_top) / 2,
+                ]
+            instance["estimated_rotation_z_deg"] = diagnostic.get("rotation")
+            instance["estimated_geometry_reason"] = diagnostic.get("reason")
+        enriched.append(instance)
+    return enriched
+
+
+def _select_forced_measurement_instances(instances: list[dict]) -> list[dict]:
+    """兼容模式下同类别只保留最强临时几何，避免碎片重复显示。"""
+    verified = [item for item in instances if isinstance(item.get("size"), list)]
+    best_estimates: dict[str, dict] = {}
+    for item in instances:
+        if isinstance(item.get("size"), list) or not isinstance(item.get("estimated_size"), list):
+            continue
+        label = str(item.get("normalized_label") or item.get("label") or "unknown")
+        score = (
+            float(item.get("geometry_confidence") or 0.0),
+            int(item.get("point_count") or 0),
+        )
+        current = best_estimates.get(label)
+        current_score = (
+            float(current.get("geometry_confidence") or 0.0),
+            int(current.get("point_count") or 0),
+        ) if current else (-1.0, -1)
+        if score > current_score:
+            best_estimates[label] = item
+    return verified + list(best_estimates.values())
+
+
+def _materialize_forced_instance_geometry(instances: list[dict]) -> list[dict]:
+    """仅为兼容测量副本补出 center/size；正式 semantic structure 不受影响。"""
+    materialized: list[dict] = []
+    for source in _select_forced_measurement_instances(instances):
+        item = dict(source)
+        if not isinstance(item.get("size"), list) and isinstance(item.get("estimated_size"), list):
+            item["size"] = list(item["estimated_size"])
+            item["center"] = list(item.get("estimated_center") or item.get("center") or [0.0, 0.0, 0.0])
+            item["rotation_z_deg"] = item.get("estimated_rotation_z_deg") or 0.0
+            item["forced_estimate"] = True
+        materialized.append(item)
+    return materialized
+
+
+def _forced_legacy_object_measurement(source: dict, scale: float) -> dict:
+    """输出旧 SpatialLM 已接受对象的近似尺寸，但永不放入风险规则。
+
+    measurement_status 用 "estimated" 而非 "verified"：纯 SpatialLM 候选
+    没有多视角语义/实例证据，其尺寸只能作展示参考，不得进入验收对比
+    （验收只接受 verified 的正式测量）。"""
+    return {
+        "id": source.get("instance_id"), "instance_id": source.get("instance_id"),
+        "type": source.get("label"), **_dims_from_size(source, scale=scale),
+        "center": [float(value) * scale for value in source.get("center", [])],
+        "rotation_z_deg": source.get("rotation_z_deg", 0),
+        "confidence": "low", "measurement_status": "estimated",
+        "measurement_reason": "forced_legacy_spatiallm_estimate",
+        "semantic_status": "legacy_candidate", "semantic_confidence": "low",
+        "instance_status": "legacy", "instance_confidence": source.get("support_ratio"),
+        "geometry_status": source.get("geometry_status", "legacy"),
+        "geometry_confidence": source.get("geometry_confidence"),
+        "scale_status": METRIC_SCALE_STATUS, "measurement_ready": False,
+        "risk_eligibility": "not_evaluable", "source": "forced_legacy_spatiallm_estimate",
+        "forced_estimate": True,
+    }
+
+
 def _coverage(items: list[dict]) -> dict:
-    verified = sum(item.get("measurement_status") == "verified" for item in items)
+    verified = sum(
+        item.get("measurement_status") == "verified"
+        and item.get("risk_eligibility") == "eligible"
+        for item in items
+    )
+    estimated = sum(bool(item.get("forced_estimate") or item.get("forced_scale")) for item in items)
     total = len(items)
     return {
-        "verified_count": verified, "unavailable_count": total - verified,
+        "verified_count": verified, "estimated_count": estimated,
+        "unavailable_count": total - verified - estimated,
         "total_count": total, "percent": round(verified / total * 100, 1) if total else 0.0,
     }
 
@@ -212,6 +362,8 @@ def build_measurements(
     references: Iterable[dict],
     *,
     validation_keys: set[tuple[str, str]] | None = None,
+    force_legacy_measurements: bool = False,
+    geometry_diagnostics: dict | None = None,
 ) -> dict:
     """恢复尺度并生成只包含可信正式米制值的 measurements 数据。"""
     references = [dict(item) for item in references]
@@ -222,7 +374,12 @@ def build_measurements(
         (validation if _reference_key(item) in validation_keys else calibration).append(item)
 
     scale, scale_quality = estimate_reference_scale(structure, calibration)
+    if scale is None and force_legacy_measurements:
+        scale, scale_quality = _estimate_forced_reference_scale(
+            structure, calibration, original_failure=scale_quality,
+        )
     metric_available = scale is not None and scale_quality.get("status") == METRIC_SCALE_STATUS
+    forced_scale = bool(scale_quality.get("forced_estimate"))
     metric_structure = _scaled_structure(structure, float(scale)) if metric_available else None
 
     room = (metric_structure or {}).get("room", {})
@@ -233,8 +390,9 @@ def build_measurements(
         room_result = {
             "length_m": horizontal[0], "width_m": horizontal[1],
             "height_m": float(room.get("height_m", 0)) or None,
-            "confidence": "medium", "measurement_status": "verified",
-            "measurement_reason": "metric_scale_available", "source": "aligned_pointcloud_bounds",
+            "confidence": "low" if forced_scale else "medium", "measurement_status": "verified",
+            "measurement_reason": "forced_single_reference_scale" if forced_scale else "metric_scale_available",
+            "source": "aligned_pointcloud_bounds", "forced_scale": forced_scale,
         }
     else:
         room_result = {
@@ -256,7 +414,7 @@ def build_measurements(
                 "id": f"{singular}_{index:02d}", "type": singular,
                 **(_dims_from_size(scaled_source, opening=True) if ready else _empty_dimensions(opening=True)),
                 "center": scaled_source.get("center") if ready else None,
-                "confidence": "medium" if ready else "unknown",
+                "confidence": "low" if ready and forced_scale else "medium" if ready else "unknown",
                 "measurement_status": "verified" if ready else "unavailable",
                 "measurement_reason": "structural_geometry_and_scale_verified" if ready
                 else "scale_unavailable" if not metric_available else "geometry_not_verified",
@@ -264,20 +422,40 @@ def build_measurements(
                 "geometry_status": raw_source.get("geometry_status", "unknown"),
                 "geometry_confidence": raw_source.get("geometry_confidence"),
                 "scale_status": scale_quality.get("status", "failed"), "measurement_ready": ready,
-                "risk_eligibility": "eligible" if ready else "not_evaluable",
+                "risk_eligibility": "eligible" if ready and not forced_scale else "not_evaluable",
                 "source": "verified_opening_geometry",
+                "forced_scale": forced_scale,
             })
 
     objects: list[dict] = []
     diagnostics: list[dict] = []
     semantic_instances = structure.get("semantic_instances", [])
     if isinstance(semantic_instances, list):
+        semantic_instances = _attach_geometry_estimates(semantic_instances, geometry_diagnostics)
+        if force_legacy_measurements:
+            semantic_instances = _select_forced_measurement_instances(semantic_instances)
         for instance in semantic_instances:
-            result, diagnostic = _formal_object_measurement(instance, float(scale) if metric_available else None)
+            result, diagnostic = _formal_object_measurement(
+                instance, float(scale) if metric_available else None,
+                force_legacy_measurements=force_legacy_measurements,
+            )
             result["scale_status"] = scale_quality.get("status", "failed")
             diagnostic["scale_status"] = scale_quality.get("status", "failed")
+            if forced_scale and result.get("measurement_status") == "verified":
+                result.update(
+                    confidence="low", risk_eligibility="not_evaluable", forced_scale=True,
+                )
+                diagnostic.update(risk_eligibility="not_evaluable", forced_scale=True)
             objects.append(result)
             diagnostics.append(diagnostic)
+    if force_legacy_measurements and metric_available:
+        existing_ids = {str(item.get("instance_id")) for item in objects}
+        for source in structure.get("objects", []):
+            if not isinstance(source.get("size"), list):
+                continue
+            if str(source.get("instance_id")) in existing_ids:
+                continue
+            objects.append(_forced_legacy_object_measurement(source, float(scale)))
 
     checks: list[dict] = []
     for truth in validation:
@@ -287,7 +465,11 @@ def build_measurements(
             candidate = next((item for item in openings if item["type"] == "door" and item["measurement_status"] == "verified"), None)
         else:
             wanted = TYPE_LABELS.get(object_type, object_type)
-            candidate = next((item for item in objects if item["type"] == wanted and item["measurement_status"] == "verified"), None)
+            candidate = next((
+                item for item in objects
+                if item["type"] in {wanted, object_type}
+                and item["measurement_status"] == "verified"
+            ), None)
         predicted = candidate.get(f"{dimension}_m") if candidate else None
         checks.append({
             **truth, "predicted_m": predicted,
@@ -303,6 +485,7 @@ def build_measurements(
     return {
         "schema_version": 2, "coordinate_unit": "meters" if metric_available else "scene_units",
         "metric_scale_available": metric_available,
+        "force_legacy_measurements": bool(force_legacy_measurements),
         "scale": {
             **scale_quality, "scale_factor": float(scale) if metric_available else None,
             "global_rescale_applied": metric_available,
@@ -342,7 +525,9 @@ def build_risk_inputs(measurements: dict) -> dict:
     """把 formal measurements 转为带资格状态的规则输入。"""
     door = next((
         item for item in measurements.get("openings", [])
-        if item.get("type") == "door" and item.get("measurement_status") == "verified"
+        if item.get("type") == "door"
+        and item.get("measurement_status") == "verified"
+        and item.get("risk_eligibility") == "eligible"
     ), None)
     passage = measurements.get("passage") or {}
     passage_eligible = (
@@ -392,15 +577,31 @@ def build_measurements_file(
     validation_keys=None,
     calibrated_structure_json: Path | None = None,
     diagnostics_json: Path | None = None,
+    geometry_diagnostics_json: Path | None = None,
+    force_legacy_measurements: bool = False,
 ) -> dict:
     structure = json.loads(Path(structure_json).read_text(encoding="utf-8"))
-    result = build_measurements(structure, references, validation_keys=validation_keys)
+    geometry_diagnostics = None
+    if geometry_diagnostics_json is not None and Path(geometry_diagnostics_json).is_file():
+        geometry_diagnostics = json.loads(Path(geometry_diagnostics_json).read_text(encoding="utf-8"))
+    measurement_structure = structure
+    if force_legacy_measurements and geometry_diagnostics is not None:
+        measurement_structure = json.loads(json.dumps(structure))
+        enriched = _attach_geometry_estimates(
+            list(measurement_structure.get("semantic_instances", [])), geometry_diagnostics,
+        )
+        measurement_structure["semantic_instances"] = _materialize_forced_instance_geometry(enriched)
+    result = build_measurements(
+        measurement_structure, references, validation_keys=validation_keys,
+        force_legacy_measurements=force_legacy_measurements,
+        geometry_diagnostics=geometry_diagnostics,
+    )
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)
     Path(output_json).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     scale = result.get("scale", {}).get("scale_factor")
     if calibrated_structure_json is not None and result.get("metric_scale_available") and scale:
         Path(calibrated_structure_json).write_text(
-            json.dumps(_scaled_structure(structure, float(scale)), ensure_ascii=False, indent=2),
+            json.dumps(_scaled_structure(measurement_structure, float(scale)), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     elif calibrated_structure_json is not None and Path(calibrated_structure_json).is_file():

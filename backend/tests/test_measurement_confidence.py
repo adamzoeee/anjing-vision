@@ -61,6 +61,43 @@ def test_low_confidence_geometry_is_unavailable():
     assert item["measurement_reason"] == "geometry_not_verified"
 
 
+def test_forced_legacy_mode_uses_single_accepted_reference_and_tentative_geometry():
+    structure = _structure(ready=False, geometry_status="low_confidence")
+    result = build_measurements(
+        structure,
+        _references()[:1],
+        force_legacy_measurements=True,
+        geometry_diagnostics={"instances": [{
+            "instance_id": "bed_001", "length": 1.8, "width": 1.3, "height": 0.4,
+            "rotation": 12.0,
+            "xy_rectangle": {"center_xy": [1.0, 1.0]},
+            "z_range": {"z_bottom": 0.0, "z_top": 0.4},
+            "reason": "geometry_confidence_too_low",
+        }]},
+    )
+    item = next(item for item in result["objects"] if item["instance_id"] == "bed_001")
+    assert result["metric_scale_available"] is True
+    assert result["scale"]["forced_estimate"] is True
+    assert item["measurement_status"] == "verified"
+    assert item["forced_estimate"] is True
+    assert item["risk_eligibility"] == "not_evaluable"
+    assert item["length_m"] == pytest.approx(1.8)
+
+
+def test_forced_legacy_measurement_never_enters_risk_score():
+    result = build_measurements(
+        _structure(ready=False, geometry_status="low_confidence"),
+        _references()[:1],
+        force_legacy_measurements=True,
+        geometry_diagnostics={"instances": [{
+            "instance_id": "bed_001", "length": 1.8, "width": 1.3, "height": 0.4,
+        }]},
+    )
+    forced = next(item for item in result["objects"] if item.get("forced_estimate"))
+    assert forced["risk_eligibility"] == "not_evaluable"
+    assert build_risk_inputs(result)["passage_width_m"] is None
+
+
 def test_scale_failure_continues_without_fake_metric_values():
     result = build_measurements(_structure(), _references()[:1])
     assert result["scale"]["status"] == "failed"

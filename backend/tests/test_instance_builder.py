@@ -100,3 +100,35 @@ def test_stage2_bed_points_remain_one_stable_instance():
     assert stable[0]["support_views"] == 4
     assert stable[0]["point_count"] >= 450
 
+
+def test_candidate_box_augments_partial_mask_bed_instance():
+    """mask 只覆盖半边床（扫描 11 实况）时，候选框补全应把整张床点并入实例。
+
+    床点分布在 X[-1.2, 1.2]（完整 2.4m），但 mask 只投到 X[-0.3, 1.2]（右半边）；
+    SpatialLM 候选框覆盖完整床。stable 实例应补全为整张床，而不是只有半张。
+    """
+    rng = np.random.default_rng(41)
+    full_bed = rng.normal([0.0, 0.0, 0.45], [0.60, 0.35, 0.08], size=(900, 3))
+    # mask 只覆盖右半边（X > -0.3 的点）
+    masked = full_bed[full_bed[:, 0] > -0.3]
+    groups = [(view, np.arange(len(masked))) for view in (4, 8, 12, 16)]
+
+    payload, diagnostics, point_sets = build_semantic_instances(
+        full_bed, _fusion(full_bed, "床", groups), _structure(),
+        _candidate("bed", [0, 0, 0.45], [2.6, 1.8, 0.7]),
+    )
+
+    stable = [item for item in payload["instances"] if item["status"] == "stable"]
+    assert len(stable) == 1, [item["status"] for item in payload["instances"]]
+    ids = point_sets[stable[0]["instance_id"]]
+    pts = full_bed[ids]
+    # 补全后实例应覆盖整张床（X 跨度接近 2.4m），而不是只有 mask 的右半边（~1.5m）
+    x_span = float(np.max(pts[:, 0]) - np.min(pts[:, 0]))
+    assert x_span > 1.9, f"候选框补全后床 X 跨度应接近全床，实际 {x_span:.2f}m"
+    # 补全不引入候选框外的点
+    assert np.max(pts[:, 0]) <= 1.8
+    assert np.min(pts[:, 0]) >= -1.8
+    # 补全记录在诊断中可追溯
+    assert diagnostics["candidate_results"][0]["generated_instance_count"] >= 1
+
+

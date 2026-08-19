@@ -195,6 +195,130 @@ def _candidate_group(record: dict) -> str | None:
     return aliases.get(normalized)
 
 
+def _augment_from_candidate_boxes(
+    cluster: np.ndarray,
+    associations: list[dict],
+    candidate_records: list[dict],
+    points: np.ndarray,
+    canonical_group: str,
+) -> np.ndarray:
+    """stable 实例点集补全：并入同类别 SpatialLM 候选框内、与实例点 3D 连通的未标记点。
+
+    背景：视频 mask 只覆盖物体局部（如床只在后半段视角被 GroundingDINO 检出），
+    实例点集会缺一整片，导致几何拟合尺寸偏小。SpatialLM 候选框覆盖完整物体，
+    按指南作为“几何先验”：候选框内、距实例点足够近的点并入实例；
+    不跨类别、不引入候选框外的墙/地板/邻物点。
+    """
+    if len(cluster) == 0:
+        return cluster
+    records = {record.get("candidate_id"): record for record in candidate_records}
+    cluster_set = set(int(value) for value in cluster)
+    seed_set = set(int(value) for value in cluster)
+    box_ids: list[np.ndarray] = []
+    for item in associations:
+        record = records.get(item.get("candidate_id"))
+        if record is None:
+            continue
+        if _candidate_group(record) != canonical_group:
+            continue
+        candidate = record.get("spatiallm_candidate", {})
+        bbox = record.get("geometry", {}).get("bbox")
+        if bbox is None:
+            bbox = {
+                "center": candidate.get("center"), "size": candidate.get("size"),
+                "rotation_z_deg": candidate.get("rotation_z_deg", 0.0),
+            }
+        if not bbox or bbox.get("center") is None or bbox.get("size") is None:
+            continue
+        center = np.asarray(bbox["center"], dtype=float)
+        size = np.asarray(bbox["size"], dtype=float)
+        if center.shape != (3,) or size.shape != (3,):
+            continue
+        theta = float(bbox.get("rotation_z_deg", 0.0))
+        angle = theta if bbox.get("rotation_unit") == "radians" else np.deg2rad(theta)
+        delta = points - center
+        lx = delta[:, 0] * np.cos(angle) + delta[:, 1] * np.sin(angle)
+        ly = -delta[:, 0] * np.sin(angle) + delta[:, 1] * np.cos(angle)
+        inside = (
+            (np.abs(lx) <= size[0] / 2 + 0.10)
+            & (np.abs(ly) <= size[1] / 2 + 0.10)
+            & (np.abs(delta[:, 2]) <= size[2] / 2 + 0.10)
+        )
+        inside &= ~np.isin(np.arange(len(points)), list(cluster_set))
+        box_ids.append(np.flatnonzero(inside))
+    if not box_ids:
+        return cluster
+    candidate_extra = np.unique(np.concatenate(box_ids))
+    if len(candidate_extra) == 0:
+        return cluster
+    # stable 实例候选框补全：床/桌等大物体常只有部分视角被 DINO 检出（如床只被
+    # 后半段视角看到），实例点集缺一整片。SpatialLM 候选框覆盖完整物体，作为
+    # 几何先验：在“实例点 ∪ 候选框内点”上重新聚类，取包含原实例点的连通簇。
+    # 这样连续缺失区（床左半边）自然并入，而候选框角落的墙/邻物点（与实例点
+    # 不连通）被排除。Z 带过滤先剔除地面与墙上悬挂物。
+    from scipy.spatial import cKDTree
+
+    eps = _instance_eps(points, cluster)
+    cluster_pts = points[cluster]
+    z_lo = float(np.percentile(cluster_pts[:, 2], 5))
+    z_hi = float(np.percentile(cluster_pts[:, 2], 95))
+    z_span = max(z_hi - z_lo, 0.05)
+    extra_pts = points[candidate_extra]
+    z_band = (
+        (extra_pts[:, 2] >= z_lo - 0.6 * z_span)
+        & (extra_pts[:, 2] <= z_hi + 0.6 * z_span)
+    )
+    in_band = candidate_extra[z_band]
+    if len(in_band) == 0:
+        return cluster
+    # 距离阈值取 eps 与 0.35m 的较大值：床面点云密度约 0.03~0.08m 间隔，
+    # 0.35m 足够跨过局部遮挡空隙，又不会把候选框角落的邻物（通常 >0.5m）并入。
+    connectivity = max(eps, 0.35)
+    pool = np.unique(np.concatenate([cluster, in_band]))
+    if len(pool) > 120_000:
+        # 大候选框（如床 50 万点）直接建邻接图会 O(n²) 内存爆炸。
+        # 体素下采样到 ~1/4 密度后再做连通域，仍保留完整空间范围。
+        import open3d as o3d
+
+        cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points[pool]))
+        down = cloud.voxel_down_sample(0.03)
+        down_ids = np.asarray(down.points)
+        origin_tree = cKDTree(points[pool])
+        _, nearest = origin_tree.query(down_ids, k=1)
+        pool = np.unique(pool[nearest])
+    pool_pts = points[pool]
+    tree = cKDTree(pool_pts)
+    # 用邻接表做连通域 BFS：只保留原实例点所在连通簇。
+    adjacency: list[list[int]] = [[] for _ in range(len(pool))]
+    for left, right in tree.query_pairs(connectivity):
+        adjacency[left].append(right)
+        adjacency[right].append(left)
+    seed_indices = [index for index, value in enumerate(pool) if int(value) in seed_set]
+    visited = set(seed_indices)
+    frontier = list(seed_indices)
+    while frontier:
+        current = frontier.pop()
+        for neighbor in adjacency[current]:
+            if neighbor not in visited:
+                visited.add(neighbor)
+                frontier.append(neighbor)
+    merged = np.asarray(sorted(int(pool[index]) for index in visited), dtype=np.int64)
+    return merged
+
+
+def _instance_eps(points: np.ndarray, cluster: np.ndarray) -> float:
+    """实例点中位最近邻距离 × 4（与 _adaptive_dbscan 的 eps 同源）。"""
+    from scipy.spatial import cKDTree
+    if len(cluster) < 2:
+        return 0.06
+    tree = cKDTree(points[cluster])
+    distances, _ = tree.query(points[cluster], k=2)
+    nn = distances[:, 1]
+    nn = nn[np.isfinite(nn) & (nn > 1e-6)]
+    spacing = float(np.median(nn)) if len(nn) else 0.03
+    return float(np.clip(spacing * 4.0, 0.06, 0.18))
+
+
 def _candidate_consistency(
     associations: list[dict], candidate_records: list[dict], canonical_group: str,
 ) -> tuple[float, list[dict]]:
@@ -408,6 +532,14 @@ def build_semantic_instances(
             associations = _associate_candidates(cluster, candidate_sets)
             candidate_score, associations = _candidate_consistency(
                 associations, candidate_records, label_resolution["canonical_group"],
+            )
+            # 候选框补全：stable 多视角证据 + 同类别 SpatialLM 候选框时，
+            # 把候选框内与实例点空间连通（自适应 eps 邻域）的未标记点并入实例，
+            # 弥补视频 mask 只覆盖物体局部（如床只被后半段视角看到）导致的边界不完整。
+            # 候选框只是几何先验：点必须与实例点 3D 邻近，且不能跨过候选类别冲突。
+            cluster = _augment_from_candidate_boxes(
+                cluster, associations, candidate_records, points,
+                label_resolution["canonical_group"],
             )
             fragment_count = max(sum(
                 len(np.intersect1d(cluster, source_fragment, assume_unique=True)) >= MIN_MASK_OVERLAP_POINTS

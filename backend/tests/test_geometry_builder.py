@@ -92,3 +92,34 @@ def test_low_confidence_instance_never_gets_bbox_or_dimensions():
     assert fitted["geometry_status"] == "low_confidence"
     assert diagnostic["reason"] == "instance_not_stable"
 
+
+def test_bed_frame_layer_does_not_inflate_bed_length():
+    """候选框补全把贴地床架点并入后，床垫主层过滤应剔除床架层，
+    避免床长方向被多拉出几十厘米（scan 11 实测问题）。"""
+    rng = np.random.default_rng(45)
+    # 床垫主层：Z 0.18~0.42，长 2.0 x 宽 1.5
+    mattress = _rotated_box_points(2.0, 1.5, 0.18, 0.42, 0.0, 2500, rng)
+    # 贴地床架/床腿：Z 0.03~0.10，位于床垫两端外侧（真实场景：床尾挡板延伸出床垫）
+    frame = np.column_stack([
+        rng.uniform(-1.35, -1.05, 600),
+        rng.uniform(-0.75, 0.75, 600),
+        rng.uniform(0.03, 0.10, 600),
+    ])
+    frame_right = np.column_stack([
+        rng.uniform(1.05, 1.35, 600),
+        rng.uniform(-0.75, 0.75, 600),
+        rng.uniform(0.03, 0.10, 600),
+    ])
+
+    fitted, diagnostic = fit_instance_geometry(
+        np.vstack([mattress, frame, frame_right]),
+        _instance(label="bed"), _structure(), _alignment(),
+    )
+
+    assert fitted["geometry_status"] == "verified"
+    # 床架层被剔除后，长度回到床垫的 2.0m（而非含床架的 2.7m）
+    assert fitted["dimensions"]["length"] == pytest.approx(2.0, abs=0.15)
+    assert fitted["dimensions"]["width"] == pytest.approx(1.5, abs=0.15)
+    assert diagnostic["filter_breakdown"].get("bed_end_frame_removed", 0) >= 800
+
+
