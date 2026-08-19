@@ -70,6 +70,58 @@ def _remove_structure_layers(
     }
 
 
+def _bed_end_frame_trim(xyz: np.ndarray, config: GeometryConfig) -> tuple[np.ndarray, dict]:
+    """床类：剔除长轴端部的贴地床架/床尾挡板层，防止床长被多拉长。
+
+    背景：候选框补全会把床尾贴地床架层（Z≈0.05~0.12，位于长轴一端）并入实例，
+    使床长方向多出 10~20 厘米。床垫主层 Z 用中位数 + MAD 定位；长轴端部
+    （超过 95% 主轴投影）且 Z 显著低于主层的点视为床架层剔除。床垫前缘
+    过渡带虽 Z 也低，但不在端部，不会被误删。
+    """
+    if len(xyz) < config.min_points:
+        return xyz, {"bed_end_frame_removed": 0, "mattress_z_center": None}
+    z = xyz[:, 2]
+    z_median = float(np.median(z))
+    mad = float(np.median(np.abs(z - z_median))) * 1.4826
+    spread = max(mad, 0.05)
+    # 长轴 = XY 最大方差方向（PCA 主轴 0）
+    xy = xyz[:, :2]
+    center = xy.mean(axis=0)
+    _, _, vh = np.linalg.svd(xy - center, full_matrices=False)
+    axis = vh[0]
+    proj = (xy - center) @ axis
+    lo, hi = float(np.percentile(proj, 1)), float(np.percentile(proj, 99))
+    margin = (hi - lo) * 0.15
+    low_ceiling = z_median - 0.06
+    trim_mask = np.zeros(len(xyz), dtype=bool)
+    removed = 0
+    # 端部范围延伸到真实极值（proj.max/min），不能停在 1%/99% 分位：
+    # 贴地床架层的最外端少量点会被 percentile 排除在“端部”之外，
+    # 导致剔除后床长不变。
+    lo_end = (float(proj.min()), lo + margin)
+    hi_end = (hi - margin, float(proj.max()))
+    for end_lo, end_hi in (lo_end, hi_end):
+        mask = (proj >= end_lo) & (proj <= end_hi)
+        count = int(mask.sum())
+        if count < max(config.min_points, 50) or count / len(xyz) >= 0.30:
+            continue
+        # 端部低层占比（Z 低于主层 0.06m 的点占比）>= 0.55 → 贴地床架/床尾
+        # 挡板层，整段剔除。真实床尾贴地层占比 0.58~0.74；床头端占比
+        # 0.09~0.13；薄床垫边缘端（无床架）占比 <0.3，均不会误剔。
+        low_ratio = float((z[mask] <= low_ceiling).mean())
+        if low_ratio >= 0.55:
+            trim_mask |= mask
+            removed += count
+    if removed == 0:
+        return xyz, {"bed_end_frame_removed": 0, "mattress_z_center": round(z_median, 3)}
+    keep = ~trim_mask
+    return xyz[keep], {
+        "bed_end_frame_removed": removed,
+        "mattress_z_center": round(z_median, 3),
+        "mattress_robust_mad": round(spread, 3),
+    }
+
+
 def _statistical_filter(xyz: np.ndarray, config: GeometryConfig) -> tuple[np.ndarray, int]:
     if len(xyz) < config.min_points:
         return xyz, 0
@@ -204,6 +256,13 @@ def fit_instance_geometry(
 
     cleaned, layer_stats = _remove_structure_layers(np.asarray(xyz, dtype=float), structure, config)
     cleaned, statistical_removed = _statistical_filter(cleaned, config)
+    # 床类实例：候选框补全可能把床尾/床头的贴地床架层并入（Z 显著低于床垫
+    # 主层，位于长轴端部），会把床长多拉出十几厘米。按长轴端部 + Z 低层
+    # 精准剔除，避免全局 Z 过滤误删床垫前缘过渡带。
+    label = str(instance.get("normalized_label", ""))
+    if label == "bed" and len(cleaned) >= config.min_points:
+        cleaned, bed_layer_stats = _bed_end_frame_trim(cleaned, config)
+        layer_stats = {**layer_stats, **bed_layer_stats}
     removed = int(len(xyz) - len(cleaned))
     diagnostic.update(
         filtered_points=int(len(cleaned)), outlier_removed=removed,

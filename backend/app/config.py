@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     apriltag_enabled: bool = True
     apriltag_family: str = "tagStandard41h12"
     apriltag_size_m: float = Field(default=0.09, gt=0.0, le=1.0)
+    force_legacy_measurements: bool = False
 
     auto_create_tables: bool = True
     default_page_size: int = Field(default=20, ge=1, le=100)
