@@ -67,7 +67,8 @@ def test_compute_score_uses_worst_risk_when_category_has_mixed_levels():
     })
 
     assert detail["parts"]["通行性"] == 0.0
-    assert score == 60.0
+    # 未评估类别不再按“安全”补满分；仅对实际评估类别归一化。
+    assert score == 0.0
 
 
 def test_compute_score_excludes_unknown_and_reports_assessment_completeness():
@@ -86,7 +87,7 @@ def test_compute_score_excludes_unknown_and_reports_assessment_completeness():
     score, detail = compute_score(measures)
 
     assert score == 100.0
-    assert detail["parts"] == {"通行性": 100.0, "跌倒风险": 100.0, "无障碍": 100.0}
+    assert detail["parts"] == {"通行性": 100.0, "跌倒风险": 100.0, "无障碍": None}
     assert detail["assessment_completeness"] == {
         "known_count": 5,
         "unknown_count": 2,
@@ -96,6 +97,10 @@ def test_compute_score_excludes_unknown_and_reports_assessment_completeness():
         "bathroom_door",
         "obstacle",
     }
+    assert all(
+        risk["assessment_status"] == "not_evaluable"
+        for risk in detail["risks"] if risk["level"] == "unknown"
+    )
 
 
 def test_compute_score_all_unknown_returns_none_instead_of_fake_perfect():

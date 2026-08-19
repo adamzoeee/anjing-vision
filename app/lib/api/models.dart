@@ -61,17 +61,28 @@ class Risk {
   final String name;
   final String level;
   final dynamic measure;
+  final String assessmentStatus;
+  final String? reason;
   Risk({
     required this.code,
     required this.name,
     required this.level,
     this.measure,
+    this.assessmentStatus = 'not_evaluable',
+    this.reason,
   });
   factory Risk.fromJson(Map<String, dynamic> j) => Risk(
     code: j['code'],
     name: j['name'],
     level: j['level'],
     measure: j['measure'],
+    assessmentStatus: j['assessment_status']?.toString() ??
+        (j['level'] == 'green'
+            ? 'evaluated_safe'
+            : j['level'] == 'red' || j['level'] == 'yellow'
+                ? 'evaluated_risk'
+                : 'not_evaluable'),
+    reason: j['reason']?.toString(),
   );
 }
 
