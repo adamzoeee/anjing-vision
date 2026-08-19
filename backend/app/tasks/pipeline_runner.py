@@ -350,6 +350,7 @@ def _run_slam3r_pipeline(
     # ---- 4.3. 用户实测参考值 → 统一米/当前单位比例 → 长度结果 ----
     # 前两个参考用于求统一比例；第三个（如有）保留为独立验收，避免拿答案自测。
     from pipeline.measurement_builder import build_measurements_file
+    s = get_settings()
     reference_measurements = list(scan.reference_measurements or [])
     validation_keys = {
         (str(item.get("object_type")), str(item.get("dimension")))
@@ -362,6 +363,8 @@ def _run_slam3r_pipeline(
         validation_keys=validation_keys,
         calibrated_structure_json=work / "postprocess" / "structure_calibrated.json",
         diagnostics_json=work / "diagnostics" / "measurement_diagnostics.json",
+        geometry_diagnostics_json=work / "diagnostics" / "geometry_diagnostics.json",
+        force_legacy_measurements=s.force_legacy_measurements,
     )
     # 通路与净距：家具 footprint 净距、可行走面积、门→床路径与最窄通道宽
     from pipeline.passage_builder import build_passage_metrics

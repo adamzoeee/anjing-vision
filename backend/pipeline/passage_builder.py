@@ -13,7 +13,13 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 
-from .passage_metrics import analyze_passage, floor_occupancy
+from .passage_metrics import (
+    analyze_passage,
+    corridor_clearance,
+    floor_occupancy,
+    measure_slope,
+    measure_threshold,
+)
 
 _CEILING_LABELS = {"chandelier", "curtain", "窗帘", "吊灯", "灯", "lamp"}
 
@@ -48,15 +54,18 @@ def _obb2d_distance(center_a, size_a, rot_a, center_b, size_b, rot_b) -> float:
     return 0.0
 
 
-def _box_points(points: np.ndarray, item: dict, margin: float = 0.12) -> np.ndarray:
+def _box_mask(points: np.ndarray, item: dict, margin: float = 0.12) -> np.ndarray:
     center = np.asarray(item["center"], dtype=float)
     half = np.asarray(item["size"], dtype=float) / 2 + margin
     theta = math.radians(float(item.get("rotation_z_deg", 0.0)))
     delta = points - center
     lx = delta[:, 0] * math.cos(theta) + delta[:, 1] * math.sin(theta)
     ly = -delta[:, 0] * math.sin(theta) + delta[:, 1] * math.cos(theta)
-    inside = (np.abs(lx) <= half[0]) & (np.abs(ly) <= half[1]) & (np.abs(delta[:, 2]) <= half[2])
-    return points[inside]
+    return (np.abs(lx) <= half[0]) & (np.abs(ly) <= half[1]) & (np.abs(delta[:, 2]) <= half[2])
+
+
+def _box_points(points: np.ndarray, item: dict, margin: float = 0.12) -> np.ndarray:
+    return points[_box_mask(points, item, margin)]
 
 
 def build_passage_metrics(
@@ -81,6 +90,7 @@ def build_passage_metrics(
         return measurements
 
     scale = float((measurements.get("scale") or {}).get("scale_factor") or 0.0)
+    forced_mode = bool(measurements.get("force_legacy_measurements"))
     if scale <= 0:
         raise ValueError("metric_scale_available=true but scale_factor is invalid")
 
@@ -90,7 +100,8 @@ def build_passage_metrics(
     formal_objects = {
         item.get("instance_id") or item.get("id"): item
         for item in measurements.get("objects", [])
-        if item.get("measurement_status") == "verified" and item.get("risk_eligibility") == "eligible"
+        if item.get("measurement_status") == "verified"
+        and (item.get("risk_eligibility") == "eligible" or forced_mode)
     }
     objects = [
         item for item in structure.get("semantic_instances", [])
@@ -98,6 +109,12 @@ def build_passage_metrics(
         and item.get("normalized_label") not in _CEILING_LABELS
         and isinstance(item.get("center"), list) and isinstance(item.get("size"), list)
     ]
+    if forced_mode:
+        objects.extend([
+            item for item in structure.get("objects", [])
+            if item.get("label") not in _CEILING_LABELS
+            and isinstance(item.get("center"), list) and isinstance(item.get("size"), list)
+        ])
 
     # ① 家具间净距离（米制 footprint 边缘距）
     distances = []
@@ -126,6 +143,7 @@ def build_passage_metrics(
         try:
             door_pts = _box_points(points, door, margin=0.15)
             bed_pts = _box_points(points, bed, margin=0.10)
+            bed_ids = np.where(_box_mask(points, bed, margin=0.10))[0]
             # 门洞区域必须从占用栅格中排除，否则墙面把出入口堵死（向量化 O(N)）
             dcenter = np.asarray(door["center"], dtype=float)
             dhalf = np.asarray(door["size"], dtype=float) / 2 + 0.15
@@ -138,12 +156,44 @@ def build_passage_metrics(
             )[0]
             grid, origin, cell = floor_occupancy(points, cell_size=0.05, exclude_ids=door_ids)
             walkable = round(float((~grid).sum()) * cell * cell, 2)
-            report = analyze_passage(points, door_pts, bed_pts)
+            report = analyze_passage(
+                points, door_pts, bed_pts, exclude_ids=door_ids, target_ids=bed_ids,
+            )
+            forced_fallback = False
+            if forced_mode and report.status != "ok":
+                # 旧版兼容输出：BFS 失败时仍给出直线走廊估算，但不进入风险评分。
+                fallback_grid, fallback_origin, fallback_cell = floor_occupancy(
+                    points, cell_size=0.05,
+                    exclude_ids=np.unique(np.concatenate([door_ids, bed_ids])),
+                )
+                width, narrowest = corridor_clearance(
+                    fallback_grid, fallback_origin, fallback_cell,
+                    door_pts[:, :2], bed_pts[:, :2],
+                )
+                report.passage_width_m = round(float(width), 3) if width is not None else None
+                report.narrowest_point = (
+                    [float(value) for value in narrowest] if narrowest is not None else None
+                )
+                report.path_length_m = round(float(np.linalg.norm(
+                    np.mean(door_pts[:, :2], axis=0) - np.mean(bed_pts[:, :2], axis=0)
+                )), 3)
+                threshold = measure_threshold(door_pts)
+                report.threshold_m = round(float(threshold), 3) if threshold < 0.3 else None
+                report.stairs_exist = bool(threshold >= 0.3)
+                lowest = points[np.argsort(points[:, 2])[:max(10, len(points) // 10)]]
+                slope = measure_slope(lowest)
+                report.slope = round(float(slope), 4) if slope is not None else None
+                if report.passage_width_m is not None:
+                    report.status = "ok"
+                    report.reason = "forced_direct_line_fallback"
+                    forced_fallback = True
             passage = {
                 "status": report.status,
-                "assessment_status": "evaluated" if report.status == "ok" else "not_evaluable",
+                "assessment_status": "evaluated" if report.status == "ok" and not forced_mode else "not_evaluable",
                 "reason": report.reason or None,
-                "risk_eligibility": "eligible" if report.status == "ok" else "not_evaluable",
+                "risk_eligibility": "eligible" if report.status == "ok" and not forced_mode else "not_evaluable",
+                "forced_estimate": forced_mode,
+                "forced_fallback": forced_fallback,
                 "passage_width_m": report.passage_width_m,
                 "narrowest_point": report.narrowest_point,
                 "path_length_m": report.path_length_m,
