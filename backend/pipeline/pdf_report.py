@@ -66,7 +66,9 @@ def _style() -> dict:
     }
 
 
-def _score_color(score: float) -> str:
+def _score_color(score: float | None) -> str:
+    if score is None:
+        return LEVEL_COLOR["unknown"]
     if score >= 80:
         return LEVEL_COLOR["green"]
     if score >= 60:
@@ -87,7 +89,7 @@ def _fmt(value, unit: str = "") -> str:
 def build_pdf_report(
     *,
     title: str,
-    score: float,
+    score: float | None,
     risks: list[dict],
     measures: dict,
     advice: list[str],
@@ -119,8 +121,9 @@ def build_pdf_report(
     calib_method = calibration.get("method", "—")
     scale_status = measures.get("scale_status", "relative")
     scale_text = "米制（已标定）" if scale_status == "metric_references" else "相对尺度"
+    score_text = f"{score:.1f}" if score is not None else "无法评分"
     story.append(Paragraph(
-        f'<font size="46" color="{_score_color(score)}"><b>{score:.1f}</b></font>',
+        f'<font size="46" color="{_score_color(score)}"><b>{score_text}</b></font>',
         styles["score"],
     ))
     story.append(Paragraph(
@@ -130,6 +133,18 @@ def build_pdf_report(
         styles["score"],
     ))
     story.append(Spacer(1, 4 * mm))
+
+    confidence = measures.get("confidence_summary") or {}
+    measurement_coverage = confidence.get("measurement_coverage") or measures.get("measurement_coverage") or {}
+    risk_coverage = confidence.get("risk_assessment_coverage") or measures.get("risk_assessment_coverage") or {}
+    story.append(Paragraph(
+        "重建状态：{}　语义状态：{}　尺度状态：{}　可靠测量：{}/{}　正式风险评估：{}/{}".format(
+            confidence.get("reconstruction_status", "—"), confidence.get("semantic_status", "—"),
+            confidence.get("scale_status", scale_status), measurement_coverage.get("verified_count", 0),
+            measurement_coverage.get("total_count", 0), risk_coverage.get("evaluated_count", 0),
+            risk_coverage.get("total_count", 0),
+        ), styles["small"],
+    ))
 
     # 测量值表
     story.append(Paragraph("一、空间测量", styles["h2"]))
@@ -169,6 +184,8 @@ def build_pdf_report(
             measure_text = "、".join(item.get("label", str(item)) for item in measure) if measure else "无"
         else:
             measure_text = _fmt(measure, risk.get("unit", ""))
+        if risk.get("assessment_status") == "not_evaluable":
+            measure_text = f"无法评估：{risk.get('reason') or '数据不足'}"
         risk_rows.append([
             RISK_NAMES.get(risk.get("code"), risk.get("name", "?")),
             measure_text,
