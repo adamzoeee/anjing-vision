@@ -358,29 +358,41 @@ def _flat_surface_band(cropped: np.ndarray) -> np.ndarray:
     return cropped[z > z_lo - 0.02]
 
 
-def _main_cluster(points: np.ndarray, small: bool) -> np.ndarray:
+def _main_cluster(points: np.ndarray, small: bool, diagnostic: dict | None = None) -> np.ndarray:
     if len(points) == 0:
+        if diagnostic is not None:
+            diagnostic.update(points_after_downsample=0, cluster_count=0, selected_cluster_points=0)
         return points
     cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
     cloud = cloud.voxel_down_sample(0.025 if small else 0.035)
     pts = np.asarray(cloud.points)
+    if diagnostic is not None:
+        diagnostic["points_after_downsample"] = int(len(pts))
     if len(pts) < (20 if small else 60):
+        if diagnostic is not None:
+            diagnostic.update(cluster_count=1 if len(pts) else 0, selected_cluster_points=int(len(pts)))
         return pts
     labels = np.asarray(cloud.cluster_dbscan(eps=0.11 if small else 0.16, min_points=8, print_progress=False))
     valid = labels >= 0
     if not valid.any():
+        if diagnostic is not None:
+            diagnostic.update(cluster_count=0, selected_cluster_points=0)
         return np.empty((0, 3))
     ids, counts = np.unique(labels[valid], return_counts=True)
-    return pts[labels == ids[np.argmax(counts)]]
+    selected = pts[labels == ids[np.argmax(counts)]]
+    if diagnostic is not None:
+        diagnostic.update(cluster_count=int(len(ids)), selected_cluster_points=int(len(selected)))
+    return selected
 
 
 def _fit_object(points: np.ndarray, candidate: dict, lo: np.ndarray, hi: np.ndarray,
-                other_objects: list[dict] | None = None) -> dict:
+                other_objects: list[dict] | None = None, diagnostic: dict | None = None) -> dict:
     source_label = str(candidate.get("category", "unknown")).lower().strip()
     label = LABEL_ALIASES.get(source_label, source_label)
     result = dict(candidate)
     result["label"] = label
     result["source_label"] = source_label
+    geometry_diagnostic = diagnostic.setdefault("geometry", {}) if diagnostic is not None else None
     if label not in DISPLAY_OBJECTS:
         result.update(geometry_status="rejected", rejection_reason="unsupported_category")
         return result
@@ -404,11 +416,17 @@ def _fit_object(points: np.ndarray, candidate: dict, lo: np.ndarray, hi: np.ndar
         expanded[2] = float(expanded[2]) + 1.5
         candidate["size"] = expanded
     cropped = _candidate_points(points, candidate)
+    if geometry_diagnostic is not None:
+        geometry_diagnostic["points_before_filter"] = int(len(cropped))
     # 根因修正 1：候选裁剪盒常把背后墙面包进来，先剔除整面墙的薄片，
     # 否则 DBSCAN 会选中“墙”而不是物体（书桌/床贴墙时长度被墙拉长）。
     cropped = _remove_wall_sheet(cropped, lo, hi)
+    if geometry_diagnostic is not None:
+        geometry_diagnostic["points_after_wall_filter"] = int(len(cropped))
     # 根因修正 2：剔除贴墙低矮长条物（矮柜/长凳），防止床/桌与它们粘连成对角簇。
     cropped = _remove_wall_strips(cropped, lo, hi)
+    if geometry_diagnostic is not None:
+        geometry_diagnostic["points_after_wall_strip_filter"] = int(len(cropped))
     # 根因修正 3：平放物体取表面带。桌类取“最高面带”（桌面），甩掉椅子等
     # 更低杂物；床/沙发取 p35 单侧截断（保留床面与床头板）。
     # 高柜（衣柜/柜子/书架）取 z>0.45 的“柜体带”：床面/桌面都在 0.45 以下，
@@ -421,6 +439,8 @@ def _fit_object(points: np.ndarray, candidate: dict, lo: np.ndarray, hi: np.ndar
             cropped = _flat_surface_band(cropped)
     elif label in {"wardrobe", "cabinet", "bookshelf", "tv_stand"} and len(cropped) > 0:
         cropped = cropped[cropped[:, 2] > 0.45]
+    if geometry_diagnostic is not None:
+        geometry_diagnostic["points_after_height_filter"] = int(len(cropped))
     for other in (other_objects or []):
         if label in {"wardrobe", "cabinet", "bookshelf", "tv_stand"}:
             break  # 高柜用 z>0.45 柜体带分离，不再做 XY 互斥（避免被床角切掉柜体）
@@ -437,7 +457,10 @@ def _fit_object(points: np.ndarray, candidate: dict, lo: np.ndarray, hi: np.ndar
         )
         if keep.sum() > 50:
             cropped = cropped[keep]
-    cluster = _main_cluster(cropped, small)
+    if geometry_diagnostic is not None:
+        geometry_diagnostic["points_after_neighbor_filter"] = int(len(cropped))
+        geometry_diagnostic["points_after_filter"] = int(len(cropped))
+    cluster = _main_cluster(cropped, small, geometry_diagnostic)
     minimum = 18 if small else 55
     if len(cluster) < minimum:
         result.update(geometry_status="rejected", rejection_reason="insufficient_cluster", support_points=int(len(cluster)))
@@ -477,6 +500,10 @@ def _fit_object(points: np.ndarray, candidate: dict, lo: np.ndarray, hi: np.ndar
     local_center = np.array([(low_x + high_x) / 2, (low_y + high_y) / 2])
     center_xy_world = center_xy + local_center @ axes2d
     center = np.array([center_xy_world[0], center_xy_world[1], (low_z + high_z) / 2])
+    if geometry_diagnostic is not None:
+        geometry_diagnostic["bbox"] = {
+            "center": center.tolist(), "size": size.tolist(), "rotation_z_deg": theta,
+        }
     if np.any(size < 0.06) or np.any(size > np.array([5.0, 5.0, 3.5])):
         result.update(geometry_status="rejected", rejection_reason="implausible_size", support_points=int(len(cluster)))
         return result
@@ -509,6 +536,12 @@ def _fit_object(points: np.ndarray, candidate: dict, lo: np.ndarray, hi: np.ndar
         geometry_status="verified", support_points=int(len(cluster)),
         geometry_confidence=float(np.clip(len(cluster) / (220 if small else 800), 0.35, 1.0)),
     )
+    if geometry_diagnostic is not None:
+        geometry_diagnostic["bbox"] = {
+            "center": result["center"], "size": result["size"],
+            "rotation_z_deg": result["rotation_z_deg"],
+        }
+        geometry_diagnostic["geometry_confidence"] = result["geometry_confidence"]
     return result
 
 
@@ -625,11 +658,116 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _new_object_diagnostic(index: int, candidate: dict) -> dict:
+    """创建候选对象的只读追踪记录；不参与任何接受/拒绝决策。"""
+    source_label = str(candidate.get("category", "unknown")).lower().strip()
+    normalized_label = LABEL_ALIASES.get(source_label, source_label)
+    return {
+        "candidate_id": f"candidate_{index:03d}",
+        "instance_id": None,
+        "spatiallm_candidate": {
+            "label": source_label,
+            "normalized_label": normalized_label,
+            "center": candidate.get("center"),
+            "size": candidate.get("size"),
+            "rotation_z_deg": candidate.get("rotation_z_deg", 0.0),
+            "confidence": candidate.get("confidence", candidate.get("score")),
+        },
+        # 阶段 1 只建立追踪链。语义推理从阶段 2 才接入，零值必须明确表示
+        # “尚未运行”，不能被误解为模型运行后没有检测到目标。
+        "semantic_evidence": {
+            "status": "not_run",
+            "support_views": 0,
+            "groundingdino_detections": 0,
+            "sam_masks": 0,
+            "semantic_votes": {},
+            "semantic_point_count": 0,
+        },
+        "geometry": {
+            "points_before_filter": 0,
+            "points_after_filter": 0,
+            "cluster_count": 0,
+            "selected_cluster_points": 0,
+            "bbox": None,
+            "geometry_confidence": None,
+        },
+        "video_geometry_evidence": {"status": "not_available", "support_views": 0},
+        "status": "pending",
+        "reject_reason": None,
+    }
+
+
+def _write_object_diagnostics(
+    path: Path,
+    records: list[dict],
+    accepted: list[dict],
+    rejected: list[dict],
+    *,
+    video_fusion_status: str,
+    source_files: dict,
+) -> dict:
+    """将最终状态回填到候选追踪记录并独立写盘。"""
+    by_id = {record["candidate_id"]: record for record in records}
+    for item in accepted:
+        record = by_id.get(item.get("_diagnostic_id"))
+        if record is None:
+            continue
+        record["instance_id"] = item.get("instance_id")
+        record["status"] = "accepted"
+        record["reject_reason"] = None
+        record["geometry"]["bbox"] = {
+            "center": item.get("center"), "size": item.get("size"),
+            "rotation_z_deg": item.get("rotation_z_deg", 0.0),
+        }
+        record["geometry"]["geometry_confidence"] = item.get("geometry_confidence")
+        refinement = item.get("video_refinement") or {}
+        record["video_geometry_evidence"] = {
+            "status": refinement.get("status", "not_available"),
+            "support_views": int(refinement.get("views_used", 0) or 0),
+            "faces": refinement.get("faces", {}),
+        }
+    for item in rejected:
+        record = by_id.get(item.get("_diagnostic_id"))
+        if record is None:
+            continue
+        record["instance_id"] = item.get("instance_id")
+        record["status"] = "rejected"
+        record["reject_reason"] = item.get("rejection_reason", "geometry_not_verified")
+        if item.get("geometry_confidence") is not None:
+            record["geometry"]["geometry_confidence"] = item.get("geometry_confidence")
+        refinement = item.get("video_refinement") or {}
+        if refinement:
+            record["video_geometry_evidence"] = {
+                "status": refinement.get("status", "unknown"),
+                "support_views": int(refinement.get("views_used", 0) or 0),
+                "faces": refinement.get("faces", {}),
+            }
+    payload = {
+        "schema_version": 1,
+        "diagnostic_stage": "geometry_baseline",
+        "decision_behavior": "observational_only",
+        "semantic_pipeline_status": "not_run",
+        "video_fusion_status": video_fusion_status,
+        "source": source_files,
+        "counts": {
+            "candidates": len(records),
+            "accepted": sum(record["status"] == "accepted" for record in records),
+            "rejected": sum(record["status"] == "rejected" for record in records),
+        },
+        "objects": records,
+    }
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return payload
+
+
 def build_structure(
     aligned_ply: Path, layout_json: Path, alignment_json: Path, output_json: Path,
     object_layout_json: Path | None = None,
     cameras_json: Path | None = None,
     images_dir: Path | None = None,
+    diagnostics_json: Path | None = None,
 ) -> dict:
     """生成 structure.json；不修改任何输入点云或原始 SpatialLM 结果。
 
@@ -660,8 +798,12 @@ def build_structure(
     )
     all_objects = []
     fitted_boxes: list[dict] = []
-    for item in candidates:
-        fitted = _fit_object(points, item, lo, hi, other_objects=fitted_boxes)
+    object_diagnostics: list[dict] = []
+    for index, item in enumerate(candidates, 1):
+        diagnostic = _new_object_diagnostic(index, item)
+        fitted = _fit_object(points, item, lo, hi, other_objects=fitted_boxes, diagnostic=diagnostic)
+        fitted["_diagnostic_id"] = diagnostic["candidate_id"]
+        object_diagnostics.append(diagnostic)
         all_objects.append(fitted)
         # 大件已验证物体参与后续候选的 footprint 互斥（床不吃书桌、书桌不吃床）。
         # 小物（椅/凳）的拟合不稳定，参与互斥反而会误删大件区域，故不参与。
@@ -711,6 +853,19 @@ def build_structure(
     verified, duplicate_rejected = _deduplicate_objects(verified_raw)
     rejected.extend(duplicate_rejected)
     obstacles = _geometric_obstacles(points, verified, lo, hi, height)
+    if diagnostics_json is not None:
+        _write_object_diagnostics(
+            diagnostics_json, object_diagnostics, verified, rejected,
+            video_fusion_status=video_fusion_status,
+            source_files={
+                "geometry": Path(aligned_ply).name,
+                "architecture_candidates": Path(layout_json).name,
+                "object_candidates": Path(object_layout_json).name if object_layout_json else Path(layout_json).name,
+            },
+        )
+    # 内部关联键只服务于独立 diagnostic 文件，不进入既有 structure.json 契约。
+    for item in verified + rejected:
+        item.pop("_diagnostic_id", None)
     payload = {
         "schema_version": 1, "coordinate_unit": "meters", "z_up": True,
         "source": {"geometry": "scene_aligned.ply", "architecture_candidates": Path(layout_json).name,

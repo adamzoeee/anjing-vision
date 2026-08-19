@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>安龄智境 3D 预览</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#101418}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:grab;touch-action:none}
+#c.grabbing{cursor:grabbing}
+#status{position:fixed;top:12px;left:12px;color:#e8eef5;background:rgba(16,20,24,.75);padding:8px 12px;border-radius:8px;font:13px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;max-width:70vw;white-space:pre-line;pointer-events:none;z-index:10}
+#status.err{color:#ff9a9a}
+#ctrl{position:fixed;left:12px;bottom:12px;color:#e8eef5;background:rgba(16,20,24,.75);padding:8px 12px;border-radius:8px;font:13px system-ui,-apple-system,"Segoe UI",sans-serif;display:flex;align-items:center;gap:10px;z-index:10}
+#size{width:150px;accent-color:#4da3ff}
+#hint{position:fixed;right:12px;bottom:12px;color:#7e93a8;font:12px system-ui,sans-serif;pointer-events:none;z-index:10}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="status">正在初始化…</div>
+<div id="ctrl"><label for="size">点大小</label><input type="range" id="size" min="1" max="12" value="2"></div>
+<div id="hint">拖拽旋转 · 滚轮/双指缩放</div>
+<script>
+'use strict';
+/* ================= DOM / WebGL ================= */
+var canvas = document.getElementById('c');
+var statusEl = document.getElementById('status');
+var gl = canvas.getContext('webgl', { antialias: true, alpha: false }) || canvas.getContext('experimental-webgl');
+function setStatus(msg, err) { statusEl.textContent = msg; statusEl.classList.toggle('err', !!err); }
+if (!gl) setStatus('当前浏览器不支持 WebGL，无法显示 3D 预览', true);
+
+/* ================= 工具：列主序 mat4 ================= */
+function perspective(out, fovy, aspect, near, far) {
+  var f = 1 / Math.tan(fovy / 2);
+  out[0] = f / aspect; out[1] = 0; out[2] = 0; out[3] = 0;
+  out[4] = 0; out[5] = f; out[6] = 0; out[7] = 0;
+  out[8] = 0; out[9] = 0; out[10] = (far + near) / (near - far); out[11] = -1;
+  out[12] = 0; out[13] = 0; out[14] = 2 * far * near / (near - far); out[15] = 0;
+}
+function lookAt(out, eye, c, up) {
+  var zx = eye[0] - c[0], zy = eye[1] - c[1], zz = eye[2] - c[2], l = Math.hypot(zx, zy, zz);
+  if (l > 0) { zx /= l; zy /= l; zz /= l; }
+  var xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx;
+  l = Math.hypot(xx, xy, xz);
+  if (l > 0) { xx /= l; xy /= l; xz /= l; }
+  var yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+  out[0] = xx; out[1] = yx; out[2] = zx; out[3] = 0;
+  out[4] = xy; out[5] = yy; out[6] = zy; out[7] = 0;
+  out[8] = xz; out[9] = yz; out[10] = zz; out[11] = 0;
+  out[12] = -(xx * eye[0] + xy * eye[1] + xz * eye[2]);
+  out[13] = -(yx * eye[0] + yy * eye[1] + yz * eye[2]);
+  out[14] = -(zx * eye[0] + zy * eye[1] + zz * eye[2]);
+  out[15] = 1;
+}
+function mul(out, a, b) {
+  for (var i = 0; i < 16; i++) {
+    out[i] = a[(i & 3)] * b[(i & 12)] + a[4 + (i & 3)] * b[(i & 12) + 1] +
+             a[8 + (i & 3)] * b[(i & 12) + 2] + a[12 + (i & 3)] * b[(i & 12) + 3];
+  }
+}
+
+/* ================= PLY 解析（ASCII / binary_little_endian） ================= */
+var TYPES = { char: 1, int8: 1, uchar: 1, uint8: 1, short: 2, int16: 2, ushort: 2, uint16: 2,
+              int: 4, int32: 4, uint: 4, uint32: 4, float: 4, float32: 4, double: 8, float64: 8 };
+function parsePLY(buf) {
+  var bytes = new Uint8Array(buf);
+  // 字节级定位 "end_header"（header 为 ASCII）
+  var sig = [101, 110, 100, 95, 104, 101, 97, 100, 101, 114], hs = -1, i, j;
+  for (i = 0; i + sig.length <= bytes.length; i++) {
+    var ok = true;
+    for (j = 0; j < sig.length; j++) if (bytes[i + j] !== sig[j]) { ok = false; break; }
+    if (ok) { hs = i; break; }
+  }
+  if (hs < 0) throw new Error('PLY header 中未找到 end_header');
+  var he = hs + sig.length;
+  if (bytes[he] === 13) he++;
+  if (bytes[he] === 10) he++;
+  var header = new TextDecoder('ascii').decode(bytes.subarray(0, hs));
+
+  var format = null, vCount = 0, props = [], inV = false, m;
+  header.split(/\r?\n/).forEach(function (line) {
+    var t = line.trim();
+    if (!t || t === 'ply' || t.indexOf('comment') === 0 || t.indexOf('obj_info') === 0) return;
+    m = t.match(/^format\s+(\S+)/);
+    if (m) { format = m[1]; return; }
+    m = t.match(/^element\s+(\S+)\s+(\d+)/);
+    if (m) { inV = m[1] === 'vertex'; if (inV) vCount = +m[2]; return; }
+    m = t.match(/^property\s+(\S+)\s+(\S+)/);
+    if (m && inV) props.push({ type: m[1], name: m[2], size: TYPES[m[1]] || 0 });
+  });
+  if (format !== 'ascii' && format !== 'binary_little_endian')
+    throw new Error('不支持的 PLY 格式: ' + (format || '未知'));
+  if (!vCount || !props.length) throw new Error('PLY 中无 vertex 数据');
+  if (props.some(function (p) { return !p.size; })) throw new Error('PLY 含不支持的属性类型');
+
+  function find() { for (var a = 0; a < arguments.length; a++) for (var k = 0; k < props.length; k++) if (props[k].name === arguments[a]) return k; return -1; }
+  var ix = find('x'), iy = find('y'), iz = find('z');
+  if (ix < 0 || iy < 0 || iz < 0) throw new Error('PLY 缺少 x/y/z 属性');
+  var ir = find('red', 'diffuse_red'), ig = find('green', 'diffuse_green'), ib = find('blue', 'diffuse_blue');
+  var hasColor = ir >= 0 || ig >= 0 || ib >= 0;
+  var isU8 = function (t) { return t === 'uchar' || t === 'uint8' || t === 'char' || t === 'int8'; };
+  var toF = function (v, t) { return isU8(t) ? v / 255 : v; };
+
+  var MAX = 200000, total = vCount, n = Math.min(total, MAX);
+  var pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  var offs = [], o = 0;
+  props.forEach(function (p) { offs.push(o); o += p.size; });
+  var stride = o;
+  var readProp = function (dv, off, t) {
+    switch (t) {
+      case 'char': case 'int8': return dv.getInt8(off);
+      case 'uchar': case 'uint8': return dv.getUint8(off);
+      case 'short': case 'int16': return dv.getInt16(off, true);
+      case 'ushort': case 'uint16': return dv.getUint16(off, true);
+      case 'int': case 'int32': return dv.getInt32(off, true);
+      case 'uint': case 'uint32': return dv.getUint32(off, true);
+      case 'float': case 'float32': return dv.getFloat32(off, true);
+      case 'double': case 'float64': return dv.getFloat64(off, true);
+    }
+    return 0;
+  };
+  var k;
+  if (format === 'ascii') {
+    var tokens = new TextDecoder('ascii').decode(bytes.subarray(he)).split(/\s+/).filter(Boolean);
+    var ti = 0;
+    for (i = 0; i < n && ti + props.length <= tokens.length; i++, ti += props.length) {
+      pos[i * 3] = +tokens[ti + ix]; pos[i * 3 + 1] = +tokens[ti + iy]; pos[i * 3 + 2] = +tokens[ti + iz];
+      if (hasColor) {
+        col[i * 3] = ir >= 0 ? toF(+tokens[ti + ir], props[ir].type) : 0;
+        col[i * 3 + 1] = ig >= 0 ? toF(+tokens[ti + ig], props[ig].type) : 0;
+        col[i * 3 + 2] = ib >= 0 ? toF(+tokens[ti + ib], props[ib].type) : 0;
+      } else { col[i * 3] = 0.55; col[i * 3 + 1] = 0.75; col[i * 3 + 2] = 0.95; }
+    }
+  } else {
+    var dv = new DataView(buf);
+    for (i = 0, o = he; i < n; i++, o += stride) {
+      pos[i * 3] = readProp(dv, o + offs[ix], props[ix].type);
+      pos[i * 3 + 1] = readProp(dv, o + offs[iy], props[iy].type);
+      pos[i * 3 + 2] = readProp(dv, o + offs[iz], props[iz].type);
+      if (hasColor) {
+        col[i * 3] = ir >= 0 ? toF(readProp(dv, o + offs[ir], props[ir].type), props[ir].type) : 0;
+        col[i * 3 + 1] = ig >= 0 ? toF(readProp(dv, o + offs[ig], props[ig].type), props[ig].type) : 0;
+        col[i * 3 + 2] = ib >= 0 ? toF(readProp(dv, o + offs[ib], props[ib].type), props[ib].type) : 0;
+      } else { col[i * 3] = 0.55; col[i * 3 + 1] = 0.75; col[i * 3 + 2] = 0.95; }
+    }
+  }
+  // 包围盒归一化：中心平移 + 半径缩放，使场景直径 ≈ 2
+  var mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+  for (i = 0; i < n; i++) for (k = 0; k < 3; k++) {
+    var v = pos[i * 3 + k];
+    if (v < mn[k]) mn[k] = v;
+    if (v > mx[k]) mx[k] = v;
+  }
+  var radius = Math.max(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]) / 2;
+  if (!(radius > 0)) radius = 1;
+  var cx = (mn[0] + mx[0]) / 2, cy = (mn[1] + mx[1]) / 2, cz = (mn[2] + mx[2]) / 2;
+  for (i = 0; i < n; i++) {
+    pos[i * 3] = (pos[i * 3] - cx) / radius;
+    pos[i * 3 + 1] = (pos[i * 3 + 1] - cy) / radius;
+    pos[i * 3 + 2] = (pos[i * 3 + 2] - cz) / radius;
+  }
+  return { pos: pos, col: col, count: n, total: total };
+}
+
+/* ================= 渲染 ================= */
+var VS = 'attribute vec3 aPos;\nattribute vec3 aColor;\nuniform mat4 uMVP;\nuniform float uSize;\nvarying vec3 vColor;\nvoid main() {\n  gl_Position = uMVP * vec4(aPos, 1.0);\n  gl_PointSize = uSize;\n  vColor = aColor;\n}';
+var FS = 'precision mediump float;\nvarying vec3 vColor;\nvoid main() {\n  vec2 d = gl_PointCoord - vec2(0.5);\n  if (dot(d, d) > 0.25) discard;\n  gl_FragColor = vec4(vColor, 1.0);\n}';
+function compile(type, src) {
+  var s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('着色器编译失败: ' + gl.getShaderInfoLog(s));
+  return s;
+}
+function upload(data) {
+  var b = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, b);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  return b;
+}
+var prog, aPos, aColor, uMVP, uSize, count = 0, maxPS = 12;
+var yaw = 0.6, pitch = 0.22, dist = 2.8, pointSize = 2;
+var eye = [0, 0, 0], view = new Float32Array(16), proj = new Float32Array(16), mvp = new Float32Array(16);
+
+function setupGL(pos, col) {
+  prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error('着色器链接失败');
+  gl.useProgram(prog);
+  aPos = gl.getAttribLocation(prog, 'aPos');
+  aColor = gl.getAttribLocation(prog, 'aColor');
+  uMVP = gl.getUniformLocation(prog, 'uMVP');
+  uSize = gl.getUniformLocation(prog, 'uSize');
+  gl.bindBuffer(gl.ARRAY_BUFFER, upload(pos));
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, upload(col));
+  gl.enableVertexAttribArray(aColor);
+  gl.vertexAttribPointer(aColor, 3, gl.FLOAT, false, 0, 0);
+  gl.enable(gl.DEPTH_TEST);
+  var range = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE);
+  if (range && range[1]) maxPS = Math.min(maxPS, range[1]);
+  count = pos.length / 3;
+}
+function resize() {
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  return h > 0 ? w / h : 1;
+}
+function render() {
+  var aspect = resize();
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.06, 0.08, 0.1, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  if (count) {
+    var cp = Math.cos(pitch), sp = Math.sin(pitch), cy = Math.cos(yaw), sy = Math.sin(yaw);
+    eye[0] = cp * sy * dist; eye[1] = sp * dist; eye[2] = cp * cy * dist;
+    lookAt(view, eye, [0, 0, 0], [0, 1, 0]);
+    perspective(proj, Math.PI / 4, aspect, 0.05, 100);
+    mul(mvp, proj, view);
+    gl.uniformMatrix4fv(uMVP, false, mvp);
+    gl.uniform1f(uSize, Math.min(pointSize, maxPS));
+    gl.drawArrays(gl.POINTS, 0, count);
+  }
+  requestAnimationFrame(render);
+}
+
+/* ================= 交互 ================= */
+var dragging = false, lx = 0, ly = 0;
+canvas.addEventListener('mousedown', function (e) { dragging = true; lx = e.clientX; ly = e.clientY; canvas.classList.add('grabbing'); });
+window.addEventListener('mousemove', function (e) {
+  if (!dragging) return;
+  yaw -= (e.clientX - lx) * 0.008;
+  pitch = Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - ly) * 0.008));
+  lx = e.clientX; ly = e.clientY;
+});
+window.addEventListener('mouseup', function () { dragging = false; canvas.classList.remove('grabbing'); });
+canvas.addEventListener('wheel', function (e) {
+  e.preventDefault();
+  dist = Math.max(0.3, Math.min(60, dist * Math.exp(e.deltaY * 0.0012)));
+}, { passive: false });
+var t0 = null, pinch = 0;
+canvas.addEventListener('touchstart', function (e) {
+  e.preventDefault();
+  if (e.touches.length === 1) t0 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  if (e.touches.length === 2) pinch = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+}, { passive: false });
+canvas.addEventListener('touchmove', function (e) {
+  e.preventDefault();
+  if (e.touches.length === 1 && t0) {
+    yaw -= (e.touches[0].clientX - t0.x) * 0.008;
+    pitch = Math.max(-1.5, Math.min(1.5, pitch + (e.touches[0].clientY - t0.y) * 0.008));
+    t0 = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  } else if (e.touches.length === 2 && pinch) {
+    var d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    if (d > 0) dist = Math.max(0.3, Math.min(60, dist * pinch / d));
+    pinch = d;
+  }
+}, { passive: false });
+canvas.addEventListener('touchend', function (e) {
+  if (e.touches.length < 2) pinch = 0;
+  if (e.touches.length === 0) t0 = null;
+});
+document.getElementById('size').addEventListener('input', function (e) { pointSize = +e.target.value; });
+
+/* ================= 加载流程 ================= */
+var params = new URLSearchParams(location.search);
+var plyUrl = params.get('ply');
+var token = params.get('token') || '';
+var name = plyUrl ? plyUrl.split('/').pop() : '';
+var fetchOpts = token ? { headers: { 'Authorization': 'Bearer ' + token } } : {};
+if (!gl) {
+  // 已在上方提示
+} else if (!plyUrl) {
+  setStatus('错误：缺少 ?ply= 参数\n示例：?ply=/static/xxx/scene.ply', true);
+} else {
+  setStatus('正在加载 ' + name + ' …');
+  fetch(plyUrl, fetchOpts).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 404 ? '（文件不存在）' : ''));
+    return r.arrayBuffer();
+  }).then(function (buf) {
+    setStatus('正在解析 ' + name + ' …');
+    var data = parsePLY(buf);
+    setupGL(data.pos, data.col);
+    var msg = name + '\n' + data.count.toLocaleString() + ' 点';
+    if (data.count < data.total) msg += '\n点云过大，显示前 200k 点';
+    setStatus(msg);
+  }).catch(function (err) {
+    setStatus('加载失败：' + err.message, true);
+  });
+}
+if (gl) render();
+</script>
+</body>
+</html>

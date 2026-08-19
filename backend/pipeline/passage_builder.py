@@ -67,13 +67,37 @@ def build_passage_metrics(
     """把净距/可行走面积/通道指标合并进 measurements.json 并返回。"""
     structure = json.loads(Path(structure_json).read_text(encoding="utf-8"))
     measurements = json.loads(Path(measurements_json).read_text(encoding="utf-8"))
-    scale = float((measurements.get("scale") or {}).get("scale") or 1.0)
+    metric_available = bool(measurements.get("metric_scale_available"))
+    scale_status = (measurements.get("scale") or {}).get("status")
+    if not metric_available or scale_status != "metric_references":
+        measurements["distances"] = []
+        measurements["passage"] = {
+            "status": "not_evaluable", "assessment_status": "not_evaluable",
+            "reason": "scale_unavailable", "risk_eligibility": "not_evaluable",
+        }
+        measurements["walkable_area_m2"] = None
+        Path(measurements_json).write_text(
+            json.dumps(measurements, ensure_ascii=False, indent=2), encoding="utf-8")
+        return measurements
+
+    scale = float((measurements.get("scale") or {}).get("scale_factor") or 0.0)
+    if scale <= 0:
+        raise ValueError("metric_scale_available=true but scale_factor is invalid")
 
     cloud = o3d.io.read_point_cloud(str(aligned_ply))
     points = np.asarray(cloud.points, dtype=float) * scale  # → 米
 
-    objects = [o for o in structure.get("objects", []) if o.get("label") not in _CEILING_LABELS]
-    objects += [o for o in structure.get("geometric_obstacles", [])]
+    formal_objects = {
+        item.get("instance_id") or item.get("id"): item
+        for item in measurements.get("objects", [])
+        if item.get("measurement_status") == "verified" and item.get("risk_eligibility") == "eligible"
+    }
+    objects = [
+        item for item in structure.get("semantic_instances", [])
+        if (item.get("instance_id") in formal_objects)
+        and item.get("normalized_label") not in _CEILING_LABELS
+        and isinstance(item.get("center"), list) and isinstance(item.get("size"), list)
+    ]
 
     # ① 家具间净距离（米制 footprint 边缘距）
     distances = []
@@ -91,10 +115,13 @@ def build_passage_metrics(
     distances.sort(key=lambda item: item["clearance_m"])
 
     # ②/③ 可行走区域 + 门→床通道
-    passage = {"status": "pending", "reason": "数据不足"}
+    passage = {
+        "status": "not_evaluable", "assessment_status": "not_evaluable",
+        "reason": "insufficient_measurement_confidence", "risk_eligibility": "not_evaluable",
+    }
     walkable = None
     door = next(iter(structure.get("doors", [])), None)
-    bed = next((o for o in structure.get("objects", []) if o.get("label") == "bed"), None)
+    bed = next((o for o in objects if o.get("normalized_label") == "bed"), None)
     if door is not None and bed is not None and len(points) > 1000:
         try:
             door_pts = _box_points(points, door, margin=0.15)
@@ -114,7 +141,9 @@ def build_passage_metrics(
             report = analyze_passage(points, door_pts, bed_pts)
             passage = {
                 "status": report.status,
+                "assessment_status": "evaluated" if report.status == "ok" else "not_evaluable",
                 "reason": report.reason or None,
+                "risk_eligibility": "eligible" if report.status == "ok" else "not_evaluable",
                 "passage_width_m": report.passage_width_m,
                 "narrowest_point": report.narrowest_point,
                 "path_length_m": report.path_length_m,
@@ -122,8 +151,12 @@ def build_passage_metrics(
                 "stairs_exist": report.stairs_exist,
                 "slope": report.slope,
             }
-        except Exception as exc:  # noqa: BLE001
-            passage = {"status": "pending", "reason": str(exc)[:200]}
+        except (ValueError, RuntimeError) as exc:
+            passage = {
+                "status": "not_evaluable", "assessment_status": "not_evaluable",
+                "reason": f"passage_geometry_unavailable: {str(exc)[:160]}",
+                "risk_eligibility": "not_evaluable",
+            }
 
     measurements["distances"] = distances[:24]
     measurements["passage"] = passage

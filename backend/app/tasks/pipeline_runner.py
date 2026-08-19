@@ -3,6 +3,7 @@
 每个阶段更新 Scan.status/progress；失败置 failed 并记录 message。
 长度测量、风险识别与评分暂不在本阶段实现（后续在此文件扩展）。
 """
+import json
 import logging
 import os
 import re
@@ -249,7 +250,102 @@ def _run_slam3r_pipeline(
         furniture_json,
         cameras_json=(work / "gaussian" / "cameras.json") if pose_meta else None,
         images_dir=(work / "gaussian" / "images") if pose_meta else None,
+        diagnostics_json=work / "diagnostics" / "objects.json",
     )
+
+    # ---- 4.26. GroundingDINO + SAM 关键帧证据（阶段 2：只附加置信度，不删对象）----
+    from pipeline.semantic_evidence import mark_semantics_unavailable, run_semantic_enrichment
+
+    semantic_started = time.perf_counter()
+    semantic_structure_json = work / "postprocess" / "structure.json"
+    semantic_diagnostics_json = work / "diagnostics" / "objects.json"
+    if pose_meta and (work / "gaussian" / "cameras.json").is_file():
+        try:
+            semantic_result = run_semantic_enrichment(
+                post["aligned_ply"], work / "gaussian" / "cameras.json",
+                work / "gaussian" / "images", semantic_structure_json,
+                semantic_diagnostics_json, work / "diagnostics" / "semantic_evidence.json",
+                instances_json=work / "postprocess" / "semantic_instances.json",
+                instance_diagnostics_json=work / "diagnostics" / "instance_diagnostics.json",
+                instance_points_npz=work / "diagnostics" / "semantic_instance_points.npz",
+                instance_observations_json=work / "diagnostics" / "instance_observations.json",
+                observation_quality_json=work / "diagnostics" / "semantic_observation_quality.json",
+                purified_points_npz=work / "diagnostics" / "purified_semantic_points.npz",
+            )
+            structure = json.loads(semantic_structure_json.read_text(encoding="utf-8"))
+            logger.info(
+                "semantic_evidence_applied scan_id=%s keyframes=%s labeled_points=%s",
+                scan.id, semantic_result.get("keyframes_processed"),
+                semantic_result.get("fusion", {}).get("labeled_point_count"),
+            )
+        except Exception as exc:  # noqa: BLE001 - 语义失败不得破坏 baseline 主链
+            logger.warning("semantic_evidence_unavailable scan_id=%s reason=%s", scan.id, str(exc)[:300])
+            mark_semantics_unavailable(semantic_structure_json, semantic_diagnostics_json, str(exc))
+            from pipeline.instance_builder import mark_instances_unavailable
+            mark_instances_unavailable(
+                semantic_structure_json, work / "postprocess" / "semantic_instances.json",
+                work / "diagnostics" / "instance_diagnostics.json",
+                work / "diagnostics" / "semantic_instance_points.npz", str(exc),
+                observations_json=work / "diagnostics" / "instance_observations.json",
+                observation_quality_json=work / "diagnostics" / "semantic_observation_quality.json",
+                purified_points_npz=work / "diagnostics" / "purified_semantic_points.npz",
+            )
+            structure = json.loads(semantic_structure_json.read_text(encoding="utf-8"))
+    else:
+        mark_semantics_unavailable(
+            semantic_structure_json, semantic_diagnostics_json,
+            "camera poses or registered images unavailable",
+        )
+        from pipeline.instance_builder import mark_instances_unavailable
+        mark_instances_unavailable(
+            semantic_structure_json, work / "postprocess" / "semantic_instances.json",
+            work / "diagnostics" / "instance_diagnostics.json",
+            work / "diagnostics" / "semantic_instance_points.npz",
+            "camera poses or registered images unavailable",
+            observations_json=work / "diagnostics" / "instance_observations.json",
+            observation_quality_json=work / "diagnostics" / "semantic_observation_quality.json",
+            purified_points_npz=work / "diagnostics" / "purified_semantic_points.npz",
+        )
+        structure = json.loads(semantic_structure_json.read_text(encoding="utf-8"))
+    timings["semantic_evidence_seconds"] = time.perf_counter() - semantic_started
+
+    # ---- 4.27. 稳定 semantic instance → XY 最小矩形 + 独立稳健 Z ----
+    from pipeline.geometry_builder import build_instance_geometry, mark_geometry_unavailable
+
+    geometry_started = time.perf_counter()
+    semantic_instances_json = work / "postprocess" / "semantic_instances.json"
+    instance_points_npz = work / "diagnostics" / "semantic_instance_points.npz"
+    geometry_diagnostics_json = work / "diagnostics" / "geometry_diagnostics.json"
+    if (
+        structure.get("semantic_instance_pipeline_status") == "applied"
+        and semantic_instances_json.is_file() and instance_points_npz.is_file()
+    ):
+        try:
+            geometry_result = build_instance_geometry(
+                post["aligned_ply"], semantic_structure_json, semantic_instances_json,
+                instance_points_npz, work / "postprocess" / "alignment.json",
+                geometry_diagnostics_json,
+            )
+            structure = json.loads(semantic_structure_json.read_text(encoding="utf-8"))
+            logger.info(
+                "semantic_instance_geometry_applied scan_id=%s verified=%s unavailable=%s",
+                scan.id, geometry_result.get("counts", {}).get("geometry_verified"),
+                geometry_result.get("counts", {}).get("geometry_unavailable"),
+            )
+        except Exception as exc:  # noqa: BLE001 - 新几何失败不破坏 legacy structure
+            logger.warning("semantic_instance_geometry_unavailable scan_id=%s reason=%s", scan.id, str(exc)[:300])
+            mark_geometry_unavailable(
+                semantic_structure_json, semantic_instances_json,
+                geometry_diagnostics_json, str(exc),
+            )
+            structure = json.loads(semantic_structure_json.read_text(encoding="utf-8"))
+    else:
+        mark_geometry_unavailable(
+            semantic_structure_json, semantic_instances_json,
+            geometry_diagnostics_json, "stable semantic instance points unavailable",
+        )
+        structure = json.loads(semantic_structure_json.read_text(encoding="utf-8"))
+    timings["semantic_geometry_seconds"] = time.perf_counter() - geometry_started
 
     # ---- 4.3. 用户实测参考值 → 统一米/当前单位比例 → 长度结果 ----
     # 前两个参考用于求统一比例；第三个（如有）保留为独立验收，避免拿答案自测。
@@ -265,20 +361,18 @@ def _run_slam3r_pipeline(
         reference_measurements,
         validation_keys=validation_keys,
         calibrated_structure_json=work / "postprocess" / "structure_calibrated.json",
+        diagnostics_json=work / "diagnostics" / "measurement_diagnostics.json",
     )
     # 通路与净距：家具 footprint 净距、可行走面积、门→床路径与最窄通道宽
-    try:
-        from pipeline.passage_builder import build_passage_metrics
+    from pipeline.passage_builder import build_passage_metrics
 
-        measurements = build_passage_metrics(
-            post["aligned_ply"],
-            work / "postprocess" / "structure_calibrated.json"
-            if (work / "postprocess" / "structure_calibrated.json").is_file()
-            else work / "postprocess" / "structure.json",
-            work / "postprocess" / "measurements.json",
-        )
-    except Exception as exc:  # noqa: BLE001 - 通路失败不阻断主链
-        logger.warning("passage_builder_failed scan_id=%s reason=%s", scan.id, str(exc)[:300])
+    measurements = build_passage_metrics(
+        post["aligned_ply"],
+        work / "postprocess" / "structure_calibrated.json"
+        if (work / "postprocess" / "structure_calibrated.json").is_file()
+        else work / "postprocess" / "structure.json",
+        work / "postprocess" / "measurements.json",
+    )
     # 2.5D 结构图（中文标注 + 家具尺寸）
     try:
         from pipeline.structure_figure import render_structure_plan
@@ -327,8 +421,19 @@ def _run_slam3r_pipeline(
     for item in boxes["objects"]:
         categories[item["category"]] = categories.get(item["category"], 0) + 1
 
+    from pipeline.measurement_builder import build_risk_inputs
+    from pipeline.rules import compute_score
+
+    risk_inputs = build_risk_inputs(measurements)
+    score, risk_assessment = compute_score(risk_inputs, include_not_evaluable=True)
+    risks = risk_assessment["risks"]
+    advice = [
+        item["advice"] for item in risks
+        if item.get("assessment_status") == "evaluated_risk" and item.get("advice")
+    ]
+
     measures = {
-        "coordinate_unit": "meters",
+        "coordinate_unit": measurements.get("coordinate_unit", "scene_units"),
         "scale_status": measurements.get("scale", {}).get("status", "calibration_failed"),
         "reconstruction_backend": "slam3r",
         "understanding_backend": "spatiallm1.1-qwen-0.5b",
@@ -342,6 +447,18 @@ def _run_slam3r_pipeline(
         },
         "structure": structure,
         "measurements": measurements,
+        "confidence_summary": {
+            "reconstruction_status": "completed",
+            "semantic_status": structure.get("semantic_pipeline_status", "unavailable"),
+            "instance_status": structure.get("semantic_instance_pipeline_status", "unavailable"),
+            "geometry_status": structure.get("semantic_geometry_status", "unavailable"),
+            "scale_status": measurements.get("scale", {}).get("status", "failed"),
+            "metric_scale_available": measurements.get("metric_scale_available", False),
+            "measurement_coverage": measurements.get("measurement_coverage", {}),
+            "risk_assessment_coverage": risk_assessment.get("risk_assessment_coverage", {}),
+        },
+        "risk_assessment": risk_assessment,
+        "assessment_completeness": risk_assessment.get("assessment_completeness", {}),
         "alignment": post["metadata"]["alignment"],
         "scale": post["metadata"]["scale"],
         "extents_m": post["metadata"]["extents_m"],
@@ -355,8 +472,9 @@ def _run_slam3r_pipeline(
             "views": gaussian_meta["views"] if gaussian_meta else None,
             "seconds": gaussian_meta["seconds"] if gaussian_meta else None,
         },
-        # 风险识别与评分需等待家具几何验收；长度与通道已经接入。
-        "deferred": ["risk_identification", "scoring"],
+        "deferred": [
+            item["code"] for item in risks if item.get("assessment_status") == "not_evaluable"
+        ],
     }
     preview = {
         "viewer": f"/preview/{scan.id}",
@@ -371,13 +489,13 @@ def _run_slam3r_pipeline(
     _upsert_report(
         db,
         scan_id=scan.id,
-        score=None,  # 评分暂缓：无分数可给时保持 None（前端显示“无法评分”）
-        risks=[],
+        score=score,
+        risks=risks,
         measures=measures,
-        advice=[],
+        advice=advice,
         images=[],
         preview=preview,
-        calibrated=1 if measurements.get("scale", {}).get("status") == "metric_references" else 0,
+        calibrated=1 if measurements.get("metric_scale_available") else 0,
     )
     _stage(db, scan, "done", 100, "重建完成")
     logger.info(

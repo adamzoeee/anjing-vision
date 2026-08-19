@@ -217,6 +217,9 @@ class _ReportPageState extends State<ReportPage> {
     final validation = m['quality'] is Map && m['quality']['validation'] is List
         ? m['quality']['validation'] as List
         : const [];
+    final summary = report.measures['confidence_summary'] is Map
+        ? report.measures['confidence_summary'] as Map
+        : const {};
     if (m.isEmpty && validation.isEmpty) return const [];
 
     String fmt(Object? value) =>
@@ -282,6 +285,28 @@ class _ReportPageState extends State<ReportPage> {
             : (scale['reason']?.toString() ?? '需要至少两个一致的实测参考尺寸'),
       ),
     ));
+    final measurementCoverage = summary['measurement_coverage'] is Map
+        ? summary['measurement_coverage'] as Map
+        : const {};
+    final riskCoverage = summary['risk_assessment_coverage'] is Map
+        ? summary['risk_assessment_coverage'] as Map
+        : const {};
+    if (summary.isNotEmpty) {
+      rows.add(ListTile(
+        dense: true,
+        leading: const Icon(Icons.fact_check_outlined),
+        title: const Text('可信度与评估覆盖率'),
+        subtitle: Text(
+          '重建 ${summary['reconstruction_status'] ?? 'unknown'} · '
+          '语义 ${summary['semantic_status'] ?? 'unknown'} · '
+          '几何 ${summary['geometry_status'] ?? 'unknown'}\n'
+          '可靠测量 ${measurementCoverage['verified_count'] ?? 0}/'
+          '${measurementCoverage['total_count'] ?? 0} · '
+          '正式风险评估 ${riskCoverage['evaluated_count'] ?? 0}/'
+          '${riskCoverage['total_count'] ?? 0}',
+        ),
+      ));
+    }
     if (validation.isNotEmpty) {
       rows.add(Padding(
         padding: const EdgeInsets.only(top: 4),
@@ -341,12 +366,26 @@ class _ReportPageState extends State<ReportPage> {
         'medium' => '中',
         _ => '低',
       };
+      final measurementStatus = item['measurement_status']?.toString() ?? 'unavailable';
+      final reason = switch (item['measurement_reason']?.toString()) {
+        'scale_unavailable' => '未完成尺度标定',
+        'semantic_evidence_insufficient' => '语义证据不足',
+        'instance_not_stable' => '实例边界不稳定',
+        'geometry_not_verified' => '几何未通过验证',
+        'incomplete_instance_geometry' => '实例点集覆盖不完整',
+        'geometry_bbox_unavailable' => '几何边界不可用',
+        _ => item['measurement_reason']?.toString() ?? '数据不足',
+      };
       tiles.add(ListTile(
         dense: true,
         leading: const Icon(Icons.chair_outlined),
-        title: Text('$name：长 ${fmt(item['length_m'])}m × 宽 '
-            '${fmt(item['width_m'])}m × 高 ${fmt(item['height_m'])}m'),
-        subtitle: Text('测量置信度：$confText'),
+        title: Text(measurementStatus == 'verified'
+            ? '$name：长 ${fmt(item['length_m'])}m × 宽 '
+                '${fmt(item['width_m'])}m × 高 ${fmt(item['height_m'])}m'
+            : '$name：暂不可可靠测量'),
+        subtitle: Text(measurementStatus == 'verified'
+            ? '识别/测量置信度：$confText'
+            : '识别置信度：$confText · 原因：$reason'),
       ));
     }
     return tiles;
