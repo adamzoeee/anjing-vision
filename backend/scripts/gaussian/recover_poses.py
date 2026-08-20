@@ -8,8 +8,8 @@ SLAM3R 保存的 registered_pcds 是「逐帧已注册到统一世界坐标系�
 """
 from __future__ import annotations
 
+import argparse
 import json
-import sys
 from pathlib import Path
 
 import cv2
@@ -17,6 +17,46 @@ import numpy as np
 import open3d as o3d
 
 H = W = 224
+MAX_SAFE_VIEWS_8GB = 1024
+
+
+def _image_sharpness(image: np.ndarray) -> float:
+    """低成本清晰度指标；仅用于同一视频内候选帧择优。"""
+    image = np.asarray(image)
+    if image.ndim == 3:
+        image = cv2.cvtColor(image.astype(np.uint8), cv2.COLOR_RGB2GRAY)
+    return float(cv2.Laplacian(image.astype(np.uint8), cv2.CV_32F).var())
+
+
+def select_distributed_candidates(
+    collected: list[tuple], images, max_frames: int,
+) -> tuple[list[tuple], list[tuple]]:
+    """从完整时间线均匀取帧，每个时间桶优先保留清晰且PnP质量高的视角。"""
+    if max_frames <= 0:
+        return [], list(collected)
+    if len(collected) <= max_frames:
+        return list(collected), []
+
+    def score(candidate: tuple) -> float:
+        frame_id, _rvec, _tvec, inliers, _fx, reproj = candidate
+        sharpness = _image_sharpness(np.asarray(images[int(frame_id)]))
+        return 0.25 * np.log1p(sharpness) + 0.15 * np.log1p(len(inliers)) - float(reproj)
+
+    edges = np.linspace(0, len(collected), max_frames + 1, dtype=int)
+    primary: list[tuple] = []
+    primary_ids: set[int] = set()
+    scores: dict[int, float] = {}
+    for start, end in zip(edges[:-1], edges[1:]):
+        bucket = collected[int(start):int(end)]
+        if not bucket:
+            continue
+        best = max(bucket, key=lambda item: scores.setdefault(int(item[0]), score(item)))
+        primary.append(best)
+        primary_ids.add(int(best[0]))
+    backups = [item for item in collected if int(item[0]) not in primary_ids]
+    backups.sort(key=lambda item: scores.setdefault(int(item[0]), score(item)), reverse=True)
+    primary.sort(key=lambda item: int(item[0]))
+    return primary, backups
 
 
 def estimate_focal_from_world(pts_w, conf, min_conf=12.0):
@@ -27,7 +67,7 @@ def estimate_focal_from_world(pts_w, conf, min_conf=12.0):
 
 def recover_poses(preds_dir: Path, out_dir: Path, alignment_json: Path, raw_ply: Path,
                   min_conf: float = 12.0, max_reproj: float = 2.5,
-                  max_frames: int = 600) -> dict:
+                  max_frames: int = MAX_SAFE_VIEWS_8GB) -> dict:
     preds_dir = Path(preds_dir)
     out_dir = Path(out_dir)
     (out_dir / "images").mkdir(parents=True, exist_ok=True)
@@ -104,10 +144,11 @@ def recover_poses(preds_dir: Path, out_dir: Path, alignment_json: Path, raw_ply:
     fx_global = min(max(fx_global, 200.0), 420.0)
     print(f"global fx={fx_global:.1f} from {len(fxs)} frames", flush=True)
 
-    # ---- 第二遍：全局 fx 重解 ----
+    # ---- 第二遍：全局 fx 重解；上限内全保留，超限才从整段均匀择优 ----
     cameras = []
     K = np.array([[fx_global, 0, W / 2], [0, fx_global, H / 2], [0, 0, 1]], dtype=np.float64)
-    for (i, _rvec, _tvec, inl, _fx, _err) in collected:
+    primary, backups = select_distributed_candidates(collected, imgs, max_frames)
+    for (i, _rvec, _tvec, inl, _fx, _err) in [*primary, *backups]:
         pts = np.asarray(rp[i], dtype=np.float64).reshape(-1, 3)
         conf = np.asarray(rc[i], dtype=np.float32).reshape(-1)
         m = np.isfinite(pts).all(axis=1) & (conf > min_conf)
@@ -158,19 +199,27 @@ def recover_poses(preds_dir: Path, out_dir: Path, alignment_json: Path, raw_ply:
     np.savez_compressed(out_dir / "init_points.npz", means=pts, colors=col)
 
     errs = [c["reproj_px"] for c in cameras]
+    camera_ids = [int(camera["id"]) for camera in cameras]
     return {"cameras": len(cameras), "fx": fx_global,
             "median_reproj_px": round(float(np.median(errs)), 3),
+            "selection": "full_timeline_stratified_quality",
+            "source_frame_range": [min(camera_ids), max(camera_ids)],
             "cameras_json": str(out_dir / "cameras.json")}
 
 
 if __name__ == "__main__":
-    work = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(
-        r"D:\部署文件\anjing-vision-3d-fix\backend\data\work\32")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("work", nargs="?", type=Path, default=Path(
+        r"D:\部署文件\anjing-vision-3d-fix\backend\data\work\32"))
+    parser.add_argument("--max-frames", type=int, default=MAX_SAFE_VIEWS_8GB)
+    args = parser.parse_args()
+    work = args.work
     preds = work / "slam3r" / "scene" / "preds"
     out = work / "gaussian"
     raw_candidates = sorted(work.rglob("*_recon.ply"))
     if not raw_candidates:
         raise RuntimeError(f"未找到 SLAM3R 融合点云 *_recon.ply（{work}）")
     result = recover_poses(preds, out, work / "postprocess" / "alignment.json",
-                           raw_candidates[-1])
+                           raw_candidates[-1],
+                           max_frames=min(max(args.max_frames, 30), MAX_SAFE_VIEWS_8GB))
     print(json.dumps(result, ensure_ascii=False))
