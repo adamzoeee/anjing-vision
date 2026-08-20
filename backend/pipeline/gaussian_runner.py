@@ -25,6 +25,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts" / "gaussian"
 DEFAULT_PYTHON = r"D:\conda\slam3r\python.exe"
 DEFAULT_ITERS = int(os.getenv("GAUSSIAN_TRAIN_ITERS", "8000"))
 DEFAULT_TIMEOUT_SECONDS = float(os.getenv("GAUSSIAN_TIMEOUT_SECONDS", "0") or 0)
+MAX_SAFE_VIEWS_8GB = 1024
 
 
 def env_python() -> Path:
@@ -77,7 +78,8 @@ def run_gaussian(preds_dir: Path, work_dir: Path, *, iters: int = DEFAULT_ITERS,
         raise RuntimeError("alignment.json 不存在，请先运行点云后处理")
 
     steps = [
-        ("位姿恢复", [str(SCRIPTS / "recover_poses.py"), str(work_dir)]),
+        ("位姿恢复", [str(SCRIPTS / "recover_poses.py"), str(work_dir),
+                    "--max-frames", str(MAX_SAFE_VIEWS_8GB)]),
         ("Gaussian 训练", [str(SCRIPTS / "train_gsplat.py"), str(gaussian_dir), str(int(iters))]),
     ]
     started = time.perf_counter()
@@ -124,7 +126,7 @@ def run_gaussian(preds_dir: Path, work_dir: Path, *, iters: int = DEFAULT_ITERS,
     }
 
 
-def run_pose_recovery(work_dir: Path, *, max_frames: int = 600,
+def run_pose_recovery(work_dir: Path, *, max_frames: int = MAX_SAFE_VIEWS_8GB,
                       timeout_s: float = 1200.0, progress_callback=None) -> dict:
     """只恢复逐帧相机位姿（视频证据），不训练 Gaussian。
 
@@ -147,7 +149,9 @@ def run_pose_recovery(work_dir: Path, *, max_frames: int = 600,
     if raw_ply is None or not alignment.is_file():
         raise RuntimeError("位姿恢复依赖缺失（*_recon.ply / alignment.json）")
     python = env_python()
-    cmd = [str(python), str(SCRIPTS / "recover_poses.py"), str(work_dir)]
+    safe_max_frames = min(max(int(max_frames), 30), MAX_SAFE_VIEWS_8GB)
+    cmd = [str(python), str(SCRIPTS / "recover_poses.py"), str(work_dir),
+           "--max-frames", str(safe_max_frames)]
     started = time.perf_counter()
     logger.info("pose_recovery command=%s", " ".join(cmd))
     proc = subprocess.Popen(
