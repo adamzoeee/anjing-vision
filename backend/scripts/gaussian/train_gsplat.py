@@ -15,6 +15,8 @@ import numpy as np
 import torch
 from PIL import Image
 
+MAX_SAFE_VIEWS_8GB = 1024
+
 
 def build_ssim():
     def gaussian(window_size, sigma):
@@ -48,6 +50,11 @@ def train(work_dir: Path, iters: int = 8000) -> dict:
 
     work_dir = Path(work_dir)
     cams = json.loads((work_dir / "cameras.json").read_text(encoding="utf-8"))
+    if len(cams) > MAX_SAFE_VIEWS_8GB:
+        raise RuntimeError(
+            f"相机视角 {len(cams)} 超过8GB显存安全上限 {MAX_SAFE_VIEWS_8GB}；"
+            "请先执行全时段均匀择优，不允许直接扩大训练视角数"
+        )
     init = np.load(work_dir / "init_points.npz")
     means0 = torch.from_numpy(init["means"].astype(np.float32)).cuda()
     colors0 = torch.from_numpy(init["colors"].astype(np.float32)).cuda()
@@ -97,10 +104,13 @@ def train(work_dir: Path, iters: int = 8000) -> dict:
     strategy.check_sanity(params, optimizers)
 
     # ---- 图像 ----
+    # 全部图像以 uint8 常驻 CPU；每步只把 BATCH=4 搬到GPU并转float。
+    # 1024张224² RGB约占147MiB系统内存；视角数不会线性放大训练显存。
     images = []
     for c in cams:
-        img = np.asarray(Image.open(work_dir / "images" / f"{c['id']:05d}.jpg")).astype(np.float32) / 255.0
-        images.append(torch.from_numpy(img).cuda().permute(2, 0, 1))  # 3,H,W
+        with Image.open(work_dir / "images" / f"{c['id']:05d}.jpg") as source:
+            img = np.asarray(source.convert("RGB"), dtype=np.uint8).copy()
+        images.append(torch.from_numpy(img).permute(2, 0, 1).contiguous())
     H, W = images[0].shape[1], images[0].shape[2]
 
     started = time.perf_counter()
@@ -108,7 +118,7 @@ def train(work_dir: Path, iters: int = 8000) -> dict:
     BATCH = 4
     for step in range(iters):
         vids = rng.choice(n_cams, size=BATCH, replace=False).tolist()
-        gt = torch.stack([images[v] for v in vids])  # (C,3,H,W)
+        gt = torch.stack([images[v] for v in vids]).cuda().float().div_(255.0)
         vm = viewmats[vids]  # (C,4,4)
         K = Ks[vids]  # (C,3,3)
         quats_n = params["quats"] / params["quats"].norm(dim=1, keepdim=True)
