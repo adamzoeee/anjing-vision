@@ -254,15 +254,20 @@ def _run_slam3r_pipeline(
     )
 
     # ---- 4.26. GroundingDINO + SAM 关键帧证据（阶段 2：只附加置信度，不删对象）----
-    from pipeline.semantic_evidence import mark_semantics_unavailable, run_semantic_enrichment
+    from pipeline.semantic_evidence import (
+        mark_semantics_unavailable, prepare_semantic_cloud, run_semantic_enrichment,
+    )
 
     semantic_started = time.perf_counter()
     semantic_structure_json = work / "postprocess" / "structure.json"
     semantic_diagnostics_json = work / "diagnostics" / "objects.json"
+    semantic_cloud = prepare_semantic_cloud(
+        post["aligned_ply"], work / "postprocess" / "scene_semantic.ply",
+    )
     if pose_meta and (work / "gaussian" / "cameras.json").is_file():
         try:
             semantic_result = run_semantic_enrichment(
-                post["aligned_ply"], work / "gaussian" / "cameras.json",
+                semantic_cloud, work / "gaussian" / "cameras.json",
                 work / "gaussian" / "images", semantic_structure_json,
                 semantic_diagnostics_json, work / "diagnostics" / "semantic_evidence.json",
                 instances_json=work / "postprocess" / "semantic_instances.json",
@@ -313,6 +318,40 @@ def _run_slam3r_pipeline(
     from pipeline.geometry_builder import build_instance_geometry, mark_geometry_unavailable
 
     geometry_started = time.perf_counter()
+    review_json = work / "postprocess" / "structure_review_v2.json"
+    if not review_json.is_file():
+        review_json = work / "postprocess" / "structure_review.json"
+    completion_structure_json = semantic_structure_json
+    if review_json.is_file():
+        from pipeline.structure_review import apply_structure_review
+        model_structure_json = work / "postprocess" / "structure_model.json"
+        current_structure = json.loads(semantic_structure_json.read_text(encoding="utf-8"))
+        model_structure_json.write_text(
+            json.dumps(current_structure, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        completion_structure = current_structure
+        review_payload = json.loads(review_json.read_text(encoding="utf-8"))
+        for key in ("doors", "windows"):
+            if key in review_payload:
+                completion_structure[key] = review_payload[key]
+        completion_structure_json = work / "postprocess" / "structure_completion_geometry.json"
+        completion_structure_json.write_text(
+            json.dumps(completion_structure, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+
+    # 真实测量点云保持不变。网页副本从原始 preview 点云出发，只去天花板
+    # 并补显示用墙/地面点；TSDF 曾因深度/位姿层不一致删掉窗墙和门墙。
+    try:
+        from scripts.complete_structural_planes import complete as complete_structural_planes
+
+        complete_structural_planes(
+            work / "postprocess" / "scene_preview.ply", completion_structure_json,
+            work / "postprocess" / "scene_preview_completed.ply",
+            cameras_json=work / "gaussian" / "cameras.json",
+            images_dir=work / "gaussian" / "images", max_video_views=96,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("display_plane_completion_skipped scan=%s reason=%s", scan.id, str(exc)[:200])
     semantic_instances_json = work / "postprocess" / "semantic_instances.json"
     instance_points_npz = work / "diagnostics" / "semantic_instance_points.npz"
     geometry_diagnostics_json = work / "diagnostics" / "geometry_diagnostics.json"
@@ -322,7 +361,7 @@ def _run_slam3r_pipeline(
     ):
         try:
             geometry_result = build_instance_geometry(
-                post["aligned_ply"], semantic_structure_json, semantic_instances_json,
+                semantic_cloud, semantic_structure_json, semantic_instances_json,
                 instance_points_npz, work / "postprocess" / "alignment.json",
                 geometry_diagnostics_json,
             )
@@ -345,17 +384,33 @@ def _run_slam3r_pipeline(
             geometry_diagnostics_json, "stable semantic instance points unavailable",
         )
         structure = json.loads(semantic_structure_json.read_text(encoding="utf-8"))
+    # Layout is the final geometry step.  A review must be applied after OBB
+    # fitting, otherwise geometry_builder silently overwrites reviewed poses.
+    if review_json.is_file():
+        apply_structure_review(semantic_structure_json, review_json)
+        structure = json.loads(semantic_structure_json.read_text(encoding="utf-8"))
+    else:
+        try:
+            from pipeline.video_layout_optimizer import optimize_video_layout
+
+            optimize_video_layout(
+                semantic_structure_json,
+                work / "diagnostics" / "semantic_evidence.json",
+                work / "diagnostics" / "instance_observations.json",
+                work / "gaussian" / "cameras.json",
+                work / "diagnostics" / "video_layout_optimizer.json",
+            )
+            structure = json.loads(semantic_structure_json.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("video_layout_optimizer_skipped scan=%s reason=%s", scan.id, str(exc)[:200])
     timings["semantic_geometry_seconds"] = time.perf_counter() - geometry_started
 
     # ---- 4.3. 用户实测参考值 → 统一米/当前单位比例 → 长度结果 ----
-    # 前两个参考用于求统一比例；第三个（如有）保留为独立验收，避免拿答案自测。
+    # 用户录入的参考尺寸全部参与米制标定，并作为对应实例的尺寸硬约束。
     from pipeline.measurement_builder import build_measurements_file
     s = get_settings()
     reference_measurements = list(scan.reference_measurements or [])
-    validation_keys = {
-        (str(item.get("object_type")), str(item.get("dimension")))
-        for item in reference_measurements[2:]
-    }
+    validation_keys: set[tuple[str, str]] = set()
     measurements = build_measurements_file(
         work / "postprocess" / "structure.json",
         work / "postprocess" / "measurements.json",
@@ -450,6 +505,8 @@ def _run_slam3r_pipeline(
         },
         "structure": structure,
         "measurements": measurements,
+        "reference_measurements": reference_measurements,
+        "calibration_quality": measurements.get("scale", {}),
         "confidence_summary": {
             "reconstruction_status": "completed",
             "semantic_status": structure.get("semantic_pipeline_status", "unavailable"),
@@ -498,7 +555,7 @@ def _run_slam3r_pipeline(
         advice=advice,
         images=[],
         preview=preview,
-        calibrated=1 if measurements.get("metric_scale_available") else 0,
+        calibrated=3 if measurements.get("metric_scale_available") else 0,
     )
     _stage(db, scan, "done", 100, "重建完成")
     logger.info(
