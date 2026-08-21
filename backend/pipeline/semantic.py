@@ -133,12 +133,14 @@ def _load_sam():
             if _sam_predictor is None:
                 from segment_anything import SamPredictor, sam_model_registry
 
-                checkpoint = Path(
-                    os.environ.get("SAM_CHECKPOINT", _BACKEND_ROOT / "models" / "sam_vit_h_4b8939.pth")
-                )
+                model_type = os.environ.get("SAM_MODEL_TYPE", "vit_b").strip().lower()
+                default_name = "sam_vit_b_01ec64.pth" if model_type == "vit_b" else "sam_vit_h_4b8939.pth"
+                checkpoint = Path(os.environ.get("SAM_CHECKPOINT", _BACKEND_ROOT / "models" / default_name))
                 if not checkpoint.is_file():
                     raise FileNotFoundError(f"SAM checkpoint not found: {checkpoint}")
-                sam = sam_model_registry["vit_h"](checkpoint=str(checkpoint)).to(DEVICE)
+                if model_type not in sam_model_registry:
+                    raise ValueError(f"Unsupported SAM_MODEL_TYPE: {model_type}")
+                sam = sam_model_registry[model_type](checkpoint=str(checkpoint)).to(DEVICE)
                 sam.eval()
                 _sam_predictor = SamPredictor(sam)
     return _sam_predictor
@@ -698,9 +700,9 @@ def preflight_semantic_models() -> list[str]:
     只检查权重文件与缓存是否存在，不实际加载模型（避免提前占用显存/时间）。
     """
     problems: list[str] = []
-    sam_checkpoint = Path(
-        os.environ.get("SAM_CHECKPOINT", _BACKEND_ROOT / "models" / "sam_vit_h_4b8939.pth")
-    )
+    model_type = os.environ.get("SAM_MODEL_TYPE", "vit_b").strip().lower()
+    default_name = "sam_vit_b_01ec64.pth" if model_type == "vit_b" else "sam_vit_h_4b8939.pth"
+    sam_checkpoint = Path(os.environ.get("SAM_CHECKPOINT", _BACKEND_ROOT / "models" / default_name))
     if not sam_checkpoint.is_file() or sam_checkpoint.stat().st_size < 1e8:
         problems.append(
             f"SAM 权重缺失或损坏：{sam_checkpoint}"
