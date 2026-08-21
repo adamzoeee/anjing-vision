@@ -448,6 +448,21 @@ def _run_slam3r_pipeline(
     except Exception as exc:  # noqa: BLE001
         logger.warning("structure_figure_failed scan_id=%s reason=%s", scan.id, str(exc)[:300])
 
+    # 独立二维通道图与空间基础数据：只读取结构/测量 JSON，不读取点云，
+    # 不修改结构图，也不执行风险评分。
+    try:
+        from pipeline.space_foundation import build_space_foundation_files
+
+        build_space_foundation_files(
+            work / "postprocess" / "measurements.json",
+            work / "postprocess" / "structure_calibrated.json"
+            if (work / "postprocess" / "structure_calibrated.json").is_file()
+            else work / "postprocess" / "structure.json",
+            work / "postprocess",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("space_foundation_failed scan_id=%s reason=%s", scan.id, str(exc)[:300])
+
     # 最终展示副本只补地面：视频帧为补点取色依据，墙/门/窗不造面，避免
     # 再次封死开口或遮挡室内。该文件不参与尺寸、通道和风险计算。
     try:
