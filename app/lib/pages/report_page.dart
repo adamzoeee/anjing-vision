@@ -89,6 +89,8 @@ class _ReportPageState extends State<ReportPage> {
                   const SizedBox(height: 16),
                   ..._keyMetricsSection(context, r),
                   const SizedBox(height: 16),
+                  _structurePlanSection(context, api, widget.scan.id),
+                  const SizedBox(height: 16),
                   _passagePlanSection(context, api, widget.scan.id),
                   const SizedBox(height: 16),
                   _metricFrameworkSection(context, r),
@@ -217,7 +219,7 @@ class _ReportPageState extends State<ReportPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('通行图（可行走区域 · 门→床路径 · 通道净宽）',
+        Text('通行图（结构平面 + 门→床路径与通道净宽标注）',
             style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         ClipRRect(

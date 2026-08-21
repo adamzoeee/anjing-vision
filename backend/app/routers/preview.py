@@ -243,7 +243,11 @@ def preview_passage_plan(
     if scan is None or scan.project.org_id != org_id:
         raise HTTPException(404, "扫描任务不存在")
     work = _work_dir(scan_id, settings)
-    path = (work / "postprocess" / "passage_plan.png").resolve()
+    # 通行图 = 结构平面图 + 通道标注（space_foundation 生成），优先取它
+    path = next((candidate.resolve() for candidate in (
+        work / "postprocess" / "passage_analysis.png",
+        work / "postprocess" / "passage_plan.png",
+    ) if candidate.is_file()), (work / "postprocess" / "passage_analysis.png").resolve())
     if not path.is_relative_to(work) or not path.is_file():
         raise HTTPException(404, "通行图不存在")
     return FileResponse(path, media_type="image/png")
