@@ -23,6 +23,52 @@ def _work_dir(scan_id: int, settings: Settings) -> Path:
     return (Path(settings.data_dir) / "work" / str(scan_id)).resolve()
 
 
+def _verified_point_preview(work: Path) -> Path:
+    """返回通过质量门槛的多帧观测融合；否则安全回退原始训练点云。"""
+    completed = work / "postprocess" / "scene_preview_video_completed.ply"
+    completed_diagnostic = completed.with_suffix(".json")
+    if completed.is_file() and completed_diagnostic.is_file():
+        try:
+            quality = json.loads(completed_diagnostic.read_text(encoding="utf-8"))
+            if (
+                quality.get("display_only") is True
+                and quality.get("excluded_from_measurement_and_risk") is True
+                and quality.get("registration_validation") == "passed"
+                and int(quality.get("output_points") or 0) >= 100_000
+            ):
+                return completed
+        except (OSError, ValueError, TypeError):
+            pass
+    candidate = work / "postprocess" / "scene_preview_video_fused.ply"
+    diagnostic = candidate.with_suffix(".json")
+    if candidate.is_file() and diagnostic.is_file():
+        try:
+            quality = json.loads(diagnostic.read_text(encoding="utf-8"))
+            if (
+                quality.get("status") == "passed"
+                and quality.get("observation_only") is True
+                and quality.get("registration_validation") == "passed"
+            ):
+                return candidate
+        except (OSError, ValueError, TypeError):
+            pass
+    return work / "postprocess" / "scene_preview.ply"
+
+
+def _preview_point_count(path: Path, alignment: dict) -> int | None:
+    """优先返回正式展示副本的实际点数，旧文件才回退 alignment。"""
+    diagnostic = path.with_suffix(".json")
+    if diagnostic.is_file():
+        try:
+            value = int(json.loads(diagnostic.read_text(encoding="utf-8")).get("output_points") or 0)
+            if value > 0:
+                return value
+        except (OSError, ValueError, TypeError):
+            pass
+    value = alignment.get("points_preview")
+    return int(value) if value is not None else None
+
+
 @router.get("/{scan_id}/manifest.json")
 def preview_manifest(
     scan_id: int,
@@ -40,10 +86,9 @@ def preview_manifest(
         if alignment_path.is_file()
         else {}
     )
-    # Only prefer observation-backed fusion.  The former planar completion
-    # could seal real doors and create fake floor/wall surfaces.
-    completed_preview_ply = work / "postprocess" / "scene_preview_completed.ply"
-    preview_ply = completed_preview_ply if completed_preview_ply.is_file() else work / "postprocess" / "scene_preview.ply"
+    # 优先整段视频观测融合的展示副本；质量门槛失败则回退原始预览。
+    # 测量/风险始终继续读取 scene_aligned.ply。
+    preview_ply = _verified_point_preview(work)
     layout_json = next(
         (p for p in (
             work / "postprocess" / "layout_boxes.json",
@@ -61,7 +106,9 @@ def preview_manifest(
     return {
         "scan_id": scan_id,
         "name": scan.project.name if scan.project else f"扫描 #{scan_id}",
-        "ply": f"/api/preview/{scan_id}/scene.ply",
+        # 同一扫描的展示点云可能在增量补训后被原子替换；使用文件版本号
+        # 避免浏览器继续显示补训前缓存（尤其会把已修复颜色误看成全黑）。
+        "ply": f"/api/preview/{scan_id}/scene.ply?v={preview_ply.stat().st_mtime_ns}",
         "gaussian_ply": (
             f"/api/preview/{scan_id}/gaussian-web.splat"
             if gaussian_web_splat.is_file()
@@ -73,6 +120,8 @@ def preview_manifest(
         "structure": f"/api/preview/{scan_id}/structure.json" if (calibrated_structure_json.is_file() or structure_json.is_file()) else None,
         "measurements": f"/api/preview/{scan_id}/measurements.json" if measurements_json.is_file() else None,
         "alignment": alignment,
+        "preview_points": _preview_point_count(preview_ply, alignment),
+        "preview_source": preview_ply.name,
         "status": scan.status,
     }
 
@@ -139,13 +188,9 @@ def preview_pointcloud(
     if scan is None or scan.project.org_id != org_id:
         raise HTTPException(404, "扫描任务不存在")
     work = _work_dir(scan_id, settings)
-    # The TSDF display experiment discarded surfaces without sufficiently
-    # consistent depth support (notably window/door walls).  Prefer the
-    # non-destructive display copy: it starts from scene_preview.ply, removes
-    # only the ceiling, and adds display-only wall/floor samples.  Measurements
-    # always keep using scene_aligned.ply.
-    completed = work / "postprocess" / "scene_preview_completed.ply"
-    path = (completed if completed.is_file() else work / "postprocess" / "scene_preview.ply").resolve()
+    # 这里只发布训练后生成的原始彩色预览点云。任何融合候选必须先通过
+    # 独立质量验证，不能因文件存在就自动进入正式页面。
+    path = _verified_point_preview(work).resolve()
     if not path.is_relative_to(work) or not path.is_file():
         raise HTTPException(404, "预览点云不存在")
     return FileResponse(path, media_type="application/octet-stream")
@@ -207,7 +252,11 @@ def preview_structure_plan(
     path = (work / "postprocess" / "structure_plan.png").resolve()
     if not path.is_relative_to(work) or not path.is_file():
         raise HTTPException(404, "结构图不存在")
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store, max-age=0", "Pragma": "no-cache"},
+    )
 
 
 @router.get("/{scan_id}/measurements.json")

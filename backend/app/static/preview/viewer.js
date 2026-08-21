@@ -18,8 +18,8 @@
   var manifestUrl = scanId ? '/api/preview/' + encodeURIComponent(scanId) + '/manifest.json' : null;
 
   var scene, camera, renderer, controls, worldGroup;
-  var pcdGroup, boxesGroup;
-  var layerState = { pcd: true, walls: true, doors: true, windows: true, objects: true, labels: true };
+  var pcdGroup, shellGroup, boxesGroup;
+  var layerState = { pcd: true, shell: true, walls: true, doors: true, windows: true, objects: true, labels: true };
   var boxGroups = { walls: null, doors: null, windows: null, objects: null };
   var labelGroup = null;
   var pointMaterial = null;
@@ -137,8 +137,10 @@
     worldGroup.add(axes);
 
     pcdGroup = new THREE.Group();
+    shellGroup = new THREE.Group();
     boxesGroup = new THREE.Group();
     labelGroup = new THREE.Group();
+    worldGroup.add(shellGroup);
     worldGroup.add(pcdGroup);
     worldGroup.add(boxesGroup);
     worldGroup.add(labelGroup);
@@ -345,6 +347,72 @@
     });
   }
 
+  function shellMaterial(color) {
+    return new THREE.MeshBasicMaterial({
+      color: color, side: THREE.DoubleSide, depthWrite: true,
+      polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2
+    });
+  }
+
+  function addShellBox(center, size, color) {
+    if (size[0] <= 0.005 || size[1] <= 0.005 || size[2] <= 0.005) return;
+    var mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), shellMaterial(color));
+    mesh.position.set(center[0], center[1], center[2]);
+    shellGroup.add(mesh);
+  }
+
+  function addStructuralBackdrop(structure) {
+    if (!structure || !structure.layout_validation || structure.layout_validation.status !== 'passed') return;
+    var room = structure.room || {}, bounds = room.bounds_xy;
+    if (!bounds || !bounds.min || !bounds.max) return;
+    var min = bounds.min, max = bounds.max;
+    // Backing surfaces sit behind observed points. They fill only display
+    // pixels, are never written to PLY, and never enter measurement/risk data.
+    addShellBox([(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, -0.025],
+      [max[0] - min[0], max[1] - min[1], 0.035], 0x8a8983);
+
+    // Wall backing is intentionally opt-in.  A wall mesh can occlude the room
+    // from an exterior camera; floor backing cannot and safely fixes the most
+    // visible black gap.  A future textured-wall implementation may set this
+    // flag after view-dependent cutaway handling is available.
+    if (structure.display_wall_backdrop !== true) return;
+
+    var openings = (structure.doors || []).concat(structure.windows || []);
+    (structure.walls || []).forEach(function (wall) {
+      var wallId = Number(wall.id), alongX = wallId === 0 || wallId === 2;
+      var center = wall.center, size = wall.size;
+      var uMin = alongX ? center[0] - size[0] / 2 : center[1] - size[0] / 2;
+      var uMax = alongX ? center[0] + size[0] / 2 : center[1] + size[0] / 2;
+      var zMax = Number(size[2]);
+      var wallOpenings = openings.filter(function (item) {
+        return Number(item.wall_id) === wallId;
+      }).map(function (item) {
+        var extent = Number(item.size[0]);
+        var u = alongX ? Number(item.center[0]) : Number(item.center[1]);
+        return { u0: u - extent / 2, u1: u + extent / 2,
+          z0: Number(item.center[2]) - Number(item.size[2]) / 2,
+          z1: Number(item.center[2]) + Number(item.size[2]) / 2 };
+      });
+      var uCuts = [uMin, uMax], zCuts = [0, zMax];
+      wallOpenings.forEach(function (opening) {
+        uCuts.push(Math.max(uMin, opening.u0), Math.min(uMax, opening.u1));
+        zCuts.push(Math.max(0, opening.z0), Math.min(zMax, opening.z1));
+      });
+      uCuts = Array.from(new Set(uCuts)).sort(function (a, b) { return a - b; });
+      zCuts = Array.from(new Set(zCuts)).sort(function (a, b) { return a - b; });
+      for (var ui = 0; ui < uCuts.length - 1; ui++) for (var zi = 0; zi < zCuts.length - 1; zi++) {
+        var uc = (uCuts[ui] + uCuts[ui + 1]) / 2, zc = (zCuts[zi] + zCuts[zi + 1]) / 2;
+        var inOpening = wallOpenings.some(function (opening) {
+          return uc > opening.u0 && uc < opening.u1 && zc > opening.z0 && zc < opening.z1;
+        });
+        if (inOpening) continue;
+        var du = uCuts[ui + 1] - uCuts[ui], dz = zCuts[zi + 1] - zCuts[zi];
+        if (alongX) addShellBox([uc, center[1], zc], [du, 0.025, dz], 0xb7b5ad);
+        else addShellBox([center[0], uc, zc], [0.025, du, dz], 0xb7b5ad);
+      }
+    });
+  }
+
   function makeBox(item, kind) {
     var style = KIND_STYLE[kind];
     var size = new THREE.Vector3(item.size[0], item.size[1], item.size[2]);
@@ -379,12 +447,15 @@
   /* ---------------- UI ---------------- */
   function bindUI(alignment) {
     pointMaterial = new THREE.PointsMaterial({
-      size: 0.02, vertexColors: true, sizeAttenuation: true
+      // Dense observation-only preview: a smaller default avoids the former
+      // blocky mosaic while the slider still lets the user enlarge sparse data.
+      size: 0.018, vertexColors: true, sizeAttenuation: true
     });
     $('point-size').addEventListener('input', function () {
       if (pointMaterial) pointMaterial.size = parseFloat(this.value) * 0.012;
     });
     $('ck-pcd').addEventListener('change', function () { layerState.pcd = this.checked; pcdGroup.visible = this.checked; });
+    if ($('ck-shell')) $('ck-shell').addEventListener('change', function () { layerState.shell = this.checked; shellGroup.visible = this.checked; });
     $('ck-walls').addEventListener('change', function () { layerState.walls = this.checked; boxGroups.walls.visible = this.checked; });
     $('ck-doors').addEventListener('change', function () { layerState.doors = this.checked; boxGroups.doors.visible = this.checked; });
     $('ck-windows').addEventListener('change', function () { layerState.windows = this.checked; boxGroups.windows.visible = this.checked; });
@@ -408,7 +479,9 @@
     var cz = (extent.z[0] + extent.z[1]) / 2;
     var diagonal = Math.max(extent.x[1] - extent.x[0], extent.y[1] - extent.y[0], 0.5);
     controls.target.set(cx, cz, -cy);
-    camera.position.set(cx + diagonal * 0.55, cz + diagonal * 0.75, -cy - diagonal * 0.9);
+    // 默认从开顶房间上方向下看，避免外侧墙面挡住房内家具；用户仍可自由
+    // 旋转到任意角度。
+    camera.position.set(cx + diagonal * 0.16, cz + diagonal * 1.20, -cy - diagonal * 0.20);
     controls.update();
   }
 
@@ -443,9 +516,14 @@
         // 正式“真实场景”只显示稠密点云。旧 layout.json 中重复的语义框会
         // 遮住家具边缘；墙门窗和家具框统一放到独立“空间结构”模式展示。
         setProgress(0.98, '完成');
-        $('scene-sub').textContent = '真实场景 · 稠密点云已加载';
+        $('scene-sub').textContent = manifest.preview_source === 'scene_preview_video_completed.ply'
+          ? '真实场景 · 900帧观测融合（开顶、地面显示补全）'
+          : manifest.preview_source === 'scene_preview_video_fused.ply'
+          ? '真实场景 · 900帧观测融合（开顶）'
+          : '真实场景 · 原始训练彩色稠密点云';
         $('stats').textContent = JSON.stringify(manifest.alignment ? {
-          points: manifest.alignment.points_preview,
+          points: manifest.preview_points || manifest.alignment.points_preview,
+          source: manifest.preview_source,
           scale: manifest.alignment.scale,
           unit: manifest.alignment.coordinate_unit
         } : {}, null, 0);
