@@ -216,8 +216,10 @@
     if (!manifestUrl) { fail('缺少 scan 参数'); return; }
     $('btn-mode-points').addEventListener('click', startPoints);
     $('btn-mode-gaussian').addEventListener('click', function () {
+      // 强制带时间戳重载：同 URL 直接赋值在浏览器里是空操作，会导致“点了没反应”
       var next = new URL(location.href);
       next.searchParams.delete('mode');
+      next.searchParams.set('_t', String(Date.now()));
       location.href = next.toString();
     });
     if (requestedMode === 'points') {
