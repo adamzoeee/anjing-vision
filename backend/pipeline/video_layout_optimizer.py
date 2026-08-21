@@ -77,26 +77,33 @@ def _fit_track(observations: list[dict], camera_by_id: dict[int, dict], size: np
         return {"status": "insufficient", "views": len(usable)}
 
     def residual(params: np.ndarray) -> np.ndarray:
-        center = np.asarray([params[0], params[1], size[2] / 2.0])
+        fit_size = size.copy()
+        fit_size[2] = size[2] * np.exp(params[3])
+        center = np.asarray([params[0], params[1], fit_size[2] / 2.0])
         values: list[float] = []
         for item in usable:
             camera = camera_by_id[int(item["view_id"])]
-            predicted = _project_bbox(center, size, params[2], camera)
+            predicted = _project_bbox(center, fit_size, params[2], camera)
             values.extend(_bbox_residual(
                 predicted, np.asarray(item["bbox"], dtype=float),
                 int(camera["width"]), int(camera["height"]),
             ))
         # Weak anchor only resolves otherwise under-constrained, fully clipped views.
         values.extend(((params[:2] - anchor[:2]) / 0.20 * 0.45).tolist())
+        # Height is learned from all visible top/bottom image edges, but stays
+        # close to the 3D geometry estimate when views are clipped.
+        values.append(float(params[3] / 0.18 * 0.35))
         return np.asarray(values)
 
     # SAM-to-3D centroids are the primary location evidence.  Reprojection may
     # refine them, but clipped 2D boxes must never drag an object across a room.
     lower = np.asarray([max(room_min[0] + 0.05, anchor[0] - 0.28),
-                        max(room_min[1] + 0.05, anchor[1] - 0.28), -180.0])
+                        max(room_min[1] + 0.05, anchor[1] - 0.28), -180.0,
+                        np.log(0.78)])
     upper = np.asarray([min(room_max[0] - 0.05, anchor[0] + 0.28),
-                        min(room_max[1] - 0.05, anchor[1] + 0.28), 180.0])
-    starts = [np.asarray([anchor[0], anchor[1], angle], dtype=float)
+                        min(room_max[1] - 0.05, anchor[1] + 0.28), 180.0,
+                        np.log(1.15)])
+    starts = [np.asarray([anchor[0], anchor[1], angle, 0.0], dtype=float)
               for angle in (initial_yaw, 0, 90, -90, 180)]
     best = None
     for start in starts:
@@ -107,7 +114,9 @@ def _fit_track(observations: list[dict], camera_by_id: dict[int, dict], size: np
             best = (score, fit.x)
     assert best is not None
     return {"status": "fitted", "views": len(usable), "score": best[0],
-            "center_xy": best[1][:2].tolist(), "yaw_deg": float(best[1][2])}
+            "center_xy": best[1][:2].tolist(), "yaw_deg": float(best[1][2]),
+            "height": float(size[2] * np.exp(best[1][3])),
+            "height_method": "multiview_visible_top_bottom_edges"}
 
 
 def _spatial_tracks(instance_observations: dict) -> dict[str, list[dict]]:
@@ -237,6 +246,7 @@ def optimize_video_layout(structure_json: Path, semantic_evidence_json: Path,
                           anchor_xy=spatial_track["anchor"][:2].tolist(),
                           view_ids=sorted(view_ids))
             if fitted["status"] == "fitted":
+                size[2] = min(float(fitted["height"]), float(structure["room"].get("height_m", size[2] / 0.9)) * 0.92)
                 center[:2] = fitted["center_xy"]
                 center[2] = size[2] / 2.0
                 item["center"] = center.tolist()
@@ -244,9 +254,19 @@ def optimize_video_layout(structure_json: Path, semantic_evidence_json: Path,
                 item["bbox"] = {"center": center.tolist(), "size": size.tolist(),
                                 "rotation_z_deg": fitted["yaw_deg"]}
                 item["geometry_method"] = "video_multiview_box_reprojection"
+                item["height_method"] = fitted["height_method"]
                 item["layout_status"] = "video_fitted"
             results.append(fitted)
 
+    # A video fit is publishable only when the whole room remains physically
+    # possible.  This prevents a locally plausible box from overlapping a bed
+    # or blocking a door in future scans.
+    from pipeline.structure_review import _validate_layout
+    by_id = {str(item.get("instance_id")): item for item in structure.get("semantic_instances", [])}
+    structure["layout_validation"] = _validate_layout(
+        structure, by_id,
+        {"layout_constraints": {"door_clearance_m": 0.60, "overlap_tolerance_m2": 0.004}},
+    )
     structure["layout_source"] = "video_multiview_box_reprojection"
     Path(structure_json).write_text(json.dumps(structure, ensure_ascii=False, indent=2), encoding="utf-8")
     payload = {"status": "applied", "results": results}
