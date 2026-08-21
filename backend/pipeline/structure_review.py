@@ -117,6 +117,78 @@ def _apply_video_layout_constraints(structure: dict, review: dict,
         item["floor_obstacle"] = False
 
 
+def _footprint(item: dict) -> tuple[float, float, float, float]:
+    """Return the axis-aligned XY footprint after applying yaw."""
+    center = item.get("center", [0.0, 0.0, 0.0])
+    size = item.get("size", [0.0, 0.0, 0.0])
+    yaw = math.radians(float(item.get("rotation_z_deg", 0.0)))
+    ex = abs(math.cos(yaw)) * float(size[0]) + abs(math.sin(yaw)) * float(size[1])
+    ey = abs(math.sin(yaw)) * float(size[0]) + abs(math.cos(yaw)) * float(size[1])
+    return (
+        float(center[0]) - ex / 2, float(center[1]) - ey / 2,
+        float(center[0]) + ex / 2, float(center[1]) + ey / 2,
+    )
+
+
+def _overlap_area(a: tuple[float, float, float, float],
+                  b: tuple[float, float, float, float]) -> float:
+    return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(
+        0.0, min(a[3], b[3]) - max(a[1], b[1]),
+    )
+
+
+def _validate_layout(structure: dict, by_id: dict[str, dict], review: dict) -> dict:
+    """Reject furniture intersections and blocked door clearances.
+
+    A reviewed plan must not be published merely because every individual box
+    looks plausible.  This final whole-room check catches exactly the previous
+    failure mode: beds/desks overlap and a bookshelf blocks the door.
+    """
+    tolerance = float((review.get("layout_constraints") or {}).get("overlap_tolerance_m2", 0.004))
+    obstacles = [
+        item for item in by_id.values()
+        if item.get("floor_obstacle", True) is not False
+    ]
+    violations: list[dict] = []
+    for index, first in enumerate(obstacles):
+        for second in obstacles[index + 1:]:
+            area = _overlap_area(_footprint(first), _footprint(second))
+            if area > tolerance:
+                violations.append({
+                    "type": "furniture_overlap",
+                    "items": [first.get("instance_id"), second.get("instance_id")],
+                    "overlap_m2": round(area, 4),
+                })
+
+    bounds = structure["room"]["bounds_xy"]
+    lo, hi = bounds["min"], bounds["max"]
+    clearance = float((review.get("layout_constraints") or {}).get("door_clearance_m", 0.60))
+    for door in structure.get("doors", []):
+        wall_id = int(door.get("wall_id", -1))
+        opening = _footprint(door)
+        if wall_id == 0:
+            zone = (opening[0], float(lo[1]), opening[2], float(lo[1]) + clearance)
+        elif wall_id == 2:
+            zone = (opening[0], float(hi[1]) - clearance, opening[2], float(hi[1]))
+        elif wall_id == 1:
+            zone = (float(hi[0]) - clearance, opening[1], float(hi[0]), opening[3])
+        elif wall_id == 3:
+            zone = (float(lo[0]), opening[1], float(lo[0]) + clearance, opening[3])
+        else:
+            continue
+        for item in obstacles:
+            area = _overlap_area(zone, _footprint(item))
+            if area > tolerance:
+                violations.append({
+                    "type": "door_clearance_blocked", "wall_id": wall_id,
+                    "item": item.get("instance_id"), "overlap_m2": round(area, 4),
+                })
+    result = {"status": "passed" if not violations else "failed", "violations": violations}
+    if violations:
+        raise ValueError(f"reviewed layout failed whole-room validation: {violations}")
+    return result
+
+
 def apply_structure_review(structure_json: Path, review_json: Path) -> dict:
     structure = json.loads(Path(structure_json).read_text(encoding="utf-8"))
     review = json.loads(Path(review_json).read_text(encoding="utf-8"))
@@ -153,6 +225,7 @@ def apply_structure_review(structure_json: Path, review_json: Path) -> dict:
     include_ids = {str(value) for value in review.get("include_instances", [])}
     if include_ids:
         by_id = {key: value for key, value in by_id.items() if key in include_ids}
+    structure["layout_validation"] = _validate_layout(structure, by_id, review)
     structure["semantic_instances"] = list(by_id.values())
     if "geometric_obstacles" in review:
         structure["geometric_obstacles"] = review["geometric_obstacles"]

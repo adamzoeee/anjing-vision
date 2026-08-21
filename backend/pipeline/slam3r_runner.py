@@ -38,7 +38,9 @@ SLAM3R_L2W_WEIGHTS = Path(
     os.getenv("SLAM3R_L2W_WEIGHTS", r"E:\.PJs\models\slam3r_l2w\slam3r_l2w.pth")
 )
 DEFAULT_FPS = float(os.getenv("SLAM3R_FPS", "4"))
-DEFAULT_KEYFRAME_STRIDE = int(os.getenv("SLAM3R_KEYFRAME_STRIDE", "3"))
+# 官方 wild-video 流程以 -1 自动估计相邻帧重叠。固定很小步长会在长时间、
+# 多次绕房拍摄时累计大量近重复局部图，放大全局注册漂移。
+DEFAULT_KEYFRAME_STRIDE = int(os.getenv("SLAM3R_KEYFRAME_STRIDE", "-1"))
 DEFAULT_WIN_R = int(os.getenv("SLAM3R_WIN_R", "5"))
 DEFAULT_NUM_SCENE_FRAME = int(os.getenv("SLAM3R_NUM_SCENE_FRAME", "10"))
 DEFAULT_INITIAL_WINSIZE = int(os.getenv("SLAM3R_INITIAL_WINSIZE", "5"))

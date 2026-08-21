@@ -37,7 +37,7 @@ def main() -> None:
     from pipeline.structure_builder import build_structure
     from pipeline.structure_figure import render_structure_plan
     from pipeline.structure_review import apply_structure_review
-    from scripts.complete_structural_planes import complete as complete_structural_planes
+    from scripts.build_open_top_preview import build as build_open_top_preview
 
     db = SessionLocal()
     scan = db.get(Scan, args.scan_id)
@@ -97,7 +97,6 @@ def main() -> None:
     review_json = post / "structure_review_v2.json"
     if not review_json.is_file():
         review_json = post / "structure_review.json"
-    completion_structure_json = structure_json
     if review_json.is_file():
         # 点云补洞仍使用本次扫描自己的墙平面；复核数据只纠正门窗拓扑。
         # 跨扫描房间尺寸先验不能反向制造当前点云中不存在的墙面。
@@ -120,14 +119,13 @@ def main() -> None:
         )
     if review_json.is_file():
         apply_structure_review(structure_json, review_json)
-    # Display-only output.  Do not replace observed points with TSDF: doing so
-    # removed window/door walls whenever pose/depth layers were inconsistent.
-    complete_structural_planes(
-        post / "scene_preview.ply", completion_structure_json,
-        post / "scene_preview_completed.ply",
-        cameras_json=work / "gaussian" / "cameras.json",
-        images_dir=work / "gaussian" / "images",
-        max_video_views=96,
+    # 从整段视频保存的逐帧注册点图重新汇总真实观测，再仅移除水平顶面。
+    # 不造墙/地面点，也不覆盖原始 scene_preview.ply。
+    from scripts.refuse_registered_points import refuse as fuse_registered_observations
+
+    fused = fuse_registered_observations(work)
+    build_open_top_preview(
+        post / fused["outputs"]["preview"], post / "scene_preview_video_fused.ply",
     )
     measurements = build_measurements_file(
         structure_json, post / "measurements.json", references,
@@ -143,6 +141,20 @@ def main() -> None:
     render_structure_plan(
         post / "measurements.json", post / "structure_calibrated.json",
         post / "structure_plan.png",
+    )
+    # 仅对正式显示副本补地面；真实几何与测量点云保持不变。墙体补面可能
+    # 遮挡室内并封住门窗，因此明确关闭。
+    from scripts.complete_structural_planes import complete as complete_structural_planes
+
+    complete_structural_planes(
+        post / "scene_preview_video_fused.ply",
+        post / "structure_calibrated.json",
+        post / "scene_preview_video_completed.ply",
+        cell=0.009,
+        cameras_json=work / "gaussian" / "cameras.json",
+        images_dir=work / "gaussian" / "images",
+        max_video_views=120,
+        fill_walls=False,
     )
 
     risk_inputs = build_risk_inputs(measurements)

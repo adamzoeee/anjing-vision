@@ -180,8 +180,10 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Widget _structurePlanSection(BuildContext context, ApiClient api, int scanId) {
-    final url =
-        '${api.dio.options.baseUrl}/api/preview/$scanId/structure_plan.png';
+    // structure_plan.png 可在不重跑重建的情况下更新；使用页面实例时间戳
+    // 避免 Flutter 图片缓存继续展示旧的 2.5D 结果。
+    final url = '${api.dio.options.baseUrl}/api/preview/$scanId/'
+        'structure_plan.png?v=${DateTime.now().millisecondsSinceEpoch}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
