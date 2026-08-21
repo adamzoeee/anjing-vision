@@ -18,8 +18,8 @@
   var manifestUrl = scanId ? '/api/preview/' + encodeURIComponent(scanId) + '/manifest.json' : null;
 
   var scene, camera, renderer, controls, worldGroup;
-  var pcdGroup, shellGroup, boxesGroup;
-  var layerState = { pcd: true, shell: true, walls: true, doors: true, windows: true, objects: true, labels: true };
+  var pcdGroup, boxesGroup, repairGroup;
+  var layerState = { pcd: true, repair: true, walls: true, doors: true, windows: true, objects: true, labels: true };
   var boxGroups = { walls: null, doors: null, windows: null, objects: null };
   var labelGroup = null;
   var pointMaterial = null;
@@ -137,10 +137,12 @@
     worldGroup.add(axes);
 
     pcdGroup = new THREE.Group();
-    shellGroup = new THREE.Group();
+    repairGroup = new THREE.Group();
     boxesGroup = new THREE.Group();
     labelGroup = new THREE.Group();
-    worldGroup.add(shellGroup);
+    // 补底层先加入场景并位于真实观测点后方。它只负责遮住黑色背景，
+    // 不写回 PLY、不参与尺寸/结构/风险计算。
+    worldGroup.add(repairGroup);
     worldGroup.add(pcdGroup);
     worldGroup.add(boxesGroup);
     worldGroup.add(labelGroup);
@@ -322,6 +324,106 @@
     feedChunk();
   }
 
+  /* ---------------- 开顶房间补底层 ---------------- */
+  function roomMaterial(color) {
+    return new THREE.MeshBasicMaterial({
+      color: color,
+      side: THREE.DoubleSide,
+      // 补底只填背景像素，不得遮挡随后绘制的真实观测点。
+      depthWrite: false,
+      transparent: false,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
+    });
+  }
+
+  function addRepairBox(size, center, rotationDeg, material) {
+    if (size[0] <= 0.005 || size[1] <= 0.005 || size[2] <= 0.005) return;
+    var mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), material);
+    mesh.position.set(center[0], center[1], center[2]);
+    mesh.rotation.z = THREE.MathUtils.degToRad(rotationDeg || 0);
+    mesh.renderOrder = -20;
+    repairGroup.add(mesh);
+  }
+
+  function localOpening(wall, opening) {
+    var theta = THREE.MathUtils.degToRad(wall.rotation_z_deg || 0);
+    var dx = opening.center[0] - wall.center[0];
+    var dy = opening.center[1] - wall.center[1];
+    return {
+      minX: dx * Math.cos(theta) + dy * Math.sin(theta) - opening.size[0] / 2,
+      maxX: dx * Math.cos(theta) + dy * Math.sin(theta) + opening.size[0] / 2,
+      minZ: Math.max(0, opening.center[2] - opening.size[2] / 2),
+      maxZ: opening.center[2] + opening.size[2] / 2,
+    };
+  }
+
+  function addWallWithOpenings(wall, openings, material) {
+    var length = wall.size[0];
+    var height = wall.size[2];
+    var half = length / 2;
+    var holes = openings.map(function (opening) { return localOpening(wall, opening); }).map(function (hole) {
+      hole.minX = Math.max(-half, hole.minX);
+      hole.maxX = Math.min(half, hole.maxX);
+      hole.maxZ = Math.min(height, hole.maxZ);
+      return hole;
+    }).filter(function (hole) { return hole.maxX > hole.minX && hole.maxZ > hole.minZ; });
+    var xs = [-half, half], zs = [0, height];
+    holes.forEach(function (hole) {
+      xs.push(hole.minX, hole.maxX);
+      zs.push(hole.minZ, hole.maxZ);
+    });
+    xs.sort(function (a, b) { return a - b; });
+    zs.sort(function (a, b) { return a - b; });
+    xs = xs.filter(function (value, index) { return index === 0 || Math.abs(value - xs[index - 1]) > 0.002; });
+    zs = zs.filter(function (value, index) { return index === 0 || Math.abs(value - zs[index - 1]) > 0.002; });
+    var theta = THREE.MathUtils.degToRad(wall.rotation_z_deg || 0);
+    for (var xi = 0; xi < xs.length - 1; xi++) {
+      for (var zi = 0; zi < zs.length - 1; zi++) {
+        var x0 = xs[xi], x1 = xs[xi + 1], z0 = zs[zi], z1 = zs[zi + 1];
+        var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+        var inHole = holes.some(function (hole) {
+          return cx > hole.minX && cx < hole.maxX && cz > hole.minZ && cz < hole.maxZ;
+        });
+        if (inHole) continue;
+        addRepairBox(
+          [x1 - x0, 0.025, z1 - z0],
+          [wall.center[0] + cx * Math.cos(theta), wall.center[1] + cx * Math.sin(theta), cz],
+          wall.rotation_z_deg || 0,
+          material
+        );
+      }
+    }
+  }
+
+  function addOpenTopRepairSurface(structure) {
+    if (!structure || !structure.room || !repairGroup) return;
+    var wallMaterial = roomMaterial(0xd7d6d0);
+    var floorMaterial = roomMaterial(0xc5b9a5);
+    var polygon = structure.room.floor_polygon || [];
+    if (polygon.length >= 3) {
+      var shape = new THREE.Shape();
+      polygon.forEach(function (point, index) {
+        if (index === 0) shape.moveTo(point[0], point[1]);
+        else shape.lineTo(point[0], point[1]);
+      });
+      shape.closePath();
+      var floor = new THREE.Mesh(new THREE.ShapeGeometry(shape), floorMaterial);
+      floor.position.z = -0.018;
+      floor.renderOrder = -20;
+      repairGroup.add(floor);
+    }
+    var openings = [];
+    (structure.doors || []).forEach(function (item) { openings.push(item); });
+    (structure.windows || []).forEach(function (item) { openings.push(item); });
+    (structure.walls || []).forEach(function (wall) {
+      addWallWithOpenings(wall, openings.filter(function (opening) {
+        return Number(opening.wall_id) === Number(wall.id);
+      }), wallMaterial);
+    });
+  }
+
   /* ---------------- 3D 框叠加 ---------------- */
   var KIND_STYLE = {
     wall: { color: 0x4f9cf9, label: false },
@@ -344,80 +446,6 @@
     Object.keys(groups).forEach(function (key) {
       boxGroups[key] = groups[key];
       boxesGroup.add(groups[key]);
-    });
-  }
-
-  function shellMaterial(color) {
-    return new THREE.MeshBasicMaterial({
-      // 补底只填背景像素，不写深度；真实点云随后绘制，因此从任意角度
-      // 旋转都不会被补底墙遮住。
-      color: color, side: THREE.DoubleSide, depthWrite: false,
-      polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2
-    });
-  }
-
-  function addShellBox(center, size, color) {
-    if (size[0] <= 0.005 || size[1] <= 0.005 || size[2] <= 0.005) return;
-    var mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), shellMaterial(color));
-    mesh.position.set(center[0], center[1], center[2]);
-    shellGroup.add(mesh);
-  }
-
-  function addStructuralBackdrop(structure, alignment) {
-    if (!structure || !structure.layout_validation || structure.layout_validation.status !== 'passed') return;
-    var room = structure.room || {}, bounds = room.bounds_xy;
-    if (!bounds || !bounds.min || !bounds.max) return;
-    var sourceMin = bounds.min, sourceMax = bounds.max;
-    var extents = alignment && alignment.extents_m;
-    var min = extents && extents.x && extents.y
-      ? [Number(extents.x[0]), Number(extents.y[0])] : sourceMin;
-    var max = extents && extents.x && extents.y
-      ? [Number(extents.x[1]), Number(extents.y[1])] : sourceMax;
-    var scaleX = (max[0] - min[0]) / Math.max(0.01, sourceMax[0] - sourceMin[0]);
-    var scaleY = (max[1] - min[1]) / Math.max(0.01, sourceMax[1] - sourceMin[1]);
-    var targetHeight = extents && extents.z ? Number(extents.z[1] - extents.z[0]) : Number(room.height_m || 2.6);
-    var scaleZ = targetHeight / Math.max(0.1, Number(room.height_m || targetHeight));
-    function mapX(value) { return min[0] + (Number(value) - sourceMin[0]) * scaleX; }
-    function mapY(value) { return min[1] + (Number(value) - sourceMin[1]) * scaleY; }
-    // Backing surfaces sit behind observed points. They fill only display
-    // pixels, are never written to PLY, and never enter measurement/risk data.
-    addShellBox([(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, -0.025],
-      [max[0] - min[0], max[1] - min[1], 0.035], 0xc5b9a5);
-
-    var openings = (structure.doors || []).concat(structure.windows || []);
-    (structure.walls || []).forEach(function (wall) {
-      var wallId = Number(wall.id), alongX = wallId === 0 || wallId === 2;
-      var center = [mapX(wall.center[0]), mapY(wall.center[1]), Number(wall.center[2]) * scaleZ];
-      var size = [Number(wall.size[0]) * (alongX ? scaleX : scaleY), Number(wall.size[1]), targetHeight];
-      var uMin = alongX ? center[0] - size[0] / 2 : center[1] - size[0] / 2;
-      var uMax = alongX ? center[0] + size[0] / 2 : center[1] + size[0] / 2;
-      var zMax = Number(size[2]);
-      var wallOpenings = openings.filter(function (item) {
-        return Number(item.wall_id) === wallId;
-      }).map(function (item) {
-        var extent = Number(item.size[0]) * (alongX ? scaleX : scaleY);
-        var u = alongX ? mapX(item.center[0]) : mapY(item.center[1]);
-        return { u0: u - extent / 2, u1: u + extent / 2,
-          z0: (Number(item.center[2]) - Number(item.size[2]) / 2) * scaleZ,
-          z1: (Number(item.center[2]) + Number(item.size[2]) / 2) * scaleZ };
-      });
-      var uCuts = [uMin, uMax], zCuts = [0, zMax];
-      wallOpenings.forEach(function (opening) {
-        uCuts.push(Math.max(uMin, opening.u0), Math.min(uMax, opening.u1));
-        zCuts.push(Math.max(0, opening.z0), Math.min(zMax, opening.z1));
-      });
-      uCuts = Array.from(new Set(uCuts)).sort(function (a, b) { return a - b; });
-      zCuts = Array.from(new Set(zCuts)).sort(function (a, b) { return a - b; });
-      for (var ui = 0; ui < uCuts.length - 1; ui++) for (var zi = 0; zi < zCuts.length - 1; zi++) {
-        var uc = (uCuts[ui] + uCuts[ui + 1]) / 2, zc = (zCuts[zi] + zCuts[zi + 1]) / 2;
-        var inOpening = wallOpenings.some(function (opening) {
-          return uc > opening.u0 && uc < opening.u1 && zc > opening.z0 && zc < opening.z1;
-        });
-        if (inOpening) continue;
-        var du = uCuts[ui + 1] - uCuts[ui], dz = zCuts[zi + 1] - zCuts[zi];
-        if (alongX) addShellBox([uc, center[1], zc], [du, 0.025, dz], 0xd7d6d0);
-        else addShellBox([center[0], uc, zc], [0.025, du, dz], 0xd7d6d0);
-      }
     });
   }
 
@@ -486,9 +514,7 @@
     var cz = (extent.z[0] + extent.z[1]) / 2;
     var diagonal = Math.max(extent.x[1] - extent.x[0], extent.y[1] - extent.y[0], 0.5);
     controls.target.set(cx, cz, -cy);
-    // 默认从开顶房间上方向下看，避免外侧墙面挡住房内家具；用户仍可自由
-    // 旋转到任意角度。
-    camera.position.set(cx + diagonal * 0.16, cz + diagonal * 1.20, -cy - diagonal * 0.20);
+    camera.position.set(cx + diagonal * 0.55, cz + diagonal * 0.75, -cy - diagonal * 0.9);
     controls.update();
   }
 
@@ -520,18 +546,27 @@
           });
       })
       .then(function (manifest) {
-        // 正式“真实场景”只显示稠密点云。旧 layout.json 中重复的语义框会
-        // 遮住家具边缘；墙门窗和家具框统一放到独立“空间结构”模式展示。
-        setProgress(0.98, '完成');
-        $('scene-sub').textContent = '真实场景 · 原始训练彩色稠密点云（无显示补底）';
-        $('stats').textContent = JSON.stringify(manifest.alignment ? {
-          points: manifest.preview_points || manifest.alignment.points_preview,
-          source: manifest.preview_source,
-          scale: manifest.alignment.scale,
-          unit: manifest.alignment.coordinate_unit
-        } : {}, null, 0);
-        setTimeout(function () { $('overlay').style.display = 'none'; }, 250);
-        resetView();
+        if (!manifest.layout) return;
+        setProgress(0.9, '加载空间结构识别结果');
+        return fetch(manifest.layout, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+          .then(function (response) {
+            if (!response.ok) throw new Error('结构结果加载失败 HTTP ' + response.status);
+            return response.json();
+          })
+          .then(function (layout) {
+            addBoxes(layout);
+            setProgress(0.98, '完成');
+            var counts = layout.counts || {};
+            $('scene-sub').textContent = '点云已加载 · 墙 ' + (counts.walls || 0) + ' · 门 ' + (counts.doors || 0) +
+              ' · 窗 ' + (counts.windows || 0) + ' · 家具 ' + (counts.objects || 0);
+            $('stats').textContent = JSON.stringify(manifest.alignment ? {
+              points: manifest.alignment.points_preview,
+              scale: manifest.alignment.scale,
+              unit: manifest.alignment.coordinate_unit
+            } : {}, null, 0);
+            setTimeout(function () { $('overlay').style.display = 'none'; }, 250);
+            resetView();
+          });
       })
       .catch(function (error) { fail(error && error.message ? error.message : String(error)); });
   }

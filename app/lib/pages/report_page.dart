@@ -89,6 +89,10 @@ class _ReportPageState extends State<ReportPage> {
                   const SizedBox(height: 16),
                   ..._keyMetricsSection(context, r),
                   const SizedBox(height: 16),
+                  _passagePlanSection(context, api, widget.scan.id),
+                  const SizedBox(height: 16),
+                  _metricFrameworkSection(context, r),
+                  const SizedBox(height: 16),
                   ..._furnitureDetailSection(context, r),
                   const SizedBox(height: 16),
                   Text('尺寸信息', style: Theme.of(context).textTheme.titleMedium),
@@ -98,16 +102,16 @@ class _ReportPageState extends State<ReportPage> {
                   ..._qualityTiles(r),
                   const SizedBox(height: 16),
                   Text(
-                    '风险项（${r.risks.length}）',
+                    '风险项（${_visibleRisks(r).length}）',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  if (r.risks.isEmpty)
+                  if (_visibleRisks(r).isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(8),
                       child: Text('未检测到风险项'),
                     )
                   else
-                    ...r.risks.map((risk) => RiskCard(risk: risk)),
+                    ..._visibleRisks(r).map((risk) => RiskCard(risk: risk)),
                   const SizedBox(height: 16),
                   Text('改造建议', style: Theme.of(context).textTheme.titleMedium),
                   if (r.advice.isEmpty)
@@ -122,10 +126,6 @@ class _ReportPageState extends State<ReportPage> {
                         title: Text(a),
                       ),
                     ),
-                  const SizedBox(height: 16),
-                  _structurePlanSection(context, api, r.scanId),
-                  const SizedBox(height: 16),
-                  _passageAnalysisSection(context, api, r.scanId),
                   const SizedBox(height: 16),
                   Text(
                     '3D 场景预览',
@@ -182,10 +182,8 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Widget _structurePlanSection(BuildContext context, ApiClient api, int scanId) {
-    // structure_plan.png 可在不重跑重建的情况下更新；使用页面实例时间戳
-    // 避免 Flutter 图片缓存继续展示旧的 2.5D 结果。
-    final url = '${api.dio.options.baseUrl}/api/preview/$scanId/'
-        'structure_plan.png?v=${DateTime.now().millisecondsSinceEpoch}';
+    final url =
+        '${api.dio.options.baseUrl}/api/preview/$scanId/structure_plan.png';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -213,25 +211,14 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  Widget _passageAnalysisSection(
-    BuildContext context,
-    ApiClient api,
-    int scanId,
-  ) {
-    final url = '${api.dio.options.baseUrl}/api/preview/$scanId/'
-        'passage-analysis.png?v=${DateTime.now().millisecondsSinceEpoch}';
+  Widget _passagePlanSection(BuildContext context, ApiClient api, int scanId) {
+    final url =
+        '${api.dio.options.baseUrl}/api/preview/$scanId/passage_plan.png';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '通道分析图（基于空间结构）',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 4),
-        const Text(
-          '标注门到床路径、可通行区域、关键间距与最小净宽',
-          style: TextStyle(fontSize: 12, color: Colors.grey),
-        ),
+        Text('通行图（可行走区域 · 门→床路径 · 通道净宽）',
+            style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
@@ -240,7 +227,7 @@ class _ReportPageState extends State<ReportPage> {
             headers: api.authorizationHeaders,
             errorBuilder: (context, error, stack) => const Padding(
               padding: EdgeInsets.all(12),
-              child: Text('通道分析图尚未生成'),
+              child: Text('通行图尚未生成'),
             ),
             loadingBuilder: (context, child, progress) => progress == null
                 ? child
@@ -250,6 +237,83 @@ class _ReportPageState extends State<ReportPage> {
                   ),
           ),
         ),
+      ],
+    );
+  }
+
+  /// 风险项过滤：门槛/台阶/坡度/不平/卫生间门口暂不评估，先不显示。
+  static const Set<String> _hiddenRiskCodes = {
+    'threshold', 'stairs', 'slope', 'uneven', 'bathroom_door',
+  };
+
+  List<Risk> _visibleRisks(Report report) =>
+      report.risks.where((risk) => !_hiddenRiskCodes.contains(risk.code)).toList();
+
+  /// 评价框架（只改指标名称与分组，不评分——评分由下一步实现）：
+  /// 通行能力 40% / 空间布局 30% / 使用安全 30%。
+  Widget _metricFrameworkSection(BuildContext context, Report report) {
+    final raw = report.measures['measurements'];
+    final m = raw is Map ? raw as Map : const {};
+    final passage = m['passage'] is Map ? m['passage'] as Map : const {};
+    final walkable = m['walkable_area_m2'];
+    final openings = m['openings'] is List ? m['openings'] as List : const [];
+    final door = openings.whereType<Map>().where((o) => o['type'] == 'door').firstOrNull;
+    final distances = m['distances'] is List ? m['distances'] as List : const [];
+    final nearest = distances.whereType<Map>().firstWhere(
+          (d) => (d['clearance_m'] is num) && (d['clearance_m'] as num) > 0.001,
+          orElse: () => distances.isNotEmpty ? distances.first as Map : const {},
+        );
+    String fmt(Object? value) =>
+        value is num ? value.toStringAsFixed(2) : (value?.toString() ?? '—');
+
+    final groups = <(String, String, List<String>)>[
+      ('通行能力', '占比 40%', [
+        if (passage['passage_width_m'] != null)
+          '通道宽度 ${fmt(passage['passage_width_m'])}m',
+        if (passage['path_length_m'] != null)
+          '主要路径长度 ${fmt(passage['path_length_m'])}m',
+        if (door != null) '门口空间：门宽 ${fmt(door['width_m'])}m',
+        '路径阻碍情况：通道障碍物',
+      ]),
+      ('空间布局', '占比 30%', [
+        if (nearest.isNotEmpty)
+          '家具间距（最近）${fmt(nearest['clearance_m'])}m',
+        if (walkable is num) '活动面积 ${walkable.toStringAsFixed(1)}m²',
+        '拥挤程度',
+      ]),
+      ('使用安全', '占比 30%', [
+        '床周围空间',
+        '主要活动区域',
+      ]),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('空间评价框架（待评分）',
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        ...groups.map((group) {
+          final (name, weight, items) = group;
+          return Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('$name（$weight）',
+                      style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  ...items.map((item) => Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text('· $item',
+                            style: Theme.of(context).textTheme.bodyMedium),
+                      )),
+                ],
+              ),
+            ),
+          );
+        }),
       ],
     );
   }
@@ -264,9 +328,6 @@ class _ReportPageState extends State<ReportPage> {
     final validation = m['quality'] is Map && m['quality']['validation'] is List
         ? m['quality']['validation'] as List
         : const [];
-    final summary = report.measures['confidence_summary'] is Map
-        ? report.measures['confidence_summary'] as Map
-        : const {};
     if (m.isEmpty && validation.isEmpty) return const [];
 
     String fmt(Object? value) =>
@@ -298,8 +359,7 @@ class _ReportPageState extends State<ReportPage> {
         title: const Text('通道与可行走'),
         subtitle: Text(
           '最窄通道 ${fmt(passage['passage_width_m'])} · 门→床路径 ${fmt(passage['path_length_m'])}'
-          '${walkable is num ? ' · 可行走 ${walkable.toStringAsFixed(1)}m²' : ''}'
-          '${passage['threshold_m'] is num && passage['threshold_m'] > 0.005 ? ' · 门槛 ${((passage['threshold_m'] as num) * 100).toStringAsFixed(1)}cm' : ''}',
+          '${walkable is num ? ' · 可行走 ${walkable.toStringAsFixed(1)}m²' : ''}',
         ),
       ));
     }
@@ -332,28 +392,6 @@ class _ReportPageState extends State<ReportPage> {
             : (scale['reason']?.toString() ?? '需要至少两个一致的实测参考尺寸'),
       ),
     ));
-    final measurementCoverage = summary['measurement_coverage'] is Map
-        ? summary['measurement_coverage'] as Map
-        : const {};
-    final riskCoverage = summary['risk_assessment_coverage'] is Map
-        ? summary['risk_assessment_coverage'] as Map
-        : const {};
-    if (summary.isNotEmpty) {
-      rows.add(ListTile(
-        dense: true,
-        leading: const Icon(Icons.fact_check_outlined),
-        title: const Text('可信度与评估覆盖率'),
-        subtitle: Text(
-          '重建 ${summary['reconstruction_status'] ?? 'unknown'} · '
-          '语义 ${summary['semantic_status'] ?? 'unknown'} · '
-          '几何 ${summary['geometry_status'] ?? 'unknown'}\n'
-          '可靠测量 ${measurementCoverage['verified_count'] ?? 0}/'
-          '${measurementCoverage['total_count'] ?? 0} · '
-          '正式风险评估 ${riskCoverage['evaluated_count'] ?? 0}/'
-          '${riskCoverage['total_count'] ?? 0}',
-        ),
-      ));
-    }
     if (validation.isNotEmpty) {
       rows.add(Padding(
         padding: const EdgeInsets.only(top: 4),
@@ -393,8 +431,7 @@ class _ReportPageState extends State<ReportPage> {
     const cn = {
       'bed': '床', 'wardrobe': '衣柜', 'sofa': '沙发', 'desk': '书桌', 'table': '桌子',
       'cabinet': '柜子', 'bookshelf': '书架', 'chair': '椅子', 'stool': '凳子',
-      'small_table': '小桌', 'storage_rack': '小收纳架',
-      'chandelier': '吊灯', 'carpet': '地毯', 'curtain': '窗帘',
+      'small_table': '小桌', 'chandelier': '吊灯', 'carpet': '地毯', 'curtain': '窗帘',
     };
     const nums = ['一', '二', '三', '四', '五', '六'];
     final counted = <String, int>{};
@@ -414,26 +451,12 @@ class _ReportPageState extends State<ReportPage> {
         'medium' => '中',
         _ => '低',
       };
-      final measurementStatus = item['measurement_status']?.toString() ?? 'unavailable';
-      final reason = switch (item['measurement_reason']?.toString()) {
-        'scale_unavailable' => '未完成尺度标定',
-        'semantic_evidence_insufficient' => '语义证据不足',
-        'instance_not_stable' => '实例边界不稳定',
-        'geometry_not_verified' => '几何未通过验证',
-        'incomplete_instance_geometry' => '实例点集覆盖不完整',
-        'geometry_bbox_unavailable' => '几何边界不可用',
-        _ => item['measurement_reason']?.toString() ?? '数据不足',
-      };
       tiles.add(ListTile(
         dense: true,
         leading: const Icon(Icons.chair_outlined),
-        title: Text(measurementStatus == 'verified'
-            ? '$name：长 ${fmt(item['length_m'])}m × 宽 '
-                '${fmt(item['width_m'])}m × 高 ${fmt(item['height_m'])}m'
-            : '$name：暂不可可靠测量'),
-        subtitle: Text(measurementStatus == 'verified'
-            ? '识别/测量置信度：$confText'
-            : '识别置信度：$confText · 原因：$reason'),
+        title: Text('$name：长 ${fmt(item['length_m'])}m × 宽 '
+            '${fmt(item['width_m'])}m × 高 ${fmt(item['height_m'])}m'),
+        subtitle: Text('测量置信度：$confText'),
       ));
     }
     return tiles;
