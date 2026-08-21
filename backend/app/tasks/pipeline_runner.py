@@ -339,16 +339,19 @@ def _run_slam3r_pipeline(
             json.dumps(completion_structure, ensure_ascii=False, indent=2), encoding="utf-8",
         )
 
-    # 真实测量点云保持不变。网页副本从原始 preview 点云出发，只去天花板
-    # 并补显示用墙/地面点；TSDF 曾因深度/位姿层不一致删掉窗墙和门墙。
+    # 真实测量点云保持不变。正式网页副本重新汇总整段视频保存的逐帧注册
+    # 点图：高置信点全保留，中低置信点需跨时间重复观测；随后仅按水平
+    # 法线移除顶面。失败时预览路由自动回退 scene_preview.ply。
     try:
-        from scripts.complete_structural_planes import complete as complete_structural_planes
+        from scripts.build_open_top_preview import build as build_open_top_preview
+        from scripts.refuse_registered_points import refuse as fuse_registered_observations
 
-        complete_structural_planes(
-            work / "postprocess" / "scene_preview.ply", completion_structure_json,
-            work / "postprocess" / "scene_preview_completed.ply",
-            cameras_json=work / "gaussian" / "cameras.json",
-            images_dir=work / "gaussian" / "images", max_video_views=96,
+        fused = fuse_registered_observations(work)
+        build_open_top_preview(
+            Path(fused["outputs"]["preview"])
+            if Path(fused["outputs"]["preview"]).is_absolute()
+            else work / "postprocess" / fused["outputs"]["preview"],
+            work / "postprocess" / "scene_preview_video_fused.ply",
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("display_plane_completion_skipped scan=%s reason=%s", scan.id, str(exc)[:200])
@@ -444,6 +447,28 @@ def _run_slam3r_pipeline(
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("structure_figure_failed scan_id=%s reason=%s", scan.id, str(exc)[:300])
+
+    # 最终展示副本只补地面：视频帧为补点取色依据，墙/门/窗不造面，避免
+    # 再次封死开口或遮挡室内。该文件不参与尺寸、通道和风险计算。
+    try:
+        from scripts.complete_structural_planes import complete as complete_structural_planes
+
+        fused_preview = work / "postprocess" / "scene_preview_video_fused.ply"
+        if fused_preview.is_file():
+            complete_structural_planes(
+                fused_preview,
+                work / "postprocess" / "structure_calibrated.json"
+                if (work / "postprocess" / "structure_calibrated.json").is_file()
+                else work / "postprocess" / "structure.json",
+                work / "postprocess" / "scene_preview_video_completed.ply",
+                cell=0.009,
+                cameras_json=work / "gaussian" / "cameras.json",
+                images_dir=work / "gaussian" / "images",
+                max_video_views=120,
+                fill_walls=False,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("floor_display_completion_skipped scan=%s reason=%s", scan.id, str(exc)[:200])
 
     # ---- 4.5. Gaussian 仅保留为显式实验分支；正式双视图不依赖它 ----
     gaussian_meta: dict | None = None

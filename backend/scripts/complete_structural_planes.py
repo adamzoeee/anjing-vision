@@ -111,17 +111,21 @@ def complete(
     cameras_json: Path | None = None,
     images_dir: Path | None = None,
     max_video_views: int = 60,
+    fill_walls: bool = True,
 ) -> dict:
+    rng = np.random.default_rng(45)
     rows, _ = read_float_ply(input_ply)
     xyz = np.column_stack([rows[name] for name in ("x", "y", "z")]).astype(np.float64)
     rgb = np.column_stack([rows[name] for name in ("red", "green", "blue")]).astype(np.float32)
+    global_tree = cKDTree(xyz)
     structure = json.loads(structure_json.read_text(encoding="utf-8"))
     openings = list(structure.get("doors", [])) + list(structure.get("windows", []))
     room = structure.get("room", {})
     room_height = float(room.get("height_m") or 2.6)
     # 展示副本直接移除原始天花板点；仅停止“补天花板”还不够，原点云中的
     # 顶面仍会像一层星点盖板遮住房间。
-    display_keep = xyz[:, 2] < room_height - 0.12
+    already_open_top = "video_fused" in input_ply.stem or "open_top" in input_ply.stem
+    display_keep = np.ones(len(xyz), dtype=bool) if already_open_top else xyz[:, 2] < room_height - 0.12
     display_rows = rows[display_keep].copy()
     display_xyz = np.column_stack([display_rows[name] for name in ("x", "y", "z")]).astype(np.float64)
     floor_snap = np.abs(display_xyz[:, 2]) <= 0.075
@@ -135,7 +139,7 @@ def complete(
         display_rows[name] = display_xyz[:, index]
     additions: list[tuple[np.ndarray, np.ndarray]] = []
     wall_stats = []
-    for wall in structure.get("walls", []):
+    for wall in (structure.get("walls", []) if fill_walls else []):
         wall_id = int(wall.get("id", -1))
         center = np.asarray(wall["center"], dtype=float)
         length, _, height = map(float, wall["size"])
@@ -147,9 +151,7 @@ def complete(
         distance = np.abs(delta @ normal)
         near = (distance <= 0.075) & (np.abs(along) <= length / 2 + 0.05) & (xyz[:, 2] >= 0) & (xyz[:, 2] <= height)
         wall_points = xyz[near]
-        if len(wall_points) < 100:
-            continue
-        wall_along = (wall_points - center) @ tangent
+        wall_along = (wall_points - center) @ tangent if len(wall_points) else np.empty(0)
         occupied = set(zip(np.rint(wall_along / cell).astype(int), np.rint(wall_points[:, 2] / cell).astype(int)))
         us = np.arange(-length / 2 + cell / 2, length / 2, cell)
         zs = np.arange(cell / 2, height, cell)
@@ -173,9 +175,17 @@ def complete(
         if not generated:
             continue
         generated_xyz = np.asarray(generated, dtype=np.float64)
-        tree = cKDTree(np.column_stack([wall_along, wall_points[:, 2]]))
-        _, indices = tree.query(np.column_stack([(generated_xyz - center) @ tangent, generated_xyz[:, 2]]), k=1)
-        generated_rgb = rgb[near][indices]
+        # 打散规则栅格，避免 Three.js 点精灵形成明显的方格纸纹理；仍严格
+        # 留在同一墙面内，不改变任何测量几何。
+        generated_xyz += np.outer(rng.uniform(-0.32 * cell, 0.32 * cell, len(generated_xyz)), tangent)
+        generated_xyz[:, 2] += rng.uniform(-0.32 * cell, 0.32 * cell, len(generated_xyz))
+        if len(wall_points):
+            tree = cKDTree(np.column_stack([wall_along, wall_points[:, 2]]))
+            _, indices = tree.query(np.column_stack([(generated_xyz - center) @ tangent, generated_xyz[:, 2]]), k=1)
+            generated_rgb = rgb[near][indices]
+        else:
+            _, indices = global_tree.query(generated_xyz, k=1)
+            generated_rgb = rgb[indices]
         generated_rgb, video_views = _video_colors(
             generated_xyz, generated_rgb, cameras_json, images_dir, max_views=max_video_views,
         )
@@ -206,6 +216,7 @@ def complete(
             ], dtype=np.float64)
             if not len(generated):
                 continue
+            generated[:, :2] += rng.uniform(-0.32 * cell, 0.32 * cell, (len(generated), 2))
             tree = cKDTree(support[:, :2])
             _, indices = tree.query(generated[:, :2], k=1)
             generated_rgb, video_views = _video_colors(
@@ -229,7 +240,9 @@ def complete(
         output = display_rows
     write_float_ply(output_ply, output)
     diagnostics = {
-        "schema_version": 1, "display_only": True,
+        "schema_version": 2, "display_only": True,
+        "method": "video_colored_structural_surface_completion",
+        "filled_surfaces": "floor_and_walls" if fill_walls else "floor_only",
         "excluded_from_measurement_and_risk": True, "cell_m": cell,
         "source_points": len(rows), "output_points": len(output), "walls": wall_stats,
         "removed_ceiling_points": int((~display_keep).sum()),
@@ -249,11 +262,12 @@ def main() -> None:
     parser.add_argument("--cameras-json", type=Path)
     parser.add_argument("--images-dir", type=Path)
     parser.add_argument("--max-video-views", type=int, default=60)
+    parser.add_argument("--floor-only", action="store_true")
     args = parser.parse_args()
     print(json.dumps(complete(
         args.input_ply, args.structure_json, args.output_ply, cell=args.cell,
         cameras_json=args.cameras_json, images_dir=args.images_dir,
-        max_video_views=args.max_video_views,
+        max_video_views=args.max_video_views, fill_walls=not args.floor_only,
     ), ensure_ascii=False, indent=2))
 
 
