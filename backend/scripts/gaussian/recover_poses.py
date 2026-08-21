@@ -79,16 +79,14 @@ def recover_poses(preds_dir: Path, out_dir: Path, alignment_json: Path, raw_ply:
     # ---- 米制变换（与 scene_postprocess 一致）----
     align = json.loads(alignment_json.read_text(encoding="utf-8"))
     R_total = np.asarray(align["alignment"]["rotation"], dtype=np.float64)
-    theta = float(np.radians(align["alignment"]["wall_theta_deg"]))
-    rz = np.array([[np.cos(-theta), -np.sin(-theta), 0],
-                   [np.sin(-theta), np.cos(-theta), 0],
-                   [0, 0, 1]], dtype=np.float64)
-    R1 = rz.T @ R_total
     s = float(align["scale"]["applied"])
 
     raw_pcd = o3d.io.read_point_cloud(str(raw_ply))
     raw_pts = np.asarray(raw_pcd.points, dtype=np.float64)
-    p1 = raw_pts @ R1.T
+    # scene_postprocess 的真实坐标变换是：
+    #   X_metric = s * (R_total @ X_raw - floor_z * ez)
+    # R_total 已包含 z-up 与墙面贴轴，不能再次拆/乘 wall_theta。
+    p1 = raw_pts @ R_total.T
     low = p1[p1[:, 2] < np.percentile(p1[:, 2], 35)]
     A = np.column_stack([low[:, :2], np.ones(len(low))])
     b = -low[:, 2]
@@ -96,8 +94,8 @@ def recover_poses(preds_dir: Path, out_dir: Path, alignment_json: Path, raw_ply:
     res = np.abs(A @ coef - b)
     keep = res < np.percentile(res, 90)
     coef, *_ = np.linalg.lstsq(A[keep], b[keep], rcond=None)
-    floor_z = float(coef[2])
-    t = np.array([0.0, 0.0, floor_z])
+    # A @ coef = -z，因此水平地面的真实 z 截距是 -coef[2]。
+    floor_z = float(align["alignment"].get("floor_z_raw_aligned", -coef[2]))
 
     u_grid = (np.arange(W, dtype=np.float32)[None, :].repeat(H, 0)).reshape(-1)
     v_grid = (np.arange(H, dtype=np.float32)[:, None].repeat(W, 1)).reshape(-1)
@@ -170,7 +168,8 @@ def recover_poses(preds_dir: Path, out_dir: Path, alignment_json: Path, raw_ply:
             continue
         # 米制变换
         R_metric = R_wc @ R_total.T
-        C_metric = -s * (R_total @ (R1.T @ t + R_wc.T @ T_wc))
+        C_raw = -R_wc.T @ T_wc
+        C_metric = s * (R_total @ C_raw - np.array([0.0, 0.0, floor_z]))
         cameras.append({
             "id": i, "width": W, "height": H, "fx": fx_global, "fy": fx_global,
             "cx": W / 2, "cy": H / 2,

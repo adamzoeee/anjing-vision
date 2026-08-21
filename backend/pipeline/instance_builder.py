@@ -32,6 +32,10 @@ MIN_MASK_OVERLAP_POINTS = 3
 MIN_COMPLETENESS = 0.62
 MIN_BOUNDARY_STABILITY = 0.45
 MIN_VIEW_DIVERSITY = 0.25
+# Open3D 的 DBSCAN 会为稠密邻域缓存邻接关系。房间点云即使只有 5 万点，
+# 在床/墙这类高密区域也可能瞬间占用 20GB 以上系统内存。实例边界最终仍会
+# 回到原点集/候选几何做稳健拟合；聚类阶段只需均匀代表点，1 万点足够分离主体。
+MAX_DBSCAN_POINTS = 2000
 # 只剔除紧贴房间边界平面的墙层；贴墙家具的可见前表面通常在该距离之外。
 # 过宽会把书柜/衣柜自身的语义表面一起删掉。
 WALL_FILTER_DISTANCE = 0.04
@@ -67,6 +71,12 @@ def _structural_filter(point_ids: np.ndarray, points: np.ndarray, structure: dic
 def _adaptive_dbscan(point_ids: np.ndarray, points: np.ndarray) -> tuple[list[np.ndarray], dict]:
     if len(point_ids) < MIN_INSTANCE_POINTS:
         return [], {"eps": None, "cluster_count": 0, "noise_points": int(len(point_ids))}
+    input_count = len(point_ids)
+    if input_count > MAX_DBSCAN_POINTS:
+        # 稠密点云同一表面存在大量重复邻近点；均匀抽取代表点不会改变空间
+        # 覆盖，却可避免Open3D DBSCAN在二十万级语义点上长时间阻塞。
+        positions = np.linspace(0, input_count - 1, MAX_DBSCAN_POINTS, dtype=np.int64)
+        point_ids = point_ids[positions]
     xyz = points[point_ids]
     cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
     distances = np.asarray(cloud.compute_nearest_neighbor_distance(), dtype=float)
@@ -78,6 +88,8 @@ def _adaptive_dbscan(point_ids: np.ndarray, points: np.ndarray) -> tuple[list[np
     return clusters, {
         "eps": eps, "nearest_neighbor_median": spacing,
         "cluster_count": len(clusters), "noise_points": int((labels < 0).sum()),
+        "input_points": int(input_count), "clustered_points": int(len(point_ids)),
+        "sampling_applied": bool(input_count > MAX_DBSCAN_POINTS),
     }
 
 

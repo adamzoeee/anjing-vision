@@ -4,7 +4,8 @@ import urllib.request
 from pathlib import Path
 
 URLS = {
-    "sam_vit_h_4b8939.pth": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
+    # ViT-B 对 8GB 显存更稳；本项目只用框提示分割，不需要默认加载 ViT-H。
+    "sam_vit_b_01ec64.pth": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
 }
 ROOT = Path(__file__).resolve().parent.parent  # backend/
 

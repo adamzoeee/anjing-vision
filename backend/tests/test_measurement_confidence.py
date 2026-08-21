@@ -108,6 +108,17 @@ def test_scale_failure_continues_without_fake_metric_values():
     assert result["objects"][0]["length_m"] is None
 
 
+def test_multiple_supplied_references_fall_back_to_single_detected_reference():
+    structure = _structure()
+    structure["doors"] = []
+    result = build_measurements(structure, _references())
+    assert result["metric_scale_available"] is True
+    assert result["scale"]["forced_estimate"] is True
+    assert result["scale"]["method"] == "single_detected_reference_fallback"
+    assert result["room"]["length_m"] == pytest.approx(4.0)
+    assert result["objects"][0]["risk_eligibility"] == "not_evaluable"
+
+
 def test_unavailable_measurement_does_not_enter_risk_score():
     result = build_measurements(_structure(ready=False), _references()[:1])
     score, detail = compute_score(build_risk_inputs(result), include_not_evaluable=True)
