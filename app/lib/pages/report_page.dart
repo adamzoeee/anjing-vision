@@ -185,7 +185,7 @@ class _ReportPageState extends State<ReportPage> {
 
   Widget _structurePlanSection(BuildContext context, ApiClient api, int scanId) {
     final url =
-        '${api.dio.options.baseUrl}/api/preview/$scanId/structure_plan.png';
+        '${api.dio.options.baseUrl}/api/preview/$scanId/structure_plan.png?v=20260822';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -215,7 +215,7 @@ class _ReportPageState extends State<ReportPage> {
 
   Widget _passagePlanSection(BuildContext context, ApiClient api, int scanId) {
     final url =
-        '${api.dio.options.baseUrl}/api/preview/$scanId/passage_plan.png';
+        '${api.dio.options.baseUrl}/api/preview/$scanId/passage_plan.png?v=20260822';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
