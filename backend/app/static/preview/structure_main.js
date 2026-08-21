@@ -60,7 +60,10 @@
     }
     function label(item) {
       var canvas = document.createElement('canvas'); canvas.width = 256; canvas.height = 64;
-      var ctx = canvas.getContext('2d'); var text = (item.label || item.category || 'object') + dimensionText(item);
+      var ctx = canvas.getContext('2d');
+      var m = measuredById[item.instance_id];
+      var name = item.label || item.category || (m && m.type) || 'object';
+      var text = name + dimensionText(item);
       ctx.font = 'bold 27px "Microsoft YaHei",sans-serif'; ctx.fillStyle = 'rgba(15,23,42,.88)';
       ctx.fillRect(2, 4, Math.min(250, ctx.measureText(text).width + 24), 54); ctx.fillStyle = '#ffd6de'; ctx.fillText(text, 14, 41);
       var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true, depthTest: false }));
@@ -73,7 +76,12 @@
     (data.walls || []).forEach(function (x) { groups.walls.add(box(x, 0x4f9cf9, true)); });
     (data.doors || []).forEach(function (x) { groups.doors.add(box(x, 0xffb703, true)); });
     (data.windows || []).forEach(function (x) { groups.windows.add(box(x, 0x5ce98a, true)); });
-    (data.objects || []).forEach(function (x) { groups.objects.add(box(x, 0xff8fa3, true)); groups.objects.add(label(x)); });
+    // 家具优先画“semantic_instances”（审计/训练后的最终尺寸，与2D结构图一致），
+    // 旧字段 objects 只作回退——之前画错了数据源，导致3D视图显示审计前的旧盒子。
+    var structureObjects = (data.semantic_instances && data.semantic_instances.length)
+      ? data.semantic_instances
+      : (data.objects || []);
+    structureObjects.forEach(function (x) { groups.objects.add(box(x, 0xff8fa3, true)); groups.objects.add(label(x)); });
     (data.geometric_obstacles || []).forEach(function (x) { groups.obstacles.add(box(x, 0xff7a00, true)); groups.obstacles.add(label(x)); });
     function bind(id, key) { var el = document.getElementById(id); if (el) el.onchange = function () { groups[key].visible = el.checked; }; }
     bind('ck-walls', 'walls'); bind('ck-doors', 'doors'); bind('ck-windows', 'windows'); bind('ck-objects', 'objects');
