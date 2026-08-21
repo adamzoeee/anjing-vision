@@ -7,6 +7,7 @@ from pathlib import Path
 from pipeline.measurement_builder import build_measurements_file
 from pipeline.passage_builder import build_passage_metrics
 from pipeline.structure_figure import render_structure_plan
+from pipeline.space_foundation import build_space_foundation_files
 
 
 def main() -> None:
@@ -53,12 +54,19 @@ def main() -> None:
         calibrated if calibrated.is_file() else post / "structure.json",
         post / "structure_plan.png",
     )
+    foundation = build_space_foundation_files(
+        post / "measurements.json",
+        calibrated if calibrated.is_file() else post / "structure.json",
+        post,
+    )
     print(json.dumps({
         "scan_id": args.scan_id,
         "metric_scale_available": result.get("metric_scale_available"),
         "scale": result.get("scale"),
         "measurement_coverage": result.get("measurement_coverage"),
         "structure_plan": str(post / "structure_plan.png"),
+        "passage_analysis": str(foundation["passage_analysis"]),
+        "spatial_foundation": str(foundation["spatial_foundation"]),
     }, ensure_ascii=False, indent=2))
 
 

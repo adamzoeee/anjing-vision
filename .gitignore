@@ -39,3 +39,4 @@ app/android/.gradle/
 app/android/local.properties
 app/ios/Pods/
 downloads/
+debug_assets/**/*.mp4

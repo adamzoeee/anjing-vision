@@ -349,7 +349,9 @@
 
   function shellMaterial(color) {
     return new THREE.MeshBasicMaterial({
-      color: color, side: THREE.DoubleSide, depthWrite: true,
+      // 补底只填背景像素，不写深度；真实点云随后绘制，因此从任意角度
+      // 旋转都不会被补底墙遮住。
+      color: color, side: THREE.DoubleSide, depthWrite: false,
       polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2
     });
   }
@@ -361,37 +363,43 @@
     shellGroup.add(mesh);
   }
 
-  function addStructuralBackdrop(structure) {
+  function addStructuralBackdrop(structure, alignment) {
     if (!structure || !structure.layout_validation || structure.layout_validation.status !== 'passed') return;
     var room = structure.room || {}, bounds = room.bounds_xy;
     if (!bounds || !bounds.min || !bounds.max) return;
-    var min = bounds.min, max = bounds.max;
+    var sourceMin = bounds.min, sourceMax = bounds.max;
+    var extents = alignment && alignment.extents_m;
+    var min = extents && extents.x && extents.y
+      ? [Number(extents.x[0]), Number(extents.y[0])] : sourceMin;
+    var max = extents && extents.x && extents.y
+      ? [Number(extents.x[1]), Number(extents.y[1])] : sourceMax;
+    var scaleX = (max[0] - min[0]) / Math.max(0.01, sourceMax[0] - sourceMin[0]);
+    var scaleY = (max[1] - min[1]) / Math.max(0.01, sourceMax[1] - sourceMin[1]);
+    var targetHeight = extents && extents.z ? Number(extents.z[1] - extents.z[0]) : Number(room.height_m || 2.6);
+    var scaleZ = targetHeight / Math.max(0.1, Number(room.height_m || targetHeight));
+    function mapX(value) { return min[0] + (Number(value) - sourceMin[0]) * scaleX; }
+    function mapY(value) { return min[1] + (Number(value) - sourceMin[1]) * scaleY; }
     // Backing surfaces sit behind observed points. They fill only display
     // pixels, are never written to PLY, and never enter measurement/risk data.
     addShellBox([(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, -0.025],
-      [max[0] - min[0], max[1] - min[1], 0.035], 0x8a8983);
-
-    // Wall backing is intentionally opt-in.  A wall mesh can occlude the room
-    // from an exterior camera; floor backing cannot and safely fixes the most
-    // visible black gap.  A future textured-wall implementation may set this
-    // flag after view-dependent cutaway handling is available.
-    if (structure.display_wall_backdrop !== true) return;
+      [max[0] - min[0], max[1] - min[1], 0.035], 0xc5b9a5);
 
     var openings = (structure.doors || []).concat(structure.windows || []);
     (structure.walls || []).forEach(function (wall) {
       var wallId = Number(wall.id), alongX = wallId === 0 || wallId === 2;
-      var center = wall.center, size = wall.size;
+      var center = [mapX(wall.center[0]), mapY(wall.center[1]), Number(wall.center[2]) * scaleZ];
+      var size = [Number(wall.size[0]) * (alongX ? scaleX : scaleY), Number(wall.size[1]), targetHeight];
       var uMin = alongX ? center[0] - size[0] / 2 : center[1] - size[0] / 2;
       var uMax = alongX ? center[0] + size[0] / 2 : center[1] + size[0] / 2;
       var zMax = Number(size[2]);
       var wallOpenings = openings.filter(function (item) {
         return Number(item.wall_id) === wallId;
       }).map(function (item) {
-        var extent = Number(item.size[0]);
-        var u = alongX ? Number(item.center[0]) : Number(item.center[1]);
+        var extent = Number(item.size[0]) * (alongX ? scaleX : scaleY);
+        var u = alongX ? mapX(item.center[0]) : mapY(item.center[1]);
         return { u0: u - extent / 2, u1: u + extent / 2,
-          z0: Number(item.center[2]) - Number(item.size[2]) / 2,
-          z1: Number(item.center[2]) + Number(item.size[2]) / 2 };
+          z0: (Number(item.center[2]) - Number(item.size[2]) / 2) * scaleZ,
+          z1: (Number(item.center[2]) + Number(item.size[2]) / 2) * scaleZ };
       });
       var uCuts = [uMin, uMax], zCuts = [0, zMax];
       wallOpenings.forEach(function (opening) {
@@ -407,8 +415,8 @@
         });
         if (inOpening) continue;
         var du = uCuts[ui + 1] - uCuts[ui], dz = zCuts[zi + 1] - zCuts[zi];
-        if (alongX) addShellBox([uc, center[1], zc], [du, 0.025, dz], 0xb7b5ad);
-        else addShellBox([center[0], uc, zc], [0.025, du, dz], 0xb7b5ad);
+        if (alongX) addShellBox([uc, center[1], zc], [du, 0.025, dz], 0xd7d6d0);
+        else addShellBox([center[0], uc, zc], [0.025, du, dz], 0xd7d6d0);
       }
     });
   }
@@ -447,15 +455,14 @@
   /* ---------------- UI ---------------- */
   function bindUI(alignment) {
     pointMaterial = new THREE.PointsMaterial({
-      // Dense observation-only preview: a smaller default avoids the former
-      // blocky mosaic while the slider still lets the user enlarge sparse data.
-      size: 0.018, vertexColors: true, sizeAttenuation: true
+      // 保持原始点云的细粒度显示。圆形贴图会把相邻点视觉上糊成斑块，
+      // 尤其会夸大多视角边缘处的轻微误差。
+      size: 0.0075, vertexColors: true, sizeAttenuation: true
     });
     $('point-size').addEventListener('input', function () {
-      if (pointMaterial) pointMaterial.size = parseFloat(this.value) * 0.012;
+      if (pointMaterial) pointMaterial.size = parseFloat(this.value) * 0.005;
     });
     $('ck-pcd').addEventListener('change', function () { layerState.pcd = this.checked; pcdGroup.visible = this.checked; });
-    if ($('ck-shell')) $('ck-shell').addEventListener('change', function () { layerState.shell = this.checked; shellGroup.visible = this.checked; });
     $('ck-walls').addEventListener('change', function () { layerState.walls = this.checked; boxGroups.walls.visible = this.checked; });
     $('ck-doors').addEventListener('change', function () { layerState.doors = this.checked; boxGroups.doors.visible = this.checked; });
     $('ck-windows').addEventListener('change', function () { layerState.windows = this.checked; boxGroups.windows.visible = this.checked; });
@@ -516,11 +523,7 @@
         // 正式“真实场景”只显示稠密点云。旧 layout.json 中重复的语义框会
         // 遮住家具边缘；墙门窗和家具框统一放到独立“空间结构”模式展示。
         setProgress(0.98, '完成');
-        $('scene-sub').textContent = manifest.preview_source === 'scene_preview_video_completed.ply'
-          ? '真实场景 · 900帧观测融合（开顶、地面显示补全）'
-          : manifest.preview_source === 'scene_preview_video_fused.ply'
-          ? '真实场景 · 900帧观测融合（开顶）'
-          : '真实场景 · 原始训练彩色稠密点云';
+        $('scene-sub').textContent = '真实场景 · 原始训练彩色稠密点云（无显示补底）';
         $('stats').textContent = JSON.stringify(manifest.alignment ? {
           points: manifest.preview_points || manifest.alignment.points_preview,
           source: manifest.preview_source,

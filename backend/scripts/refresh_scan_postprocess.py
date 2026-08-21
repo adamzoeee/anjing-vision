@@ -142,6 +142,11 @@ def main() -> None:
         post / "measurements.json", post / "structure_calibrated.json",
         post / "structure_plan.png",
     )
+    from pipeline.space_foundation import build_space_foundation_files
+
+    build_space_foundation_files(
+        post / "measurements.json", post / "structure_calibrated.json", post,
+    )
     # 仅对正式显示副本补地面；真实几何与测量点云保持不变。墙体补面可能
     # 遮挡室内并封住门窗，因此明确关闭。
     from scripts.complete_structural_planes import complete as complete_structural_planes

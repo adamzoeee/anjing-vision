@@ -125,6 +125,8 @@ class _ReportPageState extends State<ReportPage> {
                   const SizedBox(height: 16),
                   _structurePlanSection(context, api, r.scanId),
                   const SizedBox(height: 16),
+                  _passageAnalysisSection(context, api, r.scanId),
+                  const SizedBox(height: 16),
                   Text(
                     '3D 场景预览',
                     style: Theme.of(context).textTheme.titleMedium,
@@ -198,6 +200,47 @@ class _ReportPageState extends State<ReportPage> {
             errorBuilder: (context, error, stack) => const Padding(
               padding: EdgeInsets.all(12),
               child: Text('结构图尚未生成'),
+            ),
+            loadingBuilder: (context, child, progress) => progress == null
+                ? child
+                : const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _passageAnalysisSection(
+    BuildContext context,
+    ApiClient api,
+    int scanId,
+  ) {
+    final url = '${api.dio.options.baseUrl}/api/preview/$scanId/'
+        'passage-analysis.png?v=${DateTime.now().millisecondsSinceEpoch}';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '通道分析图（基于空间结构）',
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          '标注门到床路径、可通行区域、关键间距与最小净宽',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.network(
+            url,
+            headers: api.authorizationHeaders,
+            errorBuilder: (context, error, stack) => const Padding(
+              padding: EdgeInsets.all(12),
+              child: Text('通道分析图尚未生成'),
             ),
             loadingBuilder: (context, child, progress) => progress == null
                 ? child
