@@ -123,6 +123,8 @@ class _ReportPageState extends State<ReportPage> {
                       ),
                     ),
                   const SizedBox(height: 16),
+                  _structurePlanSection(context, api, r.scanId),
+                  const SizedBox(height: 16),
                   Text(
                     '3D 场景预览',
                     style: Theme.of(context).textTheme.titleMedium,
@@ -346,7 +348,8 @@ class _ReportPageState extends State<ReportPage> {
     const cn = {
       'bed': '床', 'wardrobe': '衣柜', 'sofa': '沙发', 'desk': '书桌', 'table': '桌子',
       'cabinet': '柜子', 'bookshelf': '书架', 'chair': '椅子', 'stool': '凳子',
-      'small_table': '小桌', 'chandelier': '吊灯', 'carpet': '地毯', 'curtain': '窗帘',
+      'small_table': '小桌', 'storage_rack': '小收纳架',
+      'chandelier': '吊灯', 'carpet': '地毯', 'curtain': '窗帘',
     };
     const nums = ['一', '二', '三', '四', '五', '六'];
     final counted = <String, int>{};

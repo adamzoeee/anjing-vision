@@ -315,7 +315,15 @@ def fit_instance_geometry(
         height_support = float(np.clip(height_margin / height_margin_scale, 0.0, 1.0))
         length_support = float(np.clip((length - minimum_long) / max(minimum_long * 0.25, 0.05), 0.0, 1.0))
         prior_support = min(height_support, length_support)
-    plausible = extent_plausible and label_plausible
+    room_height = float(structure.get("room", {}).get("height_m") or 2.6)
+    floor_supported = z_bottom <= max(0.60, room_height * 0.25)
+    inside_vertical_room = z_top <= room_height + 0.15
+    plausible = extent_plausible and label_plausible and floor_supported and inside_vertical_room
+    diagnostic["vertical_room_support"] = {
+        "floor_supported": bool(floor_supported),
+        "inside_vertical_room": bool(inside_vertical_room),
+        "z_bottom": float(z_bottom), "z_top": float(z_top), "room_height": room_height,
+    }
     diagnostic["plausibility"] = {
         "basic_extents": bool(extent_plausible),
         "semantic_label_prior": bool(label_plausible),
@@ -330,7 +338,9 @@ def fit_instance_geometry(
     confidence = float(round(raw_confidence * (0.60 + 0.40 * prior_support), 6))
     diagnostic["geometry_confidence"] = confidence
     if not plausible or confidence < config.minimum_geometry_confidence:
-        if not extent_plausible:
+        if not floor_supported or not inside_vertical_room:
+            reason = "floating_or_outside_room_geometry"
+        elif not extent_plausible:
             reason = "degenerate_or_incomplete_geometry"
         elif not label_plausible:
             reason = "implausible_for_semantic_label"
@@ -379,12 +389,56 @@ def build_instance_geometry(
     point_sets = np.load(Path(instance_points_npz), allow_pickle=False)
     enriched: list[dict] = []
     diagnostics: list[dict] = []
+    boundary_candidates = list(structure.get("objects", [])) + list(structure.get("rejected_objects", []))
+    equivalents = {
+        "table": {"table", "desk", "small_table"},
+        "desk": {"table", "desk", "small_table"},
+        "bookshelf": {"bookshelf", "cabinet", "wardrobe"},
+    }
     for instance in instances_payload.get("instances", []):
         instance_id = str(instance.get("instance_id", ""))
         ids = point_sets[instance_id] if instance_id in point_sets.files else np.empty(0, dtype=np.int64)
         valid_ids = np.asarray(ids, dtype=np.int64)
         valid_ids = valid_ids[(valid_ids >= 0) & (valid_ids < len(points))]
         fitted, diagnostic = fit_instance_geometry(points[valid_ids], instance, structure, alignment)
+        label = str(fitted.get("normalized_label") or "")
+        support_views = int(fitted.get("support_views") or 0)
+        wanted = equivalents.get(label, {label})
+        rectangle_diagnostic = diagnostic.get("xy_rectangle") or {}
+        observed_center = fitted.get("center") or rectangle_diagnostic.get("center_xy")
+        if label in {"table", "desk", "bookshelf"} and support_views >= 3 and isinstance(observed_center, list) and len(observed_center) >= 2:
+            compatible = []
+            for candidate in boundary_candidates:
+                candidate_label = str(candidate.get("label") or "")
+                center = candidate.get("candidate_center") or candidate.get("center")
+                size = candidate.get("candidate_size") or candidate.get("size")
+                if candidate_label not in wanted or not isinstance(center, list) or not isinstance(size, list) or len(size) != 3:
+                    continue
+                xy_distance = float(np.linalg.norm(np.asarray(center[:2], dtype=float) - np.asarray(observed_center[:2], dtype=float)))
+                bottom = float(center[2]) - float(size[2]) / 2
+                if xy_distance <= 0.38 and bottom <= (0.60 if label == "bookshelf" else 0.30):
+                    compatible.append((xy_distance, candidate, center, size))
+            if compatible:
+                _, candidate, center, size = min(compatible, key=lambda row: row[0])
+                fitted.update(
+                    bbox={
+                        "center": list(map(float, center)), "size": list(map(float, size)),
+                        "rotation_z_deg": float(candidate.get("candidate_rotation_z_deg", candidate.get("rotation_z_deg", 0.0))),
+                        "rotation_unit": "degrees",
+                    },
+                    bbox_status="candidate_extent_multiview_validated",
+                    geometry_status="verified", geometry_confidence=max(float(fitted.get("geometry_confidence") or 0.0), 0.82),
+                    dimensions={"length": float(max(size[0], size[1])), "width": float(min(size[0], size[1])), "height": float(size[2])},
+                    center=list(map(float, center)), size=list(map(float, size)),
+                    rotation_z_deg=float(candidate.get("candidate_rotation_z_deg", candidate.get("rotation_z_deg", 0.0))),
+                    geometry_method="multiview_instance+candidate_extent",
+                    geometry_warnings=[], measurement_ready=True,
+                )
+                diagnostic.update(
+                    geometry_status="verified", reason="candidate_extent_validated_by_multiview_instance",
+                    geometry_confidence=fitted["geometry_confidence"],
+                    candidate_extent_source=candidate.get("source_label") or candidate.get("category"),
+                )
         enriched.append(fitted)
         diagnostics.append(diagnostic)
     instances_payload["geometry_stage"] = "stage4"

@@ -18,6 +18,7 @@ LABEL_CN = {
     "bed": "床", "wardrobe": "衣柜", "sofa": "沙发", "desk": "书桌", "table": "桌子",
     "cabinet": "柜子", "bookshelf": "书架", "chair": "椅子", "stool": "凳子",
     "small_table": "小桌", "box": "箱子", "unknown_obstacle": "箱子",
+    "storage_rack": "小收纳架",
 }
 CN_NUM = "一二三四五六七八"
 
@@ -56,14 +57,34 @@ def render_structure_plan(measurements_json: Path, structure_json: Path, output_
         kind = opening.get("type", "door")
         color = "#2b6cb0" if kind == "door" else "#2f855a"
         width_m = float(opening.get("width_m") or 0.8)
-        marker = Rectangle((c[0] - width_m / 2, c[1] - 0.09), width_m, 0.18,
-                           facecolor=color, edgecolor="white", linewidth=1.5, alpha=0.9)
+        yaw = int(round(float(opening.get("rotation_z_deg") or 0.0))) % 180
+        if yaw == 90:
+            marker = Rectangle((c[0] - 0.09, c[1] - width_m / 2), 0.18, width_m,
+                               facecolor=color, edgecolor="white", linewidth=1.5, alpha=0.9)
+            text_xy = (c[0] + (0.24 if c[0] <= cx else -0.24), c[1])
+        else:
+            marker = Rectangle((c[0] - width_m / 2, c[1] - 0.09), width_m, 0.18,
+                               facecolor=color, edgecolor="white", linewidth=1.5, alpha=0.9)
+            text_xy = (c[0], c[1] + (0.22 if c[1] <= cy else -0.22))
         ax.add_patch(marker)
-        ax.text(c[0], c[1] + 0.22, f"{'门' if kind == 'door' else '窗'} {width_m:.2f}m",
+        ax.text(text_xy[0], text_xy[1], f"{'门' if kind == 'door' else '窗'} {width_m:.2f}m",
                 ha="center", fontsize=8.5, color=color)
 
     counted: dict[str, int] = {}
+    attached_to = {
+        str(item.get("instance_id")): str(item.get("attached_to"))
+        for item in structure.get("semantic_instances", [])
+        if item.get("instance_id") and item.get("attached_to")
+    }
+    children_by_parent: dict[str, list[str]] = {}
+    for child_id, parent_id in attached_to.items():
+        children_by_parent.setdefault(parent_id, []).append(child_id)
     for item in objects:
+        instance_id = str(item.get("instance_id") or item.get("id") or "")
+        # 上层组合件与下层桌面共享俯视轮廓，2D 中合并标注；3D 中仍按
+        # 各自 Z 高度分别绘制，避免误解成漏识别或错误穿插。
+        if instance_id in attached_to:
+            continue
         label = item.get("type") or item.get("label") or "object"
         counted[label] = counted.get(label, 0)
         name = _name({"label": label}, counted[label])
@@ -81,6 +102,8 @@ def render_structure_plan(measurements_json: Path, structure_json: Path, output_
         poly = Polygon(ordered, closed=True, facecolor="#f6c453", edgecolor="#b7791f",
                        linewidth=1.6, alpha=0.85)
         ax.add_patch(poly)
+        if instance_id in children_by_parent:
+            name = f"{name}（上方书架）"
         ax.text(c[0], c[1], f"{name}\n{l_m:.2f}×{w_m:.2f}m",
                 ha="center", va="center", fontsize=8.2, color="#3d2e0a")
 

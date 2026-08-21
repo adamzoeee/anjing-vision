@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import time
 from functools import lru_cache
@@ -45,6 +46,9 @@ DEFAULT_CONF_THRES_L2W = float(os.getenv("SLAM3R_CONF_THRES_L2W", "12"))
 DEFAULT_CONF_THRES_I2P = float(os.getenv("SLAM3R_CONF_THRES_I2P", "1.5"))
 DEFAULT_NUM_POINTS_SAVE = int(os.getenv("SLAM3R_NUM_POINTS_SAVE", "3000000"))
 DEFAULT_TIMEOUT_SECONDS = float(os.getenv("SLAM3R_TIMEOUT_SECONDS", "0") or 0)
+QUALITY_FILTER_ENABLED = os.getenv("SLAM3R_QUALITY_FILTER", "true").lower() in {"1", "true", "yes", "on"}
+MAX_BLUR_DROP_FRACTION = float(os.getenv("SLAM3R_MAX_BLUR_DROP_FRACTION", "0.15"))
+MAX_INPUT_FRAMES = int(os.getenv("SLAM3R_MAX_INPUT_FRAMES", "900"))
 _FFMPEG_DIRS = (r"C:\ffmpeg\bin", r"C:\Program Files\ffmpeg\bin")
 
 
@@ -144,8 +148,133 @@ def extract_frames(video: Path, frames_dir: Path, fps: float = DEFAULT_FPS) -> i
     frames = sorted(frames_dir.glob("frame_*.jpg"))
     if not frames:
         raise RuntimeError("ffmpeg 抽帧未产出任何图像")
+    if QUALITY_FILTER_ENABLED and len(frames) >= 12:
+        frames = _filter_extreme_quality_frames(
+            frames, frames_dir, fps=fps, max_drop_fraction=MAX_BLUR_DROP_FRACTION,
+        )
     logger.info("slam3r_extract_frames_done count=%d", len(frames))
     return len(frames)
+
+
+def _select_quality_indices(
+    sharpness: list[float], dark_ratio: list[float], clipped_ratio: list[float],
+    *, fps: float, max_drop_fraction: float = 0.15,
+    max_frames: int | None = None,
+) -> list[int]:
+    """只剔除最差的一小部分帧，并保证整段时间轴不断档。"""
+    import numpy as np
+
+    n = len(sharpness)
+    if n < 3:
+        return list(range(n))
+    sharp = np.asarray(sharpness, dtype=float)
+    dark = np.asarray(dark_ratio, dtype=float)
+    clipped = np.asarray(clipped_ratio, dtype=float)
+    finite = np.isfinite(sharp)
+    baseline = float(np.median(sharp[finite])) if finite.any() else 0.0
+    severe = (~finite) | (sharp < max(12.0, baseline * 0.18)) | (dark > 0.72) | (clipped > 0.72)
+    candidates = np.flatnonzero(severe).tolist()
+    max_drop = max(0, min(len(candidates), int(n * max(0.0, min(max_drop_fraction, 0.3)))))
+    # 先删质量最差者；曝光极端帧优先于单纯低纹理帧。
+    candidates.sort(key=lambda i: (max(dark[i], clipped[i]), -sharp[i]), reverse=True)
+    drop = set(candidates[:max_drop])
+    keep = set(range(n)) - drop
+
+    # 每秒至少保留一帧，避免过滤造成时间轴断层和局部覆盖缺口。
+    window = max(1, int(round(max(fps, 1.0))))
+    for start in range(0, n, window):
+        block = range(start, min(start + window, n))
+        if not any(index in keep for index in block):
+            best = max(block, key=lambda i: sharp[i] - 1000.0 * max(dark[i], clipped[i]))
+            keep.add(best)
+    keep.update({0, n - 1})
+    selected = sorted(keep)
+
+    # 长视频必须覆盖完整时间轴，不能简单截取前 N 帧。按时间分桶后，
+    # 每桶保留清晰且曝光正常的一帧，限制逐帧点图的内存和总耗时。
+    cap = int(max_frames or 0)
+    if cap > 1 and len(selected) > cap:
+        edges = np.linspace(0, len(selected), cap + 1, dtype=int)
+
+        def quality(index: int) -> float:
+            value = sharp[index] if np.isfinite(sharp[index]) else 0.0
+            return float(np.log1p(max(value, 0.0)) - 4.0 * dark[index] - 4.0 * clipped[index])
+
+        distributed: list[int] = []
+        for start, end in zip(edges[:-1], edges[1:]):
+            bucket = selected[int(start):int(end)]
+            if bucket:
+                distributed.append(max(bucket, key=quality))
+        distributed[0] = 0
+        distributed[-1] = n - 1
+        selected = sorted(set(distributed))
+    return selected
+
+
+def _filter_extreme_quality_frames(
+    frames: list[Path], frames_dir: Path, *, fps: float, max_drop_fraction: float,
+) -> list[Path]:
+    """质量过滤只作用于抽帧副本；源视频不变，并保存时间映射诊断。"""
+    import cv2
+    import numpy as np
+
+    metrics: list[dict] = []
+    for frame in frames:
+        image = cv2.imread(str(frame), cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            metrics.append({"sharpness": float("nan"), "dark": 1.0, "clipped": 1.0})
+            continue
+        height, width = image.shape[:2]
+        if width > 640:
+            image = cv2.resize(image, (640, max(1, round(height * 640 / width))))
+        metrics.append({
+            "sharpness": float(cv2.Laplacian(image, cv2.CV_64F).var()),
+            "dark": float(np.mean(image < 18)),
+            "clipped": float(np.mean(image > 250)),
+        })
+    selected = _select_quality_indices(
+        [item["sharpness"] for item in metrics],
+        [item["dark"] for item in metrics],
+        [item["clipped"] for item in metrics],
+        fps=fps, max_drop_fraction=max_drop_fraction,
+        max_frames=MAX_INPUT_FRAMES,
+    )
+    if len(selected) == len(frames):
+        return frames
+
+    staging = Path(frames_dir) / ".quality_selected"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
+    mapping = []
+    for output_index, source_index in enumerate(selected, 1):
+        target = staging / f"frame_{output_index:05d}.jpg"
+        shutil.copy2(frames[source_index], target)
+        mapping.append({
+            "output": target.name, "source": frames[source_index].name,
+            "time_s": round(source_index / max(fps, 1e-6), 3), **metrics[source_index],
+        })
+    for frame in frames:
+        frame.unlink()
+    selected_frames = []
+    for staged in sorted(staging.glob("frame_*.jpg")):
+        target = Path(frames_dir) / staged.name
+        staged.replace(target)
+        selected_frames.append(target)
+    staging.rmdir()
+    # SLAM3R 的图片加载器会尝试解析目录内每个文件名的数字；诊断 JSON
+    # 必须放在 frames 目录外，否则会被误当作帧并导致启动失败。
+    (Path(frames_dir).parent / "frame_quality.json").write_text(json.dumps({
+        "input_count": len(frames), "selected_count": len(selected_frames),
+        "dropped_count": len(frames) - len(selected_frames), "max_drop_fraction": max_drop_fraction,
+        "max_input_frames": MAX_INPUT_FRAMES,
+        "mapping": mapping,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info(
+        "slam3r_quality_filter input=%d kept=%d dropped=%d",
+        len(frames), len(selected_frames), len(frames) - len(selected_frames),
+    )
+    return selected_frames
 
 
 _STAGE_MARKERS = [

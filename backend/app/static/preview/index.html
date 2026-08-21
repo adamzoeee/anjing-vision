@@ -48,15 +48,16 @@
 <div id="panel">
   <h2>显示图层</h2>
   <div class="row" id="row-pcd"><label><input type="checkbox" id="ck-pcd" checked> <span class="swatch" style="background:#aab4c8"></span> 稠密点云</label></div>
-  <div class="row"><label><input type="checkbox" id="ck-walls" checked> <span class="swatch" style="background:#4f9cf9"></span> 墙</label></div>
-  <div class="row"><label><input type="checkbox" id="ck-doors" checked> <span class="swatch" style="background:#ffb703"></span> 门</label></div>
-  <div class="row"><label><input type="checkbox" id="ck-windows" checked> <span class="swatch" style="background:#5ce98a"></span> 窗</label></div>
-  <div class="row"><label><input type="checkbox" id="ck-objects" checked> <span class="swatch" style="background:#ff8fa3"></span> 家具</label></div>
-  <div class="row"><label><input type="checkbox" id="ck-labels" checked> 家具标签</label></div>
+  <div class="row" id="row-walls"><label><input type="checkbox" id="ck-walls" checked> <span class="swatch" style="background:#4f9cf9"></span> 墙</label></div>
+  <div class="row" id="row-doors"><label><input type="checkbox" id="ck-doors" checked> <span class="swatch" style="background:#ffb703"></span> 门</label></div>
+  <div class="row" id="row-windows"><label><input type="checkbox" id="ck-windows" checked> <span class="swatch" style="background:#5ce98a"></span> 窗</label></div>
+  <div class="row" id="row-objects"><label><input type="checkbox" id="ck-objects" checked> <span class="swatch" style="background:#ff8fa3"></span> 家具</label></div>
+  <div class="row" id="row-obstacles"><label><input type="checkbox" id="ck-obstacles" checked> <span class="swatch" style="background:#ff7a00"></span> 未知障碍</label></div>
+  <div class="row" id="row-labels"><label><input type="checkbox" id="ck-labels" checked> 名称与尺寸</label></div>
   <div class="row" id="row-point-size"><span>点大小</span><input type="range" id="point-size" min="0.5" max="6" step="0.5" value="1.6"></div>
   <div class="row" id="row-rotate"><label><input type="checkbox" id="ck-rotate" checked> 自动旋转</label></div>
-  <button class="btn" id="btn-mode-points">几何/调试模式（点云）</button>
-  <button class="btn" id="btn-mode-gaussian" style="display:none">Gaussian 连续场景</button>
+  <button class="btn" id="btn-mode-points">真实场景（稠密点云）</button>
+  <button class="btn" id="btn-mode-structure">空间结构（无 Gaussian）</button>
   <button class="btn" id="btn-reset">重置视角</button>
   <button class="btn" id="btn-shot">保存截图</button>
   <div id="stats"></div>
@@ -74,7 +75,8 @@
 </script>
 <script src="/preview-static/three.min.js"></script>
 <script src="/preview-static/OrbitControls.js"></script>
-<script src="/preview-static/gaussian_main.js?v=20260818g"></script>
-<script src="/preview-static/viewer.js?v=20260818-gaussian-mode"></script>
+<script src="/preview-static/structure_main.js?v=20260820-video-layout-v3"></script>
+<script src="/preview-static/gaussian_main.js?v=20260820-formal-modes"></script>
+<script src="/preview-static/viewer.js?v=20260820-clean-points"></script>
 </body>
 </html>

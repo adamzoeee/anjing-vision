@@ -20,9 +20,6 @@ def _dims_from_size(item: dict, *, opening: bool = False, scale: float = 1.0) ->
     if opening:
         return {"width_m": max(size[0], size[1]), "height_m": size[2]}
     horizontal = sorted(size[:2], reverse=True)
-    label = str(item.get("label") or item.get("normalized_label") or "")
-    if label == "desk":
-        return {"length_m": horizontal[1], "width_m": horizontal[0], "height_m": size[2]}
     return {"length_m": horizontal[0], "width_m": horizontal[1], "height_m": size[2]}
 
 
@@ -40,8 +37,23 @@ def _matching_object(structure: dict, object_type: str) -> dict | None:
     if object_type == "door":
         return next(iter(structure.get("doors", [])), None)
     wanted = TYPE_LABELS.get(object_type, object_type)
-    candidates = list(structure.get("objects", [])) + list(structure.get("rejected_objects", []))
-    return next((item for item in candidates if item.get("label") == wanted), None)
+    equivalents = {wanted, object_type}
+    if object_type in {"table", "desk"}:
+        equivalents.update({"table", "desk", "small_table"})
+    candidates = (
+        list(structure.get("semantic_instances", []))
+        + list(structure.get("objects", []))
+        + list(structure.get("rejected_objects", []))
+    )
+    return next((
+        item for item in candidates
+        if str(item.get("normalized_label") or item.get("label") or item.get("category")) in equivalents
+        and item.get("geometry_status", "verified") == "verified"
+        and (
+            item in structure.get("semantic_instances", [])
+            or str(item.get("semantic_confidence", "")).lower() in {"high", "medium"}
+        )
+    ), None)
 
 
 def _measured_dimension(item: dict, object_type: str, dimension: str) -> float | None:
@@ -66,18 +78,52 @@ def estimate_reference_scale(
         scale = float(reference["meters"]) / measured
         candidates.append(scale)
         details.append({**reference, "status": "used", "model_units": measured, "scale": scale})
+    if len(candidates) == 1 and len(details) >= 2:
+        # 用户确实提供了多个参考值，但其中一个因为门被遮挡/语义漏检而无法
+        # 取得模型单位时，不能让已经成功测得的可靠参考也失效。单参考在数学
+        # 上足以完成单位换算；这里只把它降级为低置信度估算，禁止进入风险评分。
+        scale = float(candidates[0])
+        used = next(item for item in details if item.get("status") == "used")
+        return scale, {
+            "status": METRIC_SCALE_STATUS,
+            "scale": scale,
+            "max_relative_disagreement": None,
+            "references": details,
+            "forced_estimate": True,
+            "confidence": "low",
+            "method": "single_detected_reference_fallback",
+            "reason": (
+                "已提供多个参考尺寸，但仅一个在点云中成功定位；"
+                "已恢复米制换算，结果标记为低置信度估算"
+            ),
+            "reference": {
+                "object_type": used.get("object_type"),
+                "dimension": used.get("dimension"),
+                "meters": used.get("meters"),
+                "model_units": used.get("model_units"),
+            },
+        }
     if len(candidates) < 2:
         return None, {
             "status": "failed", "reason": "至少需要两个成功测得的参考尺寸",
             "references": details,
         }
+    # 大型水平家具的长边通常比门洞/桌深的视觉边界稳定。床长是全局尺度锚点；
+    # 其他参考只做一致性审计，不能再分别拉伸各个物体。
+    bed_anchor = next((
+        detail for detail in details
+        if detail.get("status") == "used"
+        and detail.get("object_type") == "bed" and detail.get("dimension") == "length"
+    ), None)
     ordered = sorted(candidates)
     midpoint = len(ordered) // 2
     median = float(ordered[midpoint]) if len(ordered) % 2 else float(
         sum(ordered[midpoint - 1:midpoint + 1]) / 2
     )
+    if bed_anchor is not None:
+        median = float(bed_anchor["scale"])
     disagreement = max(abs(value - median) / median for value in candidates)
-    if disagreement > tolerance:
+    if disagreement > tolerance and bed_anchor is None:
         return None, {
             "status": "failed", "reason": "参考尺寸换算比例不一致",
             "max_relative_disagreement": disagreement, "references": details,
@@ -94,6 +140,7 @@ def estimate_reference_scale(
     return median, {
         "status": METRIC_SCALE_STATUS, "scale": median,
         "max_relative_disagreement": disagreement, "references": details,
+        "method": "trusted_bed_anchor_with_reference_consistency_audit" if bed_anchor is not None else "robust_median",
     }
 
 
@@ -174,6 +221,51 @@ def _scaled_structure(structure: dict, scale: float) -> dict:
             _scale_item(item, scale)
     result["measurement_scale"] = {"applied": scale, "method": METRIC_SCALE_STATUS}
     return result
+
+
+def _apply_reference_constraints(structure: dict, references: Iterable[dict]) -> list[dict]:
+    """记录参考值验证结果，禁止逐对象改轴破坏统一尺度。"""
+    applied: list[dict] = []
+    for reference in references:
+        object_type, dimension = _reference_key(reference)
+        item = _matching_object(structure, object_type)
+        if item is None or not isinstance(item.get("size"), list) or len(item["size"]) != 3:
+            continue
+        measured = _measured_dimension(item, object_type, dimension)
+        if measured is None:
+            continue
+        value = float(reference["meters"])
+        applied.append({
+            "object_type": object_type, "dimension": dimension, "meters": value,
+            "measured_m": measured,
+            "relative_error": abs(measured - value) / max(value, 1e-6),
+            "instance_id": item.get("instance_id"), "action": "validation_only",
+        })
+    structure["reference_validation"] = applied
+    return applied
+
+
+def _apply_opening_reference_aspect(structure: dict, references: Iterable[dict]) -> list[dict]:
+    """门高实测 + 已观测门框宽高比，恢复门洞宽高；不改变全局尺度。"""
+    applied: list[dict] = []
+    for reference in references:
+        object_type, dimension = _reference_key(reference)
+        if object_type != "door" or dimension != "height":
+            continue
+        for item in structure.get("doors", []):
+            size = [float(value) for value in item.get("size", [])]
+            if len(size) != 3 or size[0] <= 0 or size[2] <= 0:
+                continue
+            known_height = float(reference["meters"])
+            width = size[0] / size[2] * known_height
+            item["size"] = [width, size[1], known_height]
+            item["center"][2] = known_height / 2
+            item["reference_geometry"] = {
+                "method": "known_height_times_observed_aspect",
+                "height_m": known_height, "width_m": width,
+            }
+            applied.append({"object_type": "door", "height_m": known_height, "width_m": width})
+    return applied
 
 
 def _semantic_confidence(instance: dict) -> str:
@@ -381,6 +473,10 @@ def build_measurements(
     metric_available = scale is not None and scale_quality.get("status") == METRIC_SCALE_STATUS
     forced_scale = bool(scale_quality.get("forced_estimate"))
     metric_structure = _scaled_structure(structure, float(scale)) if metric_available else None
+    if metric_structure is not None:
+        scale_quality["constraints_applied"] = _apply_reference_constraints(
+            metric_structure, [*calibration, *validation],
+        )
 
     room = (metric_structure or {}).get("room", {})
     bounds = room.get("bounds_xy", {})
@@ -402,28 +498,46 @@ def build_measurements(
         }
 
     openings: list[dict] = []
+    reference_by_key = {_reference_key(item): item for item in references}
     for kind in ("doors", "windows"):
         singular = "door" if kind == "doors" else "window"
         raw_items = structure.get(kind, [])
         scaled_items = (metric_structure or {}).get(kind, [])
         for index, raw_source in enumerate(raw_items, 1):
+            support_views = int(raw_source.get("semantic_support_views") or 0)
             geometry_verified = raw_source.get("geometry_status") == "verified"
-            ready = bool(metric_available and geometry_verified)
+            geometry_supported = geometry_verified or (
+                raw_source.get("geometry_status") == "semantic_supported" and support_views >= 3
+            )
+            ready = bool(metric_available and geometry_supported)
             scaled_source = scaled_items[index - 1] if ready else {}
+            dimensions = _dims_from_size(scaled_source, opening=True) if ready else _empty_dimensions(opening=True)
+            reference_height = reference_by_key.get((singular, "height"))
+            reference_aspect = False
+            if ready and reference_height is not None:
+                raw_size = [float(value) for value in raw_source.get("size", [])]
+                if len(raw_size) == 3 and raw_size[0] > 0 and raw_size[2] > 0:
+                    known_height = float(reference_height["meters"])
+                    dimensions = {
+                        "width_m": raw_size[0] / raw_size[2] * known_height,
+                        "height_m": known_height,
+                    }
+                    reference_aspect = True
             openings.append({
                 "id": f"{singular}_{index:02d}", "type": singular,
-                **(_dims_from_size(scaled_source, opening=True) if ready else _empty_dimensions(opening=True)),
+                **dimensions,
                 "center": scaled_source.get("center") if ready else None,
                 "confidence": "low" if ready and forced_scale else "medium" if ready else "unknown",
                 "measurement_status": "verified" if ready else "unavailable",
-                "measurement_reason": "structural_geometry_and_scale_verified" if ready
+                "measurement_reason": "reference_height_and_observed_aspect" if reference_aspect
+                else "structural_geometry_and_scale_verified" if ready
                 else "scale_unavailable" if not metric_available else "geometry_not_verified",
-                "semantic_confidence": "structural_verified" if geometry_verified else "unknown",
+                "semantic_confidence": "structural_verified" if geometry_verified else "multiview_supported" if geometry_supported else "unknown",
                 "geometry_status": raw_source.get("geometry_status", "unknown"),
                 "geometry_confidence": raw_source.get("geometry_confidence"),
                 "scale_status": scale_quality.get("status", "failed"), "measurement_ready": ready,
                 "risk_eligibility": "eligible" if ready and not forced_scale else "not_evaluable",
-                "source": "verified_opening_geometry",
+                "source": "reference_calibrated_opening_aspect" if reference_aspect else "verified_opening_geometry",
                 "forced_scale": forced_scale,
             })
 
@@ -581,6 +695,7 @@ def build_measurements_file(
     force_legacy_measurements: bool = False,
 ) -> dict:
     structure = json.loads(Path(structure_json).read_text(encoding="utf-8"))
+    references = [dict(item) for item in references]
     geometry_diagnostics = None
     if geometry_diagnostics_json is not None and Path(geometry_diagnostics_json).is_file():
         geometry_diagnostics = json.loads(Path(geometry_diagnostics_json).read_text(encoding="utf-8"))
@@ -600,8 +715,11 @@ def build_measurements_file(
     Path(output_json).write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     scale = result.get("scale", {}).get("scale_factor")
     if calibrated_structure_json is not None and result.get("metric_scale_available") and scale:
+        calibrated = _scaled_structure(measurement_structure, float(scale))
+        _apply_reference_constraints(calibrated, references)
+        calibrated["opening_reference_geometry"] = _apply_opening_reference_aspect(calibrated, references)
         Path(calibrated_structure_json).write_text(
-            json.dumps(_scaled_structure(measurement_structure, float(scale)), ensure_ascii=False, indent=2),
+            json.dumps(calibrated, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
     elif calibrated_structure_json is not None and Path(calibrated_structure_json).is_file():
