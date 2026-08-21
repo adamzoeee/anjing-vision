@@ -257,6 +257,7 @@ def build_outputs(
             "up_axis": alignment["up_axis"].tolist(),
             "rotation": alignment["rotation"].tolist(),
             "wall_theta_deg": float(np.degrees(alignment["theta"])),
+            "floor_z_raw_aligned": float(alignment["floor_z"]),
         },
         "scale": {
             "applied": scale_info["scale"],
