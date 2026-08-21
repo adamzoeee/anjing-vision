@@ -104,13 +104,14 @@ def train(work_dir: Path, iters: int = 8000) -> dict:
     strategy.check_sanity(params, optimizers)
 
     # ---- 图像 ----
-    # 全部图像以 uint8 常驻 CPU；每步只把 BATCH=4 搬到GPU并转float。
-    # 1024张224² RGB约占147MiB系统内存；视角数不会线性放大训练显存。
+    # 全部训练图以 uint8 常驻 CPU；每步只把 BATCH=4 搬到 GPU 并转 float。
+    # 1024 张 224² RGB 图约占 147MiB 系统内存；GPU 仍只保留当前4帧
+    # 的 float32 张量（约2.3MiB），视角数不会线性放大训练显存。
     images = []
     for c in cams:
         with Image.open(work_dir / "images" / f"{c['id']:05d}.jpg") as source:
             img = np.asarray(source.convert("RGB"), dtype=np.uint8).copy()
-        images.append(torch.from_numpy(img).permute(2, 0, 1).contiguous())
+        images.append(torch.from_numpy(img).permute(2, 0, 1).contiguous())  # CPU uint8: 3,H,W
     H, W = images[0].shape[1], images[0].shape[2]
 
     started = time.perf_counter()

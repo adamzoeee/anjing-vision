@@ -22,9 +22,7 @@ OBJECT_PROMPTS: tuple[tuple[str, str], ...] = (
     ("cardboard box", "纸箱"),
     ("floor clutter", "杂物"),
     ("chair", "椅子"),
-    ("stool", "凳子"),
     ("table", "桌子"),
-    ("desk", "书桌"),
     ("potted plant", "盆栽"),
     ("indoor plant", "盆栽"),
     ("pet", "宠物"),
@@ -35,10 +33,8 @@ OBJECT_PROMPTS: tuple[tuple[str, str], ...] = (
     ("suitcase", "行李箱"),
     ("storage box", "收纳箱"),
     ("door frame", "门"),
-    ("window frame", "窗"),
     ("bed", "床"),
     ("sofa", "沙发"),
-    ("wardrobe", "衣柜"),
     ("cabinet", "柜子"),
     ("bookshelf", "书架"),
 )
@@ -111,16 +107,9 @@ def _load_dino():
 
                 model_id = os.environ.get("DINO_MODEL", "IDEA-Research/grounding-dino-base")
                 cache_dir = Path(os.environ.get("HF_HOME", _BACKEND_ROOT / ".cache" / "huggingface"))
-                # Worker 必须使用已预检的 E 盘缓存，不能在正式任务中隐式联网或
-                # 把模型下载到用户目录。需要更新模型时由部署脚本显式完成。
-                local_only = os.environ.get("SEMANTIC_LOCAL_FILES_ONLY", "1").strip().lower() not in {
-                    "0", "false", "no",
-                }
-                _dino_processor = AutoProcessor.from_pretrained(
-                    model_id, cache_dir=cache_dir, local_files_only=local_only,
-                )
+                _dino_processor = AutoProcessor.from_pretrained(model_id, cache_dir=cache_dir)
                 _dino_model = AutoModelForZeroShotObjectDetection.from_pretrained(
-                    model_id, cache_dir=cache_dir, local_files_only=local_only,
+                    model_id, cache_dir=cache_dir
                 ).to(DEVICE)
                 _dino_model.eval()
     return _dino_model, _dino_processor
@@ -133,14 +122,12 @@ def _load_sam():
             if _sam_predictor is None:
                 from segment_anything import SamPredictor, sam_model_registry
 
-                model_type = os.environ.get("SAM_MODEL_TYPE", "vit_b").strip().lower()
-                default_name = "sam_vit_b_01ec64.pth" if model_type == "vit_b" else "sam_vit_h_4b8939.pth"
-                checkpoint = Path(os.environ.get("SAM_CHECKPOINT", _BACKEND_ROOT / "models" / default_name))
+                checkpoint = Path(
+                    os.environ.get("SAM_CHECKPOINT", _BACKEND_ROOT / "models" / "sam_vit_h_4b8939.pth")
+                )
                 if not checkpoint.is_file():
                     raise FileNotFoundError(f"SAM checkpoint not found: {checkpoint}")
-                if model_type not in sam_model_registry:
-                    raise ValueError(f"Unsupported SAM_MODEL_TYPE: {model_type}")
-                sam = sam_model_registry[model_type](checkpoint=str(checkpoint)).to(DEVICE)
+                sam = sam_model_registry["vit_h"](checkpoint=str(checkpoint)).to(DEVICE)
                 sam.eval()
                 _sam_predictor = SamPredictor(sam)
     return _sam_predictor
@@ -508,7 +495,6 @@ class SemanticFusion:
         semantic_score: dict[int, float],
         consistency: dict[int, float],
         diagnostics: dict | None = None,
-        detection_support: list[dict] | None = None,
     ):
         self.visible_views = visible_views
         self.votes = votes
@@ -517,9 +503,6 @@ class SemanticFusion:
         self.semantic_score = semantic_score
         self.consistency = consistency
         self.diagnostics = diagnostics or {}
-        # 每个 2D mask 实际支持的 3D 点，用于对象级可追踪证据。仅在内存中使用，
-        # diagnostic 输出只保存聚合计数，不序列化整批点索引。
-        self.detection_support = detection_support or []
 
     def label_point_ids(self, label: str) -> list[int]:
         """返回某个标签的全部 3D 点索引（升序）。"""
@@ -563,8 +546,7 @@ def fuse_multiview_semantics(
     supporting_views: dict[int, dict[str, int]] = {}
     detection_count = 0
     ignored_view_count = 0
-    detection_support: list[dict] = []
-    for view_index, record in enumerate(view_records):
+    for record in view_records:
         camera = record.get("camera")
         detections = record.get("detections") or []
         image_shape = tuple(int(value) for value in record.get("image_shape", (0, 0)))
@@ -606,15 +588,6 @@ def fuse_multiview_semantics(
                 image_shape,
                 depth_tolerance=depth_tolerance,
             )
-            detection_support.append({
-                "view_id": record.get("view_id", view_index),
-                "image_name": record.get("image_name"),
-                "label": label,
-                "score": float(detection.get("score", 0.0)),
-                "mask_score": float(detection.get("mask_score", 0.0)),
-                "mask_area_px": int(detection.get("mask_area_px", int(mask.sum()))),
-                "point_ids": surfaced,
-            })
             for point_id in surfaced.tolist():
                 point_votes = votes.setdefault(point_id, {})
                 point_votes[label] = point_votes.get(label, 0.0) + weight
@@ -663,19 +636,7 @@ def fuse_multiview_semantics(
         semantic_score=semantic_score,
         consistency=consistency,
         diagnostics=diagnostics,
-        detection_support=detection_support,
     )
-
-
-def release_semantic_models() -> None:
-    """释放语义模型及 CUDA 缓存，避免占用后续 3DGS 的 8GB 显存。"""
-    global _sam_predictor, _dino_model, _dino_processor
-    with _model_lock:
-        _sam_predictor = None
-        _dino_model = None
-        _dino_processor = None
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 
 def model_runtime_info() -> dict:
@@ -700,9 +661,9 @@ def preflight_semantic_models() -> list[str]:
     只检查权重文件与缓存是否存在，不实际加载模型（避免提前占用显存/时间）。
     """
     problems: list[str] = []
-    model_type = os.environ.get("SAM_MODEL_TYPE", "vit_b").strip().lower()
-    default_name = "sam_vit_b_01ec64.pth" if model_type == "vit_b" else "sam_vit_h_4b8939.pth"
-    sam_checkpoint = Path(os.environ.get("SAM_CHECKPOINT", _BACKEND_ROOT / "models" / default_name))
+    sam_checkpoint = Path(
+        os.environ.get("SAM_CHECKPOINT", _BACKEND_ROOT / "models" / "sam_vit_h_4b8939.pth")
+    )
     if not sam_checkpoint.is_file() or sam_checkpoint.stat().st_size < 1e8:
         problems.append(
             f"SAM 权重缺失或损坏：{sam_checkpoint}"

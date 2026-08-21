@@ -18,6 +18,7 @@ def _candidate(frame_id: int, reproj: float = 1.0):
 def test_selection_covers_full_timeline_and_keeps_limit():
     collected = [_candidate(i) for i in range(1000)]
     images = np.zeros((1000, 224, 224, 3), dtype=np.uint8)
+    # 每个帧给少量边缘，确保清晰度计算路径真实执行。
     images[:, :, 112:, :] = 255
     primary, backups = MODULE.select_distributed_candidates(collected, images, 600)
     ids = [item[0] for item in primary]
@@ -41,7 +42,8 @@ def test_selection_prefers_sharper_candidate_inside_time_bucket():
 
 def test_selection_does_not_drop_anything_under_limit():
     collected = [_candidate(i) for i in range(30)]
-    primary, backups = MODULE.select_distributed_candidates(collected, None, 600)
+    images = np.zeros((30, 224, 224, 3), dtype=np.uint8)
+    primary, backups = MODULE.select_distributed_candidates(collected, images, 600)
     assert primary == collected
     assert backups == []
 

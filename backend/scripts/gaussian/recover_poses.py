@@ -8,8 +8,8 @@ SLAM3R 保存的 registered_pcds 是「逐帧已注册到统一世界坐标系�
 """
 from __future__ import annotations
 
-import argparse
 import json
+import argparse
 from pathlib import Path
 
 import cv2
@@ -28,10 +28,12 @@ def _image_sharpness(image: np.ndarray) -> float:
     return float(cv2.Laplacian(image.astype(np.uint8), cv2.CV_32F).var())
 
 
-def select_distributed_candidates(
-    collected: list[tuple], images, max_frames: int,
-) -> tuple[list[tuple], list[tuple]]:
-    """从完整时间线均匀取帧，每个时间桶优先保留清晰且PnP质量高的视角。"""
+def select_distributed_candidates(collected: list[tuple], images, max_frames: int) -> tuple[list[tuple], list[tuple]]:
+    """从整段时间均匀选位姿，每个时间桶优先取清晰且PnP质量高的帧。
+
+    返回（主候选，备用候选）。二次PnP若淘汰主候选，备用候选继续补足；
+    输出上限仍为 max_frames，不增加 Gaussian 显存规模。
+    """
     if max_frames <= 0:
         return [], list(collected)
     if len(collected) <= max_frames:
@@ -42,10 +44,11 @@ def select_distributed_candidates(
         sharpness = _image_sharpness(np.asarray(images[int(frame_id)]))
         return 0.25 * np.log1p(sharpness) + 0.15 * np.log1p(len(inliers)) - float(reproj)
 
+    # collected 已按时间排序；把完整时间线切成 max_frames 个桶，每桶选一个最佳帧。
     edges = np.linspace(0, len(collected), max_frames + 1, dtype=int)
-    primary: list[tuple] = []
-    primary_ids: set[int] = set()
-    scores: dict[int, float] = {}
+    primary = []
+    primary_ids = set()
+    scores = {}
     for start, end in zip(edges[:-1], edges[1:]):
         bucket = collected[int(start):int(end)]
         if not bucket:
@@ -53,6 +56,7 @@ def select_distributed_candidates(
         best = max(bucket, key=lambda item: scores.setdefault(int(item[0]), score(item)))
         primary.append(best)
         primary_ids.add(int(best[0]))
+    # 备用帧也按质量排序；只在主候选二次PnP失败时才会进入最终上限。
     backups = [item for item in collected if int(item[0]) not in primary_ids]
     backups.sort(key=lambda item: scores.setdefault(int(item[0]), score(item)), reverse=True)
     primary.sort(key=lambda item: int(item[0]))
@@ -79,14 +83,16 @@ def recover_poses(preds_dir: Path, out_dir: Path, alignment_json: Path, raw_ply:
     # ---- 米制变换（与 scene_postprocess 一致）----
     align = json.loads(alignment_json.read_text(encoding="utf-8"))
     R_total = np.asarray(align["alignment"]["rotation"], dtype=np.float64)
+    theta = float(np.radians(align["alignment"]["wall_theta_deg"]))
+    rz = np.array([[np.cos(-theta), -np.sin(-theta), 0],
+                   [np.sin(-theta), np.cos(-theta), 0],
+                   [0, 0, 1]], dtype=np.float64)
+    R1 = rz.T @ R_total
     s = float(align["scale"]["applied"])
 
     raw_pcd = o3d.io.read_point_cloud(str(raw_ply))
     raw_pts = np.asarray(raw_pcd.points, dtype=np.float64)
-    # scene_postprocess 的真实坐标变换是：
-    #   X_metric = s * (R_total @ X_raw - floor_z * ez)
-    # R_total 已包含 z-up 与墙面贴轴，不能再次拆/乘 wall_theta。
-    p1 = raw_pts @ R_total.T
+    p1 = raw_pts @ R1.T
     low = p1[p1[:, 2] < np.percentile(p1[:, 2], 35)]
     A = np.column_stack([low[:, :2], np.ones(len(low))])
     b = -low[:, 2]
@@ -94,8 +100,8 @@ def recover_poses(preds_dir: Path, out_dir: Path, alignment_json: Path, raw_ply:
     res = np.abs(A @ coef - b)
     keep = res < np.percentile(res, 90)
     coef, *_ = np.linalg.lstsq(A[keep], b[keep], rcond=None)
-    # A @ coef = -z，因此水平地面的真实 z 截距是 -coef[2]。
-    floor_z = float(align["alignment"].get("floor_z_raw_aligned", -coef[2]))
+    floor_z = float(coef[2])
+    t = np.array([0.0, 0.0, floor_z])
 
     u_grid = (np.arange(W, dtype=np.float32)[None, :].repeat(H, 0)).reshape(-1)
     v_grid = (np.arange(H, dtype=np.float32)[:, None].repeat(W, 1)).reshape(-1)
@@ -168,8 +174,7 @@ def recover_poses(preds_dir: Path, out_dir: Path, alignment_json: Path, raw_ply:
             continue
         # 米制变换
         R_metric = R_wc @ R_total.T
-        C_raw = -R_wc.T @ T_wc
-        C_metric = s * (R_total @ C_raw - np.array([0.0, 0.0, floor_z]))
+        C_metric = -s * (R_total @ (R1.T @ t + R_wc.T @ T_wc))
         cameras.append({
             "id": i, "width": W, "height": H, "fx": fx_global, "fy": fx_global,
             "cx": W / 2, "cy": H / 2,
