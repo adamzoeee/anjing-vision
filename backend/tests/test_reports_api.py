@@ -42,6 +42,36 @@ def test_get_report(client):
     assert body["calibrated"] == 1
 
 
+def test_get_report_prefers_rebuilt_measurements_file(client):
+    import json
+    from app.config import get_settings
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    headers = _auth(client, email="fresh-measurements@x.com")
+    _pid, scan_id, _rid = _make_report(client, headers)
+    db = SessionLocal()
+    scan = db.get(Scan, scan_id)
+    scan.reference_measurements = [
+        {"object_type": "bed", "dimension": "length", "meters": 2.05},
+        {"object_type": "door", "dimension": "height", "meters": 2.10},
+    ]
+    db.commit()
+    db.close()
+    path = Path(get_settings().data_dir) / "work" / str(scan_id) / "postprocess" / "measurements.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "metric_scale_available": True,
+        "scale": {"status": "metric_references", "forced_estimate": True},
+        "room": {"length_m": 3.2, "width_m": 2.5, "height_m": 2.6},
+    }), encoding="utf-8")
+
+    body = client.get(f"/api/reports/scans/{scan_id}", headers=headers).json()
+    assert body["calibrated"] == 3
+    assert body["measures"]["measurements"]["room"]["length_m"] == 3.2
+    assert len(body["measures"]["reference_measurements"]) == 2
+
+
 def test_report_annotation_image_is_served_with_organization_auth(client, tmp_path):
     from app.config import get_settings
     from app.db import SessionLocal

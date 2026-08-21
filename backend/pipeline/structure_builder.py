@@ -172,13 +172,27 @@ def _snap_opening(
         and center[2] + opening_height / 2 <= height + 0.15
         and surround_density >= 10
     )
-    status = "verified" if strict_verified else "semantic_supported" if semantic_window else "rejected"
+    semantic_door = (
+        kind == "door" and preferred_wall is not None
+        and distances[preferred_wall] <= 0.45
+        and 0.50 <= width <= 1.25 and 1.50 <= opening_height <= min(height, 2.40)
+    )
+    status = (
+        "verified" if strict_verified
+        else "semantic_supported" if semantic_window or semantic_door
+        else "rejected"
+    )
     return {
         "kind": kind, "center": center.tolist(),
         "size": [width, 0.10, opening_height], "rotation_z_deg": wall["rotation_z_deg"],
         "wall_id": wall_id, "source_wall_id": source_wall_id, "geometry_status": status,
-        "geometry_confidence": float(max(0.55 if semantic_window else 0.0, np.clip(evidence / 5.0, 0.0, 1.0))),
-        "verification_method": "pointcloud_opening" if strict_verified else "semantic_wall_prior" if semantic_window else "insufficient_evidence",
+        "geometry_confidence": float(max(0.55 if (semantic_window or semantic_door) else 0.0, np.clip(evidence / 5.0, 0.0, 1.0))),
+        "verification_method": (
+            "pointcloud_opening" if strict_verified
+            else "layout_wall_prior" if semantic_door
+            else "semantic_wall_prior" if semantic_window
+            else "insufficient_evidence"
+        ),
         "opening_points": opening_points,
     }
 
@@ -390,6 +404,11 @@ def _fit_object(points: np.ndarray, candidate: dict, lo: np.ndarray, hi: np.ndar
     source_label = str(candidate.get("category", "unknown")).lower().strip()
     label = LABEL_ALIASES.get(source_label, source_label)
     result = dict(candidate)
+    # 保留模型原始候选边界。后续多视角实例若只观测到桌面/书架中段，可用
+    # 同位置且语义一致的候选补全整体边界；拟合后的 center/size 仍单独保存。
+    result["candidate_center"] = list(candidate.get("center", []))
+    result["candidate_size"] = list(candidate.get("size", []))
+    result["candidate_rotation_z_deg"] = float(candidate.get("rotation_z_deg", 0.0))
     result["label"] = label
     result["source_label"] = source_label
     geometry_diagnostic = diagnostic.setdefault("geometry", {}) if diagnostic is not None else None

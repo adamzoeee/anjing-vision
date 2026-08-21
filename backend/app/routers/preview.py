@@ -40,7 +40,10 @@ def preview_manifest(
         if alignment_path.is_file()
         else {}
     )
-    preview_ply = work / "postprocess" / "scene_preview.ply"
+    # Only prefer observation-backed fusion.  The former planar completion
+    # could seal real doors and create fake floor/wall surfaces.
+    completed_preview_ply = work / "postprocess" / "scene_preview_completed.ply"
+    preview_ply = completed_preview_ply if completed_preview_ply.is_file() else work / "postprocess" / "scene_preview.ply"
     layout_json = next(
         (p for p in (
             work / "postprocess" / "layout_boxes.json",
@@ -136,7 +139,13 @@ def preview_pointcloud(
     if scan is None or scan.project.org_id != org_id:
         raise HTTPException(404, "扫描任务不存在")
     work = _work_dir(scan_id, settings)
-    path = (work / "postprocess" / "scene_preview.ply").resolve()
+    # The TSDF display experiment discarded surfaces without sufficiently
+    # consistent depth support (notably window/door walls).  Prefer the
+    # non-destructive display copy: it starts from scene_preview.ply, removes
+    # only the ceiling, and adds display-only wall/floor samples.  Measurements
+    # always keep using scene_aligned.ply.
+    completed = work / "postprocess" / "scene_preview_completed.ply"
+    path = (completed if completed.is_file() else work / "postprocess" / "scene_preview.ply").resolve()
     if not path.is_relative_to(work) or not path.is_file():
         raise HTTPException(404, "预览点云不存在")
     return FileResponse(path, media_type="application/octet-stream")

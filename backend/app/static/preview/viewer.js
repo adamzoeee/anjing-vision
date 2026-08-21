@@ -440,27 +440,17 @@
           });
       })
       .then(function (manifest) {
-        if (!manifest.layout) return;
-        setProgress(0.9, '加载空间结构识别结果');
-        return fetch(manifest.layout, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
-          .then(function (response) {
-            if (!response.ok) throw new Error('结构结果加载失败 HTTP ' + response.status);
-            return response.json();
-          })
-          .then(function (layout) {
-            addBoxes(layout);
-            setProgress(0.98, '完成');
-            var counts = layout.counts || {};
-            $('scene-sub').textContent = '点云已加载 · 墙 ' + (counts.walls || 0) + ' · 门 ' + (counts.doors || 0) +
-              ' · 窗 ' + (counts.windows || 0) + ' · 家具 ' + (counts.objects || 0);
-            $('stats').textContent = JSON.stringify(manifest.alignment ? {
-              points: manifest.alignment.points_preview,
-              scale: manifest.alignment.scale,
-              unit: manifest.alignment.coordinate_unit
-            } : {}, null, 0);
-            setTimeout(function () { $('overlay').style.display = 'none'; }, 250);
-            resetView();
-          });
+        // 正式“真实场景”只显示稠密点云。旧 layout.json 中重复的语义框会
+        // 遮住家具边缘；墙门窗和家具框统一放到独立“空间结构”模式展示。
+        setProgress(0.98, '完成');
+        $('scene-sub').textContent = '真实场景 · 稠密点云已加载';
+        $('stats').textContent = JSON.stringify(manifest.alignment ? {
+          points: manifest.alignment.points_preview,
+          scale: manifest.alignment.scale,
+          unit: manifest.alignment.coordinate_unit
+        } : {}, null, 0);
+        setTimeout(function () { $('overlay').style.display = 'none'; }, 250);
+        resetView();
       })
       .catch(function (error) { fail(error && error.message ? error.message : String(error)); });
   }
