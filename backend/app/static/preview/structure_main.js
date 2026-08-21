@@ -37,8 +37,15 @@
     var group = new THREE.Group(); scene.add(group);
     var groups = { walls: new THREE.Group(), doors: new THREE.Group(), windows: new THREE.Group(), objects: new THREE.Group(), obstacles: new THREE.Group() };
     Object.keys(groups).forEach(function (key) { group.add(groups[key]); });
+    var measuredById = {};
+    if (measurements) (measurements.objects || []).forEach(function (item) { measuredById[item.id] = item; });
     function box(item, color, fill) {
+      // 优先用测量(审计后)的真实尺寸画盒子；结构文件里的旧尺寸只作回退
       var size = item.size || [1, 1, 1];
+      var measured = measuredById[item.instance_id];
+      if (measured && measured.length_m != null && measured.width_m != null && measured.height_m != null) {
+        size = [measured.length_m, measured.width_m, measured.height_m];
+      }
       var geo = new THREE.BoxGeometry(size[0], size[1], size[2]);
       var mat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: fill ? 0.18 : 0.0, depthWrite: false });
       var mesh = new THREE.Mesh(geo, mat); mesh.position.fromArray(item.center || [0, 0, 0]);
@@ -46,8 +53,6 @@
       var edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color: color }));
       mesh.add(edges); return mesh;
     }
-    var measuredById = {};
-    if (measurements) (measurements.objects || []).forEach(function (item) { measuredById[item.id] = item; });
     function dimensionText(item) {
       var m = measuredById[item.instance_id];
       if (!m || m.length_m == null) return '';
