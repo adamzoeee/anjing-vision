@@ -5,6 +5,7 @@ from pipeline.risk_assessment import (
     evaluate_formal_metrics,
     risk_result,
     score_formal_risks,
+    summarize_assessment_confidence,
 )
 from pipeline.spatial_metrics import METRIC_DEFINITION_BY_CODE, build_metric, unavailable_metric
 
@@ -160,3 +161,27 @@ def test_noncore_unknown_is_excluded_without_becoming_safe():
     result = score_formal_risks(evaluate_formal_metrics(payload))
     assert result["status"] == "evaluated"
     assert result["category_scores"]["layout"]["not_evaluable_count"] == 1
+
+
+def test_confidence_summary_separates_coverage_from_evidence_confidence():
+    payload = _payload()
+    payload["metrics"] = [
+        (item | {"confidence": 0.8}) if item["metric_code"] != "activity_area"
+        else unavailable_metric("activity_area", "missing", source="fixture")
+        for item in payload["metrics"]
+    ]
+    risks = evaluate_formal_metrics(payload)
+    summary = summarize_assessment_confidence(payload, risks)
+    assert summary["assessment_coverage"]["evaluated_count"] == 14
+    assert summary["assessment_coverage"]["not_evaluable_count"] == 1
+    assert summary["evidence_confidence"] == 0.8
+    assert summary["coverage_adjusted_confidence"] < 0.8
+
+
+def test_missing_numeric_confidence_remains_null():
+    payload = _payload()
+    risks = evaluate_formal_metrics(payload)
+    summary = summarize_assessment_confidence(payload, risks)
+    assert summary["assessment_coverage"]["percent"] == 100.0
+    assert summary["evidence_confidence"] is None
+    assert summary["reason"] == "numeric_confidence_unavailable"
