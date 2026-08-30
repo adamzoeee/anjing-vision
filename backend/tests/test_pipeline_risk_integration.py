@@ -1,6 +1,10 @@
 import json
 
-from app.tasks.pipeline_runner import _build_formal_assessment, _build_formal_pdf
+from app.tasks.pipeline_runner import (
+    _build_formal_assessment,
+    _build_formal_pdf,
+    _build_formal_risk_map,
+)
 
 
 def test_pipeline_helper_writes_formal_assessment_artifacts(tmp_path):
@@ -39,3 +43,19 @@ def test_pipeline_helper_generates_pdf_from_same_formal_payload(tmp_path):
     pdf_path = _build_formal_pdf(tmp_path, 46, assessment, {"scale_status": "relative"})
     assert pdf_path == str(tmp_path / "report" / "report.pdf")
     assert (tmp_path / "report" / "report.pdf").read_bytes().startswith(b"%PDF")
+
+
+def test_pipeline_helper_generates_formal_risk_map_from_artifacts(tmp_path):
+    post = tmp_path / "postprocess"
+    post.mkdir()
+    (post / "risk_assessment.json").write_text(json.dumps({"risks": [{
+        "risk_code": "passage", "risk_name": "通道", "risk_level": "high",
+        "assessment_status": "evaluated", "position": {"point_xy": [1, 1]},
+        "measured_value": 0.48, "unit": "m",
+    }]}), encoding="utf-8")
+    (post / "structure.json").write_text(json.dumps({
+        "room": {"floor_polygon": [[0, 0], [4, 0], [4, 3], [0, 3]]},
+    }), encoding="utf-8")
+    image_path = _build_formal_risk_map(tmp_path)
+    assert image_path == str(tmp_path / "images" / "formal_risks.png")
+    assert (tmp_path / "images" / "formal_risks.png").read_bytes().startswith(b"\x89PNG")
