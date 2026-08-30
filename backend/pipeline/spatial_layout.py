@@ -208,3 +208,38 @@ def extract_bed_surrounding_space_metric(passage: dict, foundation: dict) -> dic
         "bed_surrounding_space", value=round(distance, 3), status="derived",
         confidence=bed_confidence, position=position, source=source,
     )
+
+
+def extract_main_activity_area_safety_metric(activity_metric: dict, paths: list[dict]) -> dict:
+    """Summarize explicit activity-area reachability without applying risk thresholds."""
+    source = {
+        "artifacts": ["spatial_metrics", "normalized_paths"],
+        "fields": ["activity_area", "entrance_to_activity"],
+    }
+    if activity_metric.get("status") == "not_evaluable":
+        return unavailable_metric(
+            "main_activity_area_safety",
+            activity_metric.get("reason") or "activity_area_unavailable",
+            source=source,
+        )
+    path = next((item for item in paths if item.get("path_id") == "entrance_to_activity"), None)
+    if path is None or path.get("status") == "not_evaluable":
+        return unavailable_metric(
+            "main_activity_area_safety",
+            (path or {}).get("reason") or "activity_route_unavailable",
+            source=source,
+        )
+    safe_evidence = bool(path.get("continuous")) and not bool(path.get("obstructed"))
+    confidence_candidates = [
+        value for value in (activity_metric.get("confidence"), path.get("confidence"))
+        if value is not None
+    ]
+    return build_metric(
+        "main_activity_area_safety", value=safe_evidence, status="derived",
+        confidence=min(confidence_candidates) if confidence_candidates else None,
+        position={
+            "object_id": activity_metric.get("position", {}).get("object_id"),
+            "path_id": "entrance_to_activity",
+        },
+        source=source,
+    )
