@@ -1,7 +1,10 @@
 """Formal risk result schema for structured spatial assessment."""
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from pipeline.rules import FORMAL_CATEGORY_WEIGHTS, FORMAL_RULES
@@ -325,3 +328,22 @@ def build_risk_assessment(metric_payload: dict) -> dict:
             "official_score_system": "mobility_40_layout_30_usage_safety_30",
         },
     }
+
+
+def build_risk_assessment_file(metric_json: Path, output_json: Path) -> dict:
+    """Serialize the backend-owned assessment from a formal metric JSON file."""
+    metric_json = Path(metric_json)
+    if metric_json.suffix.lower() != ".json":
+        raise ValueError("formal risk assessment input must be a JSON artifact")
+    source_bytes = metric_json.read_bytes()
+    metric_payload = json.loads(source_bytes.decode("utf-8"))
+    assessment = build_risk_assessment(metric_payload)
+    assessment["metric_input"] = {
+        "artifact": metric_json.name,
+        "sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "input_modified": False,
+    }
+    output_json = Path(output_json)
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    output_json.write_text(json.dumps(assessment, ensure_ascii=False, indent=2), encoding="utf-8")
+    return assessment
