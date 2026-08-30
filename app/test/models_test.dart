@@ -66,6 +66,50 @@ void main() {
       expect(r.measures['reference_measurements'].first['dimension'], 'width');
     });
 
+    test('Report.fromJson 解析正式风险评估字段', () {
+      final r = Report.fromJson({
+        'scan_id': 46,
+        'score': 73.2,
+        'risks': [
+          {
+            'risk_code': 'door_width_medium',
+            'risk_type': 'mobility',
+            'risk_name': '门净宽风险',
+            'metric_code': 'door_width',
+            'measured_value': 0.85,
+            'unit': 'm',
+            'threshold': {'direction': 'below', 'levels': {'medium': 0.9}},
+            'position': {'object_id': 'door_01'},
+            'risk_level': 'medium',
+            'confidence': 0.9,
+            'reason': 'threshold',
+            'advice': '调整门口净宽',
+            'assessment_status': 'evaluated',
+            'related_object_ids': ['door_01'],
+            'related_path_id': null,
+          },
+        ],
+        'advice': ['调整门口净宽'],
+        'images': [],
+        'calibrated': 3,
+        'measures': {
+          'risk_assessment': {
+            'official': true,
+            'overall': {'score': 73.2, 'coverage_percent': 86.7},
+          },
+        },
+      });
+      final risk = r.risks.single;
+      expect(risk.code, 'door_width_medium');
+      expect(risk.metricCode, 'door_width');
+      expect(risk.riskType, 'mobility');
+      expect(risk.level, 'medium');
+      expect(risk.measure, 0.85);
+      expect(risk.confidence, 0.9);
+      expect(risk.relatedObjectIds, ['door_01']);
+      expect(r.riskAssessment['official'], true);
+    });
+
     test('Project.fromJson 默认 address 空串', () {
       final p = Project.fromJson({'id': 1, 'name': '王奶奶家'});
       expect(p.address, '');
