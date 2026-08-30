@@ -53,6 +53,8 @@ void main() {
           'ply': 'scene.ply',
           'gaussian_ply': 'scene_gaussian.ply',
           'cameras': 'cameras.json',
+          'pdf': '/static/1/pdf',
+          'risk_map': '/static/1/formal_risks.png',
         },
       });
       expect(r.score, 62.5);
@@ -63,6 +65,8 @@ void main() {
       expect(r.previewPly, 'scene.ply');
       expect(r.previewGaussianPly, 'scene_gaussian.ply');
       expect(r.previewCameras, 'cameras.json');
+      expect(r.reportPdf, '/static/1/pdf');
+      expect(r.riskMap, '/static/1/formal_risks.png');
       expect(r.measures['reference_measurements'].first['dimension'], 'width');
     });
 
