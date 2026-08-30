@@ -26,7 +26,7 @@ METRIC_DEFINITIONS = (
     ("layout", "bedside_clearance", "床侧净空", "m"),
     ("layout", "activity_area", "活动区域面积", "m²"),
     ("layout", "crowding", "空间拥挤度", "ratio"),
-    ("usage_safety", "bed_surrounding_space", "床周边可用空间", "m²"),
+    ("usage_safety", "bed_surrounding_space", "床周边最小净空", "m"),
     ("usage_safety", "main_activity_area_safety", "主要活动区安全状态", "boolean"),
 )
 
