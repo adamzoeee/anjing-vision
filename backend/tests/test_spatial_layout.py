@@ -1,5 +1,6 @@
 from pipeline.spatial_layout import (
     extract_bedside_clearance_metric,
+    extract_bed_surrounding_space_metric,
     extract_activity_area_metric,
     extract_crowding_metric,
     extract_furniture_spacing_metric,
@@ -119,3 +120,26 @@ def test_invalid_crowding_evidence_is_not_evaluable():
         "furniture": [{"length_m": 2.0, "width_m": 2.0}],
     })
     assert metric["reason"] == "furniture_footprint_area_exceeds_room_area"
+
+
+def test_bed_surrounding_space_uses_most_constrained_observed_boundary():
+    foundation = {
+        "room": {"floor_polygon": [[0, 0], [4, 0], [4, 3], [0, 3]]},
+        "furniture": [{
+            "id": "bed_001", "type": "bed", "position_xyz": [2, 2, 0.3],
+            "length_m": 2, "width_m": 1, "confidence": "high",
+        }],
+    }
+    passage = {"furniture_clearances": [{
+        "between": ["bed_001", "table_001"], "clearance_m": 0.3,
+    }]}
+    metric = extract_bed_surrounding_space_metric(passage, foundation)
+    assert metric["value"] == 0.3
+    assert metric["unit"] == "m"
+    assert metric["position"]["boundary"] == "furniture"
+
+
+def test_bed_surrounding_space_without_bed_is_not_evaluable():
+    metric = extract_bed_surrounding_space_metric({}, {"furniture": []})
+    assert metric["status"] == "not_evaluable"
+    assert metric["reason"] == "verified_bed_geometry_unavailable"
