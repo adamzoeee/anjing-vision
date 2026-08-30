@@ -145,6 +145,33 @@ def test_preview_serves_gaussian_model_and_camera_poses_with_auth(client):
     assert client.get(f"{base}/not-allowed.ply", headers=headers).status_code == 404
 
 
+def test_preview_serves_formal_metrics_and_risk_assessment_with_auth(client):
+    import json
+    from app.config import get_settings
+
+    headers = _auth(client, email="formal-risk-preview@x.com")
+    _pid, scan_id, _report_id = _make_report(client, headers)
+    post = Path(get_settings().data_dir) / "work" / str(scan_id) / "postprocess"
+    post.mkdir(parents=True, exist_ok=True)
+    (post / "spatial_metrics.json").write_text(
+        json.dumps({"schema_version": "1.0", "metrics": []}), encoding="utf-8",
+    )
+    (post / "risk_assessment.json").write_text(
+        json.dumps({"schema_version": "1.0", "official": True}), encoding="utf-8",
+    )
+    metrics = client.get(f"/api/preview/{scan_id}/spatial-metrics.json", headers=headers)
+    assessment = client.get(f"/api/preview/{scan_id}/risk-assessment.json", headers=headers)
+    assert metrics.status_code == 200
+    assert metrics.json()["schema_version"] == "1.0"
+    assert assessment.status_code == 200
+    assert assessment.json()["official"] is True
+
+    other_headers = _auth(client, org="养老院B", email="formal-risk-other@x.com")
+    assert client.get(
+        f"/api/preview/{scan_id}/risk-assessment.json", headers=other_headers,
+    ).status_code == 404
+
+
 def test_get_report_requires_ownership(client):
     h = _auth(client)
     _pid, sid, _rid = _make_report(client, h)
