@@ -6,6 +6,7 @@ import pytest
 from pipeline.spatial_assessment_inputs import (
     build_spatial_assessment_input_file,
     build_spatial_assessment_inputs,
+    build_formal_assessment_files,
 )
 
 
@@ -94,3 +95,27 @@ def test_file_builder_rejects_non_json_inputs(tmp_path):
     ply.write_text("ply")
     with pytest.raises(ValueError, match="must be JSON"):
         build_spatial_assessment_input_file(ply, ply, ply, tmp_path / "output.json")
+
+
+def test_formal_assessment_file_chain_produces_single_backend_payload(tmp_path):
+    measurements, _, _ = _structured_inputs()
+    structure = {
+        "room": {
+            "bounds_xy": {"min": [0, 0], "max": [4, 3]},
+            "floor_polygon": [[0, 0], [4, 0], [4, 3], [0, 3]],
+        },
+        "semantic_instances": [],
+    }
+    measurements_path = tmp_path / "measurements.json"
+    structure_path = tmp_path / "structure.json"
+    measurements_path.write_text(json.dumps(measurements), encoding="utf-8")
+    structure_path.write_text(json.dumps(structure), encoding="utf-8")
+    outputs = build_formal_assessment_files(
+        measurements_path, structure_path, tmp_path / "postprocess",
+    )
+    assert outputs["spatial_metrics"].is_file()
+    assert outputs["risk_assessment"].is_file()
+    assessment = json.loads(outputs["risk_assessment"].read_text(encoding="utf-8"))
+    assert assessment["official"] is True
+    assert len(assessment["metrics"]) == 15
+    assert len(assessment["risks"]) == 15

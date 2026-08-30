@@ -87,3 +87,34 @@ def build_spatial_assessment_input_file(
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return payload
+
+
+def build_formal_assessment_files(
+    measurements_json: Path,
+    structure_json: Path,
+    output_dir: Path,
+) -> dict:
+    """Create foundation, metrics, and risk JSON files from approved structure data."""
+    from pipeline.risk_assessment import build_risk_assessment_file
+    from pipeline.space_foundation import build_space_foundation_files
+
+    output_dir = Path(output_dir)
+    foundation_outputs = build_space_foundation_files(
+        Path(measurements_json), Path(structure_json), output_dir,
+    )
+    metric_path = output_dir / "spatial_metrics.json"
+    metric_payload = build_spatial_assessment_input_file(
+        Path(measurements_json),
+        foundation_outputs["passage_analysis"],
+        foundation_outputs["spatial_foundation"],
+        metric_path,
+    )
+    risk_path = output_dir / "risk_assessment.json"
+    risk_payload = build_risk_assessment_file(metric_path, risk_path)
+    return {
+        **foundation_outputs,
+        "spatial_metrics": metric_path,
+        "risk_assessment": risk_path,
+        "metric_payload": metric_payload,
+        "risk_payload": risk_payload,
+    }
