@@ -216,6 +216,24 @@ void main() {
               'layout': {'score': 75.0, 'weight': 0.3},
               'usage_safety': {'score': 76.0, 'weight': 0.3},
             },
+            'key_metrics': [
+              {
+                'category': 'mobility',
+                'metric_code': 'main_passage_width',
+                'name': '主要通道净宽',
+                'value': 0.48,
+                'unit': 'm',
+                'status': 'derived',
+              },
+              {
+                'category': 'layout',
+                'metric_code': 'bedside_clearance',
+                'name': '床侧净空',
+                'value': 0.3,
+                'unit': 'm',
+                'status': 'derived',
+              },
+            ],
             'top_risks': [highRisk],
             'not_evaluable': [unknownRisk],
           },
@@ -228,6 +246,10 @@ void main() {
     expect(find.text('评估覆盖率：86.7%'), findsOneWidget);
     expect(find.text('综合置信度：82.0%'), findsOneWidget);
     expect(find.text('通行能力（40.0%）'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('主要通道净宽：0.48 m'), 250, scrollable: find.byType(Scrollable),
+    );
+    expect(find.text('主要通道净宽：0.48 m'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('风险项（1）'), 300, scrollable: find.byType(Scrollable),
     );
