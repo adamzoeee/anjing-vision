@@ -132,6 +132,24 @@ class _ReportPageState extends State<ReportPage> {
                         title: Text(a),
                       ),
                     ),
+                  if (r.reportPdf?.trim().isNotEmpty ?? false) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        onPressed: () {
+                          final token = Uri.encodeComponent(api.token ?? '');
+                          final separator = r.reportPdf!.contains('?') ? '&' : '?';
+                          final pdfUrl =
+                              '${api.dio.options.baseUrl}${r.reportPdf}'
+                              '${separator}token=$token';
+                          openPreview(context, pdfUrl);
+                        },
+                        icon: const Icon(Icons.picture_as_pdf),
+                        label: const Text('打开正式评估 PDF'),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Text(
                     '3D 场景预览',
@@ -339,7 +357,7 @@ class _ReportPageState extends State<ReportPage> {
       return _formalMetricFrameworkSection(context, report);
     }
     final raw = report.measures['measurements'];
-    final m = raw is Map ? raw as Map : const {};
+    final m = raw is Map ? raw : const {};
     final passage = m['passage'] is Map ? m['passage'] as Map : const {};
     final walkable = m['walkable_area_m2'];
     final openings = m['openings'] is List ? m['openings'] as List : const [];

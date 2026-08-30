@@ -78,6 +78,32 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
+  testWidgets('正式PDF链接存在时显示打开入口', (tester) async {
+    adapter.onGet(
+      '/api/reports/scans/12',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 82,
+        'risks': [],
+        'advice': [],
+        'images': [],
+        'calibrated': 3,
+        'preview': {'pdf': '/static/12/pdf'},
+      }),
+    );
+
+    await tester.pumpWidget(reportApp());
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('打开正式评估 PDF'),
+      350,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.text('打开正式评估 PDF'), findsOneWidget);
+    expect(find.byIcon(Icons.picture_as_pdf), findsOneWidget);
+  });
+
   testWidgets('显示安全评分、风险项和改造建议', (tester) async {
     adapter.onGet(
       '/api/reports/scans/12',
