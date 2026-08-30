@@ -172,3 +172,57 @@ def build_metric_payload(metrics: list[dict]) -> dict:
             "percent": round(evaluable / len(metrics) * 100, 1) if metrics else 0.0,
         },
     }
+
+
+def _path_source(field: str) -> dict:
+    return {"artifact": "passage_analysis.json", "field": field}
+
+
+def extract_passage_width_metrics(passage: dict, foundation: dict | None = None) -> list[dict]:
+    """Extract formal passage widths from precomputed structured routes."""
+    route = passage.get("primary_route") or {}
+    width = route.get("minimum_clear_width_m")
+    route_id = route.get("id")
+    position = {
+        "path_id": route_id,
+        "point_xy": route.get("narrowest_point_xy"),
+    }
+    reason = passage.get("reason") or route.get("reason") or "passage_width_unavailable"
+    if width is None or passage.get("status") not in {"ok", "complete"}:
+        return [
+            unavailable_metric(
+                "main_passage_width", reason,
+                source=_path_source("primary_route.minimum_clear_width_m"),
+            ),
+            unavailable_metric(
+                "minimum_passage_width", reason,
+                source=_path_source("primary_route.minimum_clear_width_m"),
+            ),
+        ]
+
+    route_widths = [width]
+    for item in (foundation or {}).get("passages", []):
+        candidate = item.get("minimum_clear_width_m")
+        if candidate is not None and item.get("path_exists") is not False:
+            route_widths.append(candidate)
+    minimum_width = min(float(value) for value in route_widths)
+    confidence = confidence_value(route.get("confidence"))
+    common = {
+        "status": "derived",
+        "confidence": confidence,
+        "position": position,
+    }
+    return [
+        build_metric(
+            "main_passage_width", value=round(float(width), 3),
+            source=_path_source("primary_route.minimum_clear_width_m"), **common,
+        ),
+        build_metric(
+            "minimum_passage_width", value=round(minimum_width, 3),
+            source={
+                "artifact": "spatial_foundation.json",
+                "field": "passages[*].minimum_clear_width_m",
+            },
+            **common,
+        ),
+    ]
