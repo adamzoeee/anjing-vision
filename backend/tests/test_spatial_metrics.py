@@ -8,6 +8,7 @@ from pipeline.spatial_metrics import (
     build_metric_payload,
     confidence_value,
     extract_passage_width_metrics,
+    extract_door_width_metric,
     metric_record,
     unavailable_metric,
 )
@@ -178,3 +179,36 @@ def test_missing_passage_width_is_not_evaluable_not_safe():
     assert all(item["status"] == "not_evaluable" for item in metrics)
     assert all(item["value"] is None for item in metrics)
     assert {item["reason"] for item in metrics} == {"no_path"}
+
+
+def test_door_width_uses_verified_route_entrance():
+    measurements = {"openings": [
+        {
+            "id": "door_secondary", "type": "door", "width_m": 1.1,
+            "measurement_status": "verified", "confidence": "high",
+        },
+        {
+            "id": "door_01", "type": "door", "width_m": 0.86,
+            "measurement_status": "verified", "confidence": "medium",
+            "center": [1, 0, 1],
+        },
+    ]}
+    metric = extract_door_width_metric(
+        measurements, {"primary_route": {"from": "door_01"}},
+    )
+    assert metric["value"] == 0.86
+    assert metric["confidence"] == 0.7
+    assert metric["position"]["object_id"] == "door_01"
+
+
+def test_unverified_door_width_remains_not_evaluable():
+    metric = extract_door_width_metric(
+        {"openings": [{
+            "id": "door_01", "type": "door", "width_m": 0.5,
+            "measurement_status": "low_confidence",
+        }]},
+        {"primary_route": {"from": "door_01"}},
+    )
+    assert metric["value"] is None
+    assert metric["status"] == "not_evaluable"
+    assert metric["reason"] == "door_measurement_not_verified"
