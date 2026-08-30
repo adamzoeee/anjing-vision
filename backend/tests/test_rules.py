@@ -1,4 +1,4 @@
-from pipeline.rules import FORMAL_RULES, evaluate_risks, compute_score
+from pipeline.rules import FORMAL_CATEGORY_WEIGHTS, FORMAL_RULES, evaluate_risks, compute_score
 
 
 def test_formal_rules_are_versioned_centralized_and_traceable():
@@ -20,6 +20,15 @@ def test_every_formal_metric_has_a_rule():
     from pipeline.spatial_metrics import METRIC_DEFINITION_BY_CODE
 
     assert {rule["metric_code"] for rule in FORMAL_RULES} == set(METRIC_DEFINITION_BY_CODE)
+
+
+def test_official_category_weights_are_exactly_40_30_30():
+    assert FORMAL_CATEGORY_WEIGHTS == {
+        "mobility": 0.40,
+        "layout": 0.30,
+        "usage_safety": 0.30,
+    }
+    assert sum(FORMAL_CATEGORY_WEIGHTS.values()) == 1.0
 
 
 def test_evaluate_risks_door_width():
