@@ -125,7 +125,30 @@ def _build_formal_assessment(work: Path, scan_id: int) -> dict:
     return outputs
 
 
-def _build_formal_pdf(work: Path, scan_id: int, assessment: dict, measures: dict) -> str | None:
+def _build_formal_risk_map(work: Path) -> str:
+    """Render a report image using only accepted structure and formal JSON artifacts."""
+    from pipeline.formal_risk_figure import render_formal_risk_figure
+
+    postprocess = Path(work) / "postprocess"
+    structure_json = postprocess / "structure_calibrated.json"
+    if not structure_json.is_file():
+        structure_json = postprocess / "structure.json"
+    output = render_formal_risk_figure(
+        postprocess / "risk_assessment.json",
+        structure_json,
+        Path(work) / "images" / "formal_risks.png",
+    )
+    return str(output)
+
+
+def _build_formal_pdf(
+    work: Path,
+    scan_id: int,
+    assessment: dict,
+    measures: dict,
+    *,
+    images: list[str] | None = None,
+) -> str | None:
     """Generate the PDF from the exact formal assessment persisted by the pipeline."""
     from pipeline.report_composer import compose_report
 
@@ -137,6 +160,7 @@ def _build_formal_pdf(work: Path, scan_id: int, assessment: dict, measures: dict
         advice=list(assessment.get("advice") or []),
         points=None,
         out_dir=Path(work) / "report",
+        images=images,
         risk_assessment=assessment,
     )
     if composed.status != "ok":
@@ -425,9 +449,18 @@ def _run_slam3r_pipeline(
         "risk_assessment": f"/api/preview/{scan.id}/risk-assessment.json" if assessment_outputs else None,
         "backend": "slam3r",
     }
+    report_images: list[str] = []
     if assessment:
         try:
-            pdf_path = _build_formal_pdf(work, scan.id, assessment, measures)
+            report_images.append(_build_formal_risk_map(work))
+            preview["risk_map"] = f"/static/{scan.id}/formal_risks.png"
+        except Exception as exc:  # noqa: BLE001 - 风险位置图失败不阻断正式评估
+            logger.exception("formal_risk_map_failed scan_id=%s", scan.id)
+            preview["risk_map"] = None
+        try:
+            pdf_path = _build_formal_pdf(
+                work, scan.id, assessment, measures, images=report_images,
+            )
             preview["pdf"] = f"/static/{scan.id}/pdf" if pdf_path else None
         except Exception as exc:  # noqa: BLE001 - PDF 失败不阻断结构化报告
             logger.exception("formal_pdf_failed scan_id=%s", scan.id)
@@ -439,7 +472,7 @@ def _run_slam3r_pipeline(
         risks=assessment["risks"] if assessment else [],
         measures=measures,
         advice=assessment["advice"] if assessment else [],
-        images=[],
+        images=report_images,
         preview=preview,
         calibrated=1 if measurements.get("scale", {}).get("status") == "metric_references" else 0,
     )
