@@ -22,7 +22,9 @@ OBJECT_PROMPTS: tuple[tuple[str, str], ...] = (
     ("cardboard box", "纸箱"),
     ("floor clutter", "杂物"),
     ("chair", "椅子"),
+    ("stool", "凳子"),
     ("table", "桌子"),
+    ("desk", "书桌"),
     ("potted plant", "盆栽"),
     ("indoor plant", "盆栽"),
     ("pet", "宠物"),
@@ -33,8 +35,10 @@ OBJECT_PROMPTS: tuple[tuple[str, str], ...] = (
     ("suitcase", "行李箱"),
     ("storage box", "收纳箱"),
     ("door frame", "门"),
+    ("window frame", "窗"),
     ("bed", "床"),
     ("sofa", "沙发"),
+    ("wardrobe", "衣柜"),
     ("cabinet", "柜子"),
     ("bookshelf", "书架"),
 )
@@ -107,9 +111,16 @@ def _load_dino():
 
                 model_id = os.environ.get("DINO_MODEL", "IDEA-Research/grounding-dino-base")
                 cache_dir = Path(os.environ.get("HF_HOME", _BACKEND_ROOT / ".cache" / "huggingface"))
-                _dino_processor = AutoProcessor.from_pretrained(model_id, cache_dir=cache_dir)
+                # Worker 必须使用已预检的 E 盘缓存，不能在正式任务中隐式联网或
+                # 把模型下载到用户目录。需要更新模型时由部署脚本显式完成。
+                local_only = os.environ.get("SEMANTIC_LOCAL_FILES_ONLY", "1").strip().lower() not in {
+                    "0", "false", "no",
+                }
+                _dino_processor = AutoProcessor.from_pretrained(
+                    model_id, cache_dir=cache_dir, local_files_only=local_only,
+                )
                 _dino_model = AutoModelForZeroShotObjectDetection.from_pretrained(
-                    model_id, cache_dir=cache_dir
+                    model_id, cache_dir=cache_dir, local_files_only=local_only,
                 ).to(DEVICE)
                 _dino_model.eval()
     return _dino_model, _dino_processor
@@ -495,6 +506,7 @@ class SemanticFusion:
         semantic_score: dict[int, float],
         consistency: dict[int, float],
         diagnostics: dict | None = None,
+        detection_support: list[dict] | None = None,
     ):
         self.visible_views = visible_views
         self.votes = votes
@@ -503,6 +515,9 @@ class SemanticFusion:
         self.semantic_score = semantic_score
         self.consistency = consistency
         self.diagnostics = diagnostics or {}
+        # 每个 2D mask 实际支持的 3D 点，用于对象级可追踪证据。仅在内存中使用，
+        # diagnostic 输出只保存聚合计数，不序列化整批点索引。
+        self.detection_support = detection_support or []
 
     def label_point_ids(self, label: str) -> list[int]:
         """返回某个标签的全部 3D 点索引（升序）。"""
@@ -546,7 +561,8 @@ def fuse_multiview_semantics(
     supporting_views: dict[int, dict[str, int]] = {}
     detection_count = 0
     ignored_view_count = 0
-    for record in view_records:
+    detection_support: list[dict] = []
+    for view_index, record in enumerate(view_records):
         camera = record.get("camera")
         detections = record.get("detections") or []
         image_shape = tuple(int(value) for value in record.get("image_shape", (0, 0)))
@@ -588,6 +604,15 @@ def fuse_multiview_semantics(
                 image_shape,
                 depth_tolerance=depth_tolerance,
             )
+            detection_support.append({
+                "view_id": record.get("view_id", view_index),
+                "image_name": record.get("image_name"),
+                "label": label,
+                "score": float(detection.get("score", 0.0)),
+                "mask_score": float(detection.get("mask_score", 0.0)),
+                "mask_area_px": int(detection.get("mask_area_px", int(mask.sum()))),
+                "point_ids": surfaced,
+            })
             for point_id in surfaced.tolist():
                 point_votes = votes.setdefault(point_id, {})
                 point_votes[label] = point_votes.get(label, 0.0) + weight
@@ -636,7 +661,19 @@ def fuse_multiview_semantics(
         semantic_score=semantic_score,
         consistency=consistency,
         diagnostics=diagnostics,
+        detection_support=detection_support,
     )
+
+
+def release_semantic_models() -> None:
+    """释放语义模型及 CUDA 缓存，避免占用后续 3DGS 的 8GB 显存。"""
+    global _sam_predictor, _dino_model, _dino_processor
+    with _model_lock:
+        _sam_predictor = None
+        _dino_model = None
+        _dino_processor = None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def model_runtime_info() -> dict:
