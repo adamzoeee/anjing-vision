@@ -103,6 +103,28 @@ def _sanitize_log_text(value: str) -> str:
     return re.sub(r"(?i)(?:[a-z]:\\|[a-z]:/)[^\s\r\n]+", "<local-path>", value)
 
 
+def _build_formal_assessment(work: Path, scan_id: int) -> dict:
+    """Build formal assessment artifacts after accepted structure measurements."""
+    from pipeline.spatial_assessment_inputs import build_formal_assessment_files
+
+    postprocess = Path(work) / "postprocess"
+    structure_json = postprocess / "structure_calibrated.json"
+    if not structure_json.is_file():
+        structure_json = postprocess / "structure.json"
+    outputs = build_formal_assessment_files(
+        postprocess / "measurements.json", structure_json, postprocess,
+    )
+    assessment = outputs["risk_payload"]
+    logger.info(
+        "formal_risk_assessment scan_id=%s status=%s score=%s coverage=%s",
+        scan_id,
+        assessment["overall"]["status"],
+        assessment["overall"]["score"],
+        assessment["overall"]["coverage_percent"],
+    )
+    return outputs
+
+
 def _upsert_report(
     db,
     *,
@@ -293,6 +315,15 @@ def _run_slam3r_pipeline(
     except Exception as exc:  # noqa: BLE001
         logger.warning("structure_figure_failed scan_id=%s reason=%s", scan.id, str(exc)[:300])
 
+    # ---- 4.4. 已有结构化结果 → 正式空间指标与风险评估 ----
+    assessment_outputs: dict | None = None
+    assessment: dict | None = None
+    try:
+        assessment_outputs = _build_formal_assessment(work, scan.id)
+        assessment = assessment_outputs["risk_payload"]
+    except Exception as exc:  # noqa: BLE001 - 评估失败不应丢失重建产物
+        logger.exception("formal_risk_assessment_failed scan_id=%s", scan.id)
+
     # ---- 4.5. Gaussian 仅保留为显式实验分支；正式双视图不依赖它 ----
     gaussian_meta: dict | None = None
 
@@ -355,8 +386,10 @@ def _run_slam3r_pipeline(
             "views": gaussian_meta["views"] if gaussian_meta else None,
             "seconds": gaussian_meta["seconds"] if gaussian_meta else None,
         },
-        # 风险识别与评分需等待家具几何验收；长度与通道已经接入。
-        "deferred": ["risk_identification", "scoring"],
+        "risk_assessment": assessment,
+        "assessment_status": (
+            assessment["overall"]["status"] if assessment else "generation_failed"
+        ),
     }
     preview = {
         "viewer": f"/preview/{scan.id}",
@@ -366,15 +399,17 @@ def _run_slam3r_pipeline(
         "layout": f"/api/preview/{scan.id}/layout.json",
         "structure": f"/api/preview/{scan.id}/structure.json",
         "measurements": f"/api/preview/{scan.id}/measurements.json",
+        "spatial_metrics": f"/api/preview/{scan.id}/spatial-metrics.json" if assessment_outputs else None,
+        "risk_assessment": f"/api/preview/{scan.id}/risk-assessment.json" if assessment_outputs else None,
         "backend": "slam3r",
     }
     _upsert_report(
         db,
         scan_id=scan.id,
-        score=None,  # 评分暂缓：无分数可给时保持 None（前端显示“无法评分”）
-        risks=[],
+        score=assessment["overall"]["score"] if assessment else None,
+        risks=assessment["risks"] if assessment else [],
         measures=measures,
-        advice=[],
+        advice=assessment["advice"] if assessment else [],
         images=[],
         preview=preview,
         calibrated=1 if measurements.get("scale", {}).get("status") == "metric_references" else 0,
