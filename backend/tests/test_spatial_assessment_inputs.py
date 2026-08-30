@@ -1,4 +1,12 @@
-from pipeline.spatial_assessment_inputs import build_spatial_assessment_inputs
+import hashlib
+import json
+
+import pytest
+
+from pipeline.spatial_assessment_inputs import (
+    build_spatial_assessment_input_file,
+    build_spatial_assessment_inputs,
+)
 
 
 def _structured_inputs():
@@ -58,3 +66,31 @@ def test_assessment_input_keeps_missing_activity_evidence_in_coverage():
     assert by_code["activity_area"]["reason"] == "explicit_activity_anchor_missing"
     assert by_code["main_activity_area_safety"]["status"] == "not_evaluable"
     assert payload["coverage"]["not_evaluable_count"] >= 2
+
+
+def test_file_builder_reads_only_json_and_preserves_input_hashes(tmp_path):
+    inputs = _structured_inputs()
+    paths = []
+    for name, value in zip(("measurements", "passage_analysis", "spatial_foundation"), inputs):
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(value), encoding="utf-8")
+        paths.append(path)
+    before = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths
+    }
+    output = tmp_path / "spatial_metrics.json"
+    payload = build_spatial_assessment_input_file(*paths, output)
+    after = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths
+    }
+    assert before == after
+    assert output.is_file()
+    assert payload["provenance"]["inputs_modified"] is False
+    assert {item["artifact"] for item in payload["provenance"]["inputs"]} == set(before)
+
+
+def test_file_builder_rejects_non_json_inputs(tmp_path):
+    ply = tmp_path / "scene.ply"
+    ply.write_text("ply")
+    with pytest.raises(ValueError, match="must be JSON"):
+        build_spatial_assessment_input_file(ply, ply, ply, tmp_path / "output.json")

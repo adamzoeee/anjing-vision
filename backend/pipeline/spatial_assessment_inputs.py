@@ -1,6 +1,10 @@
 """Assemble formal metrics and paths from existing structured artifacts."""
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 from pipeline.spatial_layout import (
     extract_activity_area_metric,
     extract_bedside_clearance_metric,
@@ -48,4 +52,38 @@ def build_spatial_assessment_inputs(
         "point_cloud_accessed": False,
         "risk_rules_applied": False,
     }
+    return payload
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_spatial_assessment_input_file(
+    measurements_json: Path,
+    passage_json: Path,
+    foundation_json: Path,
+    output_json: Path,
+) -> dict:
+    """Read only approved JSON artifacts and persist the formal metric payload."""
+    paths = [Path(measurements_json), Path(passage_json), Path(foundation_json)]
+    if any(path.suffix.lower() != ".json" for path in paths):
+        raise ValueError("formal assessment inputs must be JSON artifacts")
+    measurements, passage, foundation = [
+        json.loads(path.read_text(encoding="utf-8")) for path in paths
+    ]
+    payload = build_spatial_assessment_inputs(measurements, passage, foundation)
+    payload["provenance"] = {
+        "inputs": [
+            {"artifact": path.name, "sha256": _sha256(path)} for path in paths
+        ],
+        "inputs_modified": False,
+    }
+    output_json = Path(output_json)
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    output_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return payload
