@@ -335,6 +335,9 @@ class _ReportPageState extends State<ReportPage> {
   /// 评价框架（只改指标名称与分组，不评分——评分由下一步实现）：
   /// 通行能力 40% / 空间布局 30% / 使用安全 30%。
   Widget _metricFrameworkSection(BuildContext context, Report report) {
+    if (report.riskAssessment['official'] == true) {
+      return _formalMetricFrameworkSection(context, report);
+    }
     final raw = report.measures['measurements'];
     final m = raw is Map ? raw as Map : const {};
     final passage = m['passage'] is Map ? m['passage'] as Map : const {};
@@ -391,6 +394,53 @@ class _ReportPageState extends State<ReportPage> {
                         padding: const EdgeInsets.only(bottom: 2),
                         child: Text('· $item',
                             style: Theme.of(context).textTheme.bodyMedium),
+                      )),
+                ],
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _formalMetricFrameworkSection(BuildContext context, Report report) {
+    final raw = report.riskAssessment['key_metrics'] as List? ?? const [];
+    final metrics = raw.whereType<Map>().toList();
+    const categoryNames = {
+      'mobility': '通行能力',
+      'layout': '空间布局',
+      'usage_safety': '使用安全',
+    };
+    String valueText(Map metric) {
+      if (metric['status'] == 'not_evaluable') {
+        return '不可评估：${metric['reason'] ?? '数据不足'}';
+      }
+      final value = metric['value'];
+      final formatted = value is num ? value.toStringAsFixed(2) : value.toString();
+      final unit = metric['unit']?.toString() ?? '';
+      return '$formatted${unit.isEmpty ? '' : ' $unit'}';
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('关键空间指标', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        ...categoryNames.entries.map((entry) {
+          final items = metrics.where((metric) => metric['category'] == entry.key).toList();
+          if (items.isEmpty) return const SizedBox.shrink();
+          return Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(entry.value, style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  ...items.map((metric) => Padding(
+                        padding: const EdgeInsets.only(bottom: 3),
+                        child: Text('${metric['name']}：${valueText(metric)}'),
                       )),
                 ],
               ),
