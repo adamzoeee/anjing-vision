@@ -4,6 +4,7 @@ from pipeline.spatial_layout import (
     extract_activity_area_metric,
     extract_crowding_metric,
     extract_furniture_spacing_metric,
+    extract_main_activity_area_safety_metric,
     extract_wall_clearance_metrics,
 )
 
@@ -143,3 +144,31 @@ def test_bed_surrounding_space_without_bed_is_not_evaluable():
     metric = extract_bed_surrounding_space_metric({}, {"furniture": []})
     assert metric["status"] == "not_evaluable"
     assert metric["reason"] == "verified_bed_geometry_unavailable"
+
+
+def test_activity_area_safety_requires_explicit_area_and_route():
+    activity = {
+        "metric_code": "activity_area", "status": "derived", "value": 3.0,
+        "confidence": 0.8, "position": {"object_id": "activity_01"},
+    }
+    metric = extract_main_activity_area_safety_metric(activity, [{
+        "path_id": "entrance_to_activity", "status": "complete",
+        "continuous": True, "obstructed": False, "confidence": 0.7,
+    }])
+    assert metric["value"] is True
+    assert metric["confidence"] == 0.7
+
+    blocked = extract_main_activity_area_safety_metric(activity, [{
+        "path_id": "entrance_to_activity", "status": "blocked",
+        "continuous": False, "obstructed": True,
+    }])
+    assert blocked["value"] is False
+
+
+def test_activity_area_safety_propagates_missing_anchor_reason():
+    metric = extract_main_activity_area_safety_metric({
+        "metric_code": "activity_area", "status": "not_evaluable", "value": None,
+        "reason": "explicit_activity_anchor_missing",
+    }, [])
+    assert metric["status"] == "not_evaluable"
+    assert metric["reason"] == "explicit_activity_anchor_missing"
