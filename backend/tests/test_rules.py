@@ -1,4 +1,25 @@
-from pipeline.rules import evaluate_risks, compute_score
+from pipeline.rules import FORMAL_RULES, evaluate_risks, compute_score
+
+
+def test_formal_rules_are_versioned_centralized_and_traceable():
+    required_fields = {
+        "rule_code", "metric_code", "category", "threshold", "direction",
+        "severity", "advice_template", "reference", "version",
+    }
+    assert FORMAL_RULES
+    assert all(set(rule) == required_fields for rule in FORMAL_RULES)
+    assert len({rule["rule_code"] for rule in FORMAL_RULES}) == len(FORMAL_RULES)
+    assert {rule["category"] for rule in FORMAL_RULES} == {
+        "mobility", "layout", "usage_safety",
+    }
+    assert {rule["severity"] for rule in FORMAL_RULES} == {"medium", "high"}
+    assert all(rule["reference"] == "reference_pending" for rule in FORMAL_RULES)
+
+
+def test_every_formal_metric_has_a_rule():
+    from pipeline.spatial_metrics import METRIC_DEFINITION_BY_CODE
+
+    assert {rule["metric_code"] for rule in FORMAL_RULES} == set(METRIC_DEFINITION_BY_CODE)
 
 
 def test_evaluate_risks_door_width():
