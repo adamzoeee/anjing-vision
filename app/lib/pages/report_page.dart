@@ -87,6 +87,7 @@ class _ReportPageState extends State<ReportPage> {
                     ),
                   ),
                   const SizedBox(height: 16),
+                  ..._formalAssessmentSummary(context, r),
                   ..._keyMetricsSection(context, r),
                   const SizedBox(height: 16),
                   _structurePlanSection(context, api, widget.scan.id),
@@ -108,12 +109,15 @@ class _ReportPageState extends State<ReportPage> {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   if (_visibleRisks(r).isEmpty)
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.all(8),
-                      child: Text('未检测到风险项'),
+                      child: Text(r.riskAssessment['official'] == true
+                          ? '未发现中高风险项'
+                          : '未检测到风险项'),
                     )
                   else
                     ..._visibleRisks(r).map((risk) => RiskCard(risk: risk)),
+                  ..._notEvaluableSection(context, r),
                   const SizedBox(height: 16),
                   Text('改造建议', style: Theme.of(context).textTheme.titleMedium),
                   if (r.advice.isEmpty)
@@ -248,8 +252,85 @@ class _ReportPageState extends State<ReportPage> {
     'threshold', 'stairs', 'slope', 'uneven', 'bathroom_door',
   };
 
-  List<Risk> _visibleRisks(Report report) =>
-      report.risks.where((risk) => !_hiddenRiskCodes.contains(risk.code)).toList();
+  List<Risk> _visibleRisks(Report report) {
+    if (report.riskAssessment['official'] == true) {
+      return (report.riskAssessment['top_risks'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Risk.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+    }
+    return report.risks
+        .where((risk) => !_hiddenRiskCodes.contains(risk.code))
+        .toList();
+  }
+
+  List<Widget> _formalAssessmentSummary(BuildContext context, Report report) {
+    final assessment = report.riskAssessment;
+    if (assessment['official'] != true) return const [];
+    final overall = assessment['overall'] is Map
+        ? assessment['overall'] as Map
+        : const {};
+    final confidence = overall['confidence'];
+    final coverage = overall['coverage_percent'];
+    final categories = assessment['category_scores'] is Map
+        ? assessment['category_scores'] as Map
+        : const {};
+    const names = {
+      'mobility': '通行能力',
+      'layout': '空间布局',
+      'usage_safety': '使用安全',
+    };
+    String percent(Object? value) => value is num
+        ? '${(value <= 1 ? value * 100 : value).toStringAsFixed(1)}%'
+        : '—';
+    return [
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('正式空间风险评估', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 6),
+              Text('评估覆盖率：${percent(coverage)}'),
+              Text('综合置信度：${percent(confidence)}'),
+              if (overall['status'] == 'insufficient_data')
+                const Text('核心证据不足，本次不生成综合分数'),
+            ],
+          ),
+        ),
+      ),
+      const SizedBox(height: 8),
+      Text('分类评分', style: Theme.of(context).textTheme.titleMedium),
+      const SizedBox(height: 6),
+      ...names.entries.map((entry) {
+        final data = categories[entry.key] is Map ? categories[entry.key] as Map : const {};
+        final score = data['score'];
+        final weight = data['weight'];
+        return ListTile(
+          dense: true,
+          leading: const Icon(Icons.analytics_outlined),
+          title: Text('${entry.value}（${percent(weight)}）'),
+          trailing: Text(score is num ? score.toStringAsFixed(1) : '不可评估'),
+        );
+      }),
+      const SizedBox(height: 8),
+    ];
+  }
+
+  List<Widget> _notEvaluableSection(BuildContext context, Report report) {
+    if (report.riskAssessment['official'] != true) return const [];
+    final items = (report.riskAssessment['not_evaluable'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Risk.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+    if (items.isEmpty) return const [];
+    return [
+      const SizedBox(height: 16),
+      Text('不可评估项（${items.length}）', style: Theme.of(context).textTheme.titleMedium),
+      ...items.map((risk) => RiskCard(risk: risk)),
+    ];
+  }
 
   /// 评价框架（只改指标名称与分组，不评分——评分由下一步实现）：
   /// 通行能力 40% / 空间布局 30% / 使用安全 30%。
@@ -291,7 +372,7 @@ class _ReportPageState extends State<ReportPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('空间评价框架（待评分）',
+        Text(report.riskAssessment['official'] == true ? '关键空间指标' : '空间评价框架（待评分）',
             style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         ...groups.map((group) {

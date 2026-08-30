@@ -15,9 +15,11 @@ class RiskCard extends StatelessWidget {
     };
     final levelText = switch (risk.level) {
       'high' || 'red' => '高风险',
-      'medium' || 'yellow' => '中风险',
-      'low' || 'green' => '低风险',
-      _ => '无法评估',
+      'medium' => '中风险',
+      'yellow' => '注意',
+      'low' => '低风险',
+      'green' => '正常',
+      _ => risk.metricCode == null ? '未知' : '无法评估',
     };
     final measurement = risk.measure == null
         ? null
@@ -29,9 +31,9 @@ class RiskCard extends StatelessWidget {
       if (risk.advice != null && risk.level != 'low' && risk.level != 'green')
         '建议：${risk.advice}',
     ];
-    final subtitle = risk.assessmentStatus == 'not_evaluable'
+    final subtitle = risk.assessmentStatus == 'not_evaluable' && risk.metricCode != null
         ? '当前数据不足，无法可靠评估该项风险${risk.reason == null ? '' : '（${risk.reason}）'}'
-        : details.join('\n');
+        : (risk.metricCode == null ? (risk.measure?.toString() ?? '') : details.join('\n'));
     return Card(
       child: ListTile(
         leading: Icon(switch (risk.level) {
