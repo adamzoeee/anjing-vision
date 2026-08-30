@@ -2,7 +2,9 @@ import pytest
 
 from pipeline.risk_assessment import (
     RiskResult,
+    collect_specific_advice,
     evaluate_formal_metrics,
+    rank_top_risks,
     risk_result,
     score_formal_risks,
     summarize_assessment_confidence,
@@ -185,3 +187,37 @@ def test_missing_numeric_confidence_remains_null():
     assert summary["assessment_coverage"]["percent"] == 100.0
     assert summary["evidence_confidence"] is None
     assert summary["reason"] == "numeric_confidence_unavailable"
+
+
+def test_top_risks_rank_high_before_medium_and_exclude_low_unknown():
+    payload = _payload({
+        "door_width": 0.75,
+        "main_passage_width": 0.85,
+        "furniture_spacing": 0.2,
+    })
+    payload["metrics"] = [
+        unavailable_metric(item["metric_code"], "missing", source="fixture")
+        if item["metric_code"] == "activity_area" else item
+        for item in payload["metrics"]
+    ]
+    top = rank_top_risks(evaluate_formal_metrics(payload), limit=3)
+    assert len(top) == 3
+    assert [item["risk_level"] for item in top] == ["high", "high", "medium"]
+    assert all(item["assessment_status"] == "evaluated" for item in top)
+
+
+def test_actionable_risks_have_specific_deduplicated_advice():
+    risks = evaluate_formal_metrics(_payload({
+        "door_width": 0.75,
+        "main_passage_width": 0.85,
+    }))
+    advice = collect_specific_advice(risks)
+    assert len(advice) == 2
+    assert len(set(advice)) == len(advice)
+    assert any("门" in item for item in advice)
+    assert any("通道" in item for item in advice)
+
+
+def test_top_risk_limit_is_validated():
+    with pytest.raises(ValueError, match="must not be negative"):
+        rank_top_risks([], limit=-1)
