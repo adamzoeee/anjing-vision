@@ -268,3 +268,37 @@ def preview_measurements(
     if not path.is_relative_to(work) or not path.is_file():
         raise HTTPException(404, "长度测量结果不存在")
     return FileResponse(path, media_type="application/json")
+
+
+@router.get("/{scan_id}/spatial-metrics.json")
+def preview_spatial_metrics(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    scan = db.get(Scan, scan_id)
+    if scan is None or scan.project.org_id != org_id:
+        raise HTTPException(404, "扫描任务不存在")
+    work = _work_dir(scan_id, settings)
+    path = (work / "postprocess" / "spatial_metrics.json").resolve()
+    if not path.is_relative_to(work) or not path.is_file():
+        raise HTTPException(404, "空间指标结果不存在")
+    return FileResponse(path, media_type="application/json")
+
+
+@router.get("/{scan_id}/risk-assessment.json")
+def preview_risk_assessment(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    scan = db.get(Scan, scan_id)
+    if scan is None or scan.project.org_id != org_id:
+        raise HTTPException(404, "扫描任务不存在")
+    work = _work_dir(scan_id, settings)
+    path = (work / "postprocess" / "risk_assessment.json").resolve()
+    if not path.is_relative_to(work) or not path.is_file():
+        raise HTTPException(404, "风险评估结果不存在")
+    return FileResponse(path, media_type="application/json")
