@@ -276,3 +276,52 @@ def collect_specific_advice(risks: list[dict]) -> list[str]:
         if text and text not in advice:
             advice.append(text)
     return advice
+
+
+KEY_METRIC_CODES = (
+    "main_passage_width", "minimum_passage_width", "door_width",
+    "entrance_space", "bedside_clearance", "crowding",
+    "bed_surrounding_space",
+)
+
+
+def build_risk_assessment(metric_payload: dict) -> dict:
+    """Build the single backend-owned formal assessment payload."""
+    risks = evaluate_formal_metrics(metric_payload)
+    scoring = score_formal_risks(risks)
+    confidence = summarize_assessment_confidence(metric_payload, risks)
+    metrics_by_code = {
+        item["metric_code"]: item for item in metric_payload.get("metrics", [])
+    }
+    not_evaluable = [
+        item for item in risks if item["assessment_status"] == "not_evaluable"
+    ]
+    return {
+        "schema_version": "1.0",
+        "official": True,
+        "overall": {
+            "status": scoring["status"],
+            "score": scoring["score"],
+            "confidence": confidence["coverage_adjusted_confidence"],
+            "coverage_percent": confidence["assessment_coverage"]["percent"],
+            "missing_core_metrics": scoring["missing_core_metrics"],
+        },
+        "category_scores": scoring["category_scores"],
+        "weights": scoring["weights"],
+        "key_metrics": [
+            metrics_by_code[code] for code in KEY_METRIC_CODES if code in metrics_by_code
+        ],
+        "metrics": metric_payload.get("metrics", []),
+        "paths": metric_payload.get("paths", []),
+        "risks": risks,
+        "top_risks": rank_top_risks(risks),
+        "not_evaluable": not_evaluable,
+        "advice": collect_specific_advice(risks),
+        "confidence": confidence,
+        "provenance": metric_payload.get("provenance"),
+        "scope": {
+            "backend_source_of_truth": True,
+            "structured_inputs_only": True,
+            "official_score_system": "mobility_40_layout_30_usage_safety_30",
+        },
+    }
