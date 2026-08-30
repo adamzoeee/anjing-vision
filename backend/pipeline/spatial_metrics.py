@@ -141,3 +141,34 @@ def build_metric(
 def unavailable_metric(metric_code: str, reason: str, *, source: dict | str) -> dict:
     """Create an explicit missing-data record; absence never implies safety."""
     return build_metric(metric_code, reason=reason, source=source)
+
+
+def build_metric_payload(metrics: list[dict]) -> dict:
+    """Validate and group one complete formal metric set for JSON output."""
+    codes = [item.get("metric_code") for item in metrics]
+    duplicates = sorted({code for code in codes if codes.count(code) > 1})
+    if duplicates:
+        raise ValueError(f"duplicate metric codes: {', '.join(duplicates)}")
+    expected = set(METRIC_DEFINITION_BY_CODE)
+    missing = sorted(expected - set(codes))
+    unknown = sorted(set(codes) - expected)
+    if missing:
+        raise ValueError(f"missing formal metric codes: {', '.join(missing)}")
+    if unknown:
+        raise ValueError(f"unknown formal metric codes: {', '.join(unknown)}")
+    by_category = {
+        category: [item for item in metrics if item["category"] == category]
+        for category in ("mobility", "layout", "usage_safety")
+    }
+    evaluable = sum(item["status"] != "not_evaluable" for item in metrics)
+    return {
+        "schema_version": "1.0",
+        "metrics": metrics,
+        "by_category": by_category,
+        "coverage": {
+            "evaluable_count": evaluable,
+            "not_evaluable_count": len(metrics) - evaluable,
+            "total_count": len(metrics),
+            "percent": round(evaluable / len(metrics) * 100, 1) if metrics else 0.0,
+        },
+    }
