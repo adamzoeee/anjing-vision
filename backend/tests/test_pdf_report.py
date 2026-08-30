@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pipeline.pdf_report import build_pdf_report
+from pipeline.pdf_report import _formal_summary_rows, build_pdf_report
 
 pytest.importorskip("reportlab")
 
@@ -131,3 +131,16 @@ def test_build_pdf_report_consumes_formal_assessment_as_source_of_truth():
     )
     assert Path(pdf_path).is_file()
     assert Path(pdf_path).stat().st_size > 500
+
+
+def test_formal_summary_rows_preserve_official_weights_and_coverage():
+    rows = _formal_summary_rows({
+        "category_scores": {
+            "mobility": {"score": 80.0, "weight": 0.4, "evaluated_count": 4, "total_count": 5},
+            "layout": {"score": 60.0, "weight": 0.3, "evaluated_count": 3, "total_count": 4},
+            "usage_safety": {"score": None, "weight": 0.3, "evaluated_count": 0, "total_count": 2},
+        },
+    })
+    assert rows[1] == ["通行能力", "80.0", "40%", "4/5"]
+    assert rows[2] == ["空间布局", "60.0", "30%", "3/4"]
+    assert rows[3] == ["使用安全", "无法评分", "30%", "0/2"]

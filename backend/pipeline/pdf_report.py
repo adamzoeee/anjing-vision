@@ -38,6 +38,12 @@ LEVEL_TEXT = {
     "unknown": "未评估", None: "未评估",
 }
 
+CATEGORY_TEXT = {
+    "mobility": "通行能力",
+    "layout": "空间布局",
+    "usage_safety": "使用安全",
+}
+
 RISK_NAMES = {
     "door_width": "门宽", "passage_width": "通道净宽", "threshold": "门槛高度",
     "stairs": "台阶", "slope": "地面坡度", "uneven": "地面高差/不平",
@@ -92,6 +98,22 @@ def _fmt(value, unit: str = "") -> str:
     if isinstance(value, (int, float)):
         return f"{value:.2f}{unit}"
     return str(value)
+
+
+def _formal_summary_rows(assessment: dict) -> list[list[str]]:
+    """Build stable PDF rows for the official category score summary."""
+    rows = [["评估维度", "得分", "权重", "覆盖情况"]]
+    for code in ("mobility", "layout", "usage_safety"):
+        category = (assessment.get("category_scores") or {}).get(code) or {}
+        score = category.get("score")
+        weight = category.get("weight")
+        rows.append([
+            CATEGORY_TEXT[code],
+            f"{score:.1f}" if isinstance(score, (int, float)) else "无法评分",
+            f"{float(weight) * 100:.0f}%" if isinstance(weight, (int, float)) else "—",
+            f"{category.get('evaluated_count', 0)}/{category.get('total_count', 0)}",
+        ])
+    return rows
 
 
 def build_pdf_report(
@@ -163,6 +185,33 @@ def build_pdf_report(
             risk_coverage.get("total_count", 0),
         ), styles["small"],
     ))
+
+    if formal:
+        story.append(Paragraph("正式评估维度", styles["h2"]))
+        summary_table = Table(
+            [[Paragraph(str(cell), styles["small"]) for cell in row]
+             for row in _formal_summary_rows(formal)],
+            colWidths=[55 * mm, 35 * mm, 35 * mm, 43 * mm],
+        )
+        summary_table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D8DEE9")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F6FA")),
+            ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(summary_table)
+        formal_confidence = formal.get("confidence") or {}
+        evidence_confidence = formal_confidence.get("evidence_confidence")
+        adjusted_confidence = formal_confidence.get("coverage_adjusted_confidence")
+        story.append(Paragraph(
+            "证据置信度：{}　覆盖修正置信度：{}".format(
+                f"{evidence_confidence * 100:.1f}%" if isinstance(evidence_confidence, (int, float)) else "—",
+                f"{adjusted_confidence * 100:.1f}%" if isinstance(adjusted_confidence, (int, float)) else "—",
+            ),
+            styles["small"],
+        ))
 
     # 测量值表
     story.append(Paragraph("一、空间测量", styles["h2"]))
