@@ -1,6 +1,7 @@
 import pytest
 
-from pipeline.risk_assessment import RiskResult, risk_result
+from pipeline.risk_assessment import RiskResult, evaluate_formal_metrics, risk_result
+from pipeline.spatial_metrics import METRIC_DEFINITION_BY_CODE, build_metric, unavailable_metric
 
 
 def _values():
@@ -49,3 +50,61 @@ def test_not_evaluable_risk_has_no_level_and_requires_reason():
 def test_risk_result_rejects_legacy_color_levels():
     with pytest.raises(ValueError, match="unsupported risk level"):
         RiskResult(**(_values() | {"risk_level": "red"}))
+
+
+def _payload(overrides=None):
+    overrides = overrides or {}
+    metrics = []
+    safe_values = {
+        "main_passage_width": 1.0, "minimum_passage_width": 1.0, "door_width": 1.0,
+        "entrance_space": 2.0, "path_length": 2.0, "path_continuity": True,
+        "path_obstruction": False, "furniture_spacing": 0.8,
+        "wall_furniture_clearance": 0.2, "bed_wall_distance": 0.2,
+        "bedside_clearance": 0.8, "activity_area": 4.0, "crowding": 0.3,
+        "bed_surrounding_space": 0.8, "main_activity_area_safety": True,
+    }
+    safe_values.update(overrides)
+    for code in METRIC_DEFINITION_BY_CODE:
+        value = safe_values[code]
+        metrics.append(build_metric(code, value=value, status="derived", source="fixture"))
+    return {"metrics": metrics}
+
+
+def test_formal_evaluator_uses_highest_triggered_severity():
+    risks = evaluate_formal_metrics(_payload({"door_width": 0.75}))
+    door = next(item for item in risks if item["metric_code"] == "door_width")
+    assert door["risk_level"] == "high"
+    assert door["risk_code"] == "door_width_high"
+    assert door["advice"]
+
+
+def test_formal_evaluator_uses_low_medium_high_only():
+    risks = evaluate_formal_metrics(_payload({
+        "door_width": 0.85, "main_passage_width": 1.2,
+    }))
+    assert {item["risk_level"] for item in risks} <= {"low", "medium", "high"}
+    assert next(item for item in risks if item["metric_code"] == "door_width")["risk_level"] == "medium"
+    assert next(item for item in risks if item["metric_code"] == "main_passage_width")["risk_level"] == "low"
+
+
+def test_formal_evaluator_never_turns_unknown_into_low_risk():
+    payload = _payload()
+    payload["metrics"] = [
+        unavailable_metric(
+            item["metric_code"], "fixture_missing", source="fixture",
+        ) if item["metric_code"] == "activity_area" else item
+        for item in payload["metrics"]
+    ]
+    risk = next(
+        item for item in evaluate_formal_metrics(payload)
+        if item["metric_code"] == "activity_area"
+    )
+    assert risk["assessment_status"] == "not_evaluable"
+    assert risk["risk_level"] is None
+    assert risk["reason"] == "fixture_missing"
+
+
+def test_rule_boundaries_are_not_triggered_by_equality_for_directional_thresholds():
+    risks = evaluate_formal_metrics(_payload({"door_width": 0.8, "crowding": 0.6}))
+    assert next(item for item in risks if item["metric_code"] == "door_width")["risk_level"] == "medium"
+    assert next(item for item in risks if item["metric_code"] == "crowding")["risk_level"] == "medium"
