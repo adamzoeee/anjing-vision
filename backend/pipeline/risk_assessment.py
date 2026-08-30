@@ -248,3 +248,31 @@ def summarize_assessment_confidence(metric_payload: dict, risks: list[dict]) -> 
         "by_category": by_category,
         "reason": None if confidence_values else "numeric_confidence_unavailable",
     }
+
+
+def rank_top_risks(risks: list[dict], *, limit: int = 6) -> list[dict]:
+    """Rank evaluated high/medium risks deterministically for reports."""
+    if limit < 0:
+        raise ValueError("limit must not be negative")
+    priority = {"high": 2, "medium": 1}
+    candidates = [
+        item for item in risks
+        if item.get("assessment_status") == "evaluated"
+        and item.get("risk_level") in priority
+    ]
+    candidates.sort(key=lambda item: (
+        -priority[item["risk_level"]],
+        -(item.get("confidence") if item.get("confidence") is not None else -1.0),
+        item.get("risk_code") or "",
+    ))
+    return candidates[:limit]
+
+
+def collect_specific_advice(risks: list[dict]) -> list[str]:
+    """Return stable, deduplicated advice for evaluated actionable risks."""
+    advice = []
+    for item in rank_top_risks(risks, limit=len(risks)):
+        text = item.get("advice")
+        if text and text not in advice:
+            advice.append(text)
+    return advice
