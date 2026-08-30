@@ -74,6 +74,12 @@ FORMAL_RULES = [
                  "修复入口到主要活动区的中断或障碍，再开放该区域使用。"),
 ]
 
+FORMAL_CATEGORY_WEIGHTS = {
+    "mobility": 0.40,
+    "layout": 0.30,
+    "usage_safety": 0.30,
+}
+
 RULES = [
     {"code": "door_width", "name": "门宽", "red": 0.80, "yellow": 0.90, "unit": "m",
      "advice": "门宽不足 80cm，轮椅无法通行，建议扩门或改用折叠门。"},
