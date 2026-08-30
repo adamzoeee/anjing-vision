@@ -4,7 +4,9 @@ from pipeline.spatial_metrics import (
     METRIC_DEFINITION_BY_CODE,
     METRIC_DEFINITIONS,
     SpatialMetric,
+    build_metric,
     metric_record,
+    unavailable_metric,
 )
 
 
@@ -74,3 +76,28 @@ def test_metric_rejects_invalid_status_or_confidence():
         metric_record(
             "door_width", "门净宽", value=0.8, status="measured", confidence=1.2,
         )
+
+
+def test_catalog_builder_supplies_category_name_and_unit():
+    record = build_metric(
+        "minimum_passage_width",
+        value=0.72,
+        status="derived",
+        confidence=0.8,
+        source={"artifact": "passage_analysis.json", "field": "primary_route.minimum_clear_width_m"},
+    )
+    assert record["category"] == "mobility"
+    assert record["name"] == "最小通道净宽"
+    assert record["unit"] == "m"
+
+
+def test_unavailable_builder_is_explicit_and_unknown_codes_are_rejected():
+    record = unavailable_metric(
+        "activity_area", "explicit_activity_anchor_missing",
+        source={"artifact": "spatial_foundation.json"},
+    )
+    assert record["status"] == "not_evaluable"
+    assert record["reason"] == "explicit_activity_anchor_missing"
+
+    with pytest.raises(ValueError, match="unknown formal metric code"):
+        build_metric("invented_metric", value=1, status="derived")
