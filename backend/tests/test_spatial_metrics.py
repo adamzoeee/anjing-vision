@@ -1,6 +1,27 @@
 import pytest
 
-from pipeline.spatial_metrics import SpatialMetric, metric_record
+from pipeline.spatial_metrics import (
+    METRIC_DEFINITION_BY_CODE,
+    METRIC_DEFINITIONS,
+    SpatialMetric,
+    metric_record,
+)
+
+
+def test_formal_metric_catalog_has_all_required_categories_and_codes():
+    assert {item[0] for item in METRIC_DEFINITIONS} == {
+        "mobility", "layout", "usage_safety",
+    }
+    assert set(METRIC_DEFINITION_BY_CODE) == {
+        "main_passage_width", "minimum_passage_width", "door_width",
+        "entrance_space", "path_length", "path_continuity", "path_obstruction",
+        "furniture_spacing", "wall_furniture_clearance", "bed_wall_distance",
+        "bedside_clearance", "activity_area", "crowding",
+        "bed_surrounding_space", "main_activity_area_safety",
+    }
+    assert METRIC_DEFINITION_BY_CODE["door_width"] == {
+        "category": "mobility", "name": "门净宽", "unit": "m",
+    }
 
 
 def test_spatial_metric_serializes_all_contract_fields():

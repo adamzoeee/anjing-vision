@@ -12,6 +12,29 @@ from typing import Any
 
 METRIC_STATUSES = frozenset({"measured", "derived", "not_evaluable"})
 
+METRIC_DEFINITIONS = (
+    ("mobility", "main_passage_width", "主要通道净宽", "m"),
+    ("mobility", "minimum_passage_width", "最小通道净宽", "m"),
+    ("mobility", "door_width", "门净宽", "m"),
+    ("mobility", "entrance_space", "入口可用空间", "m²"),
+    ("mobility", "path_length", "通行路径长度", "m"),
+    ("mobility", "path_continuity", "路径连续性", "boolean"),
+    ("mobility", "path_obstruction", "路径障碍", "boolean"),
+    ("layout", "furniture_spacing", "家具间距", "m"),
+    ("layout", "wall_furniture_clearance", "家具离墙间距", "m"),
+    ("layout", "bed_wall_distance", "床离墙距离", "m"),
+    ("layout", "bedside_clearance", "床侧净空", "m"),
+    ("layout", "activity_area", "活动区域面积", "m²"),
+    ("layout", "crowding", "空间拥挤度", "ratio"),
+    ("usage_safety", "bed_surrounding_space", "床周边可用空间", "m²"),
+    ("usage_safety", "main_activity_area_safety", "主要活动区安全状态", "boolean"),
+)
+
+METRIC_DEFINITION_BY_CODE = {
+    code: {"category": category, "name": name, "unit": unit}
+    for category, code, name, unit in METRIC_DEFINITIONS
+}
+
 
 @dataclass(frozen=True)
 class SpatialMetric:
