@@ -169,3 +169,42 @@ def extract_crowding_metric(foundation: dict) -> dict:
         "crowding", value=round(ratio, 4), status="derived", confidence=None,
         position={"room": True}, source=source,
     )
+
+
+def extract_bed_surrounding_space_metric(passage: dict, foundation: dict) -> dict:
+    """Return the most constrained observed clearance around a verified bed."""
+    source = {
+        "artifacts": ["passage_analysis.json", "spatial_foundation.json"],
+        "fields": ["furniture_clearances[*]", "room.floor_polygon+furniture"],
+    }
+    floor = (foundation.get("room") or {}).get("floor_polygon") or []
+    beds = [item for item in foundation.get("furniture", []) if item.get("type") == "bed"]
+    if not beds:
+        return unavailable_metric(
+            "bed_surrounding_space", "verified_bed_geometry_unavailable", source=source,
+        )
+    candidates: list[tuple[float, dict]] = []
+    for bed in beds:
+        wall_distance = _wall_distance(bed, floor)
+        if wall_distance is not None:
+            candidates.append((wall_distance, {"object_id": bed.get("id"), "boundary": "wall"}))
+        for relation in passage.get("furniture_clearances", []):
+            pair = list(relation.get("between") or [])
+            if bed.get("id") in pair and relation.get("clearance_m") is not None:
+                candidates.append((
+                    float(relation["clearance_m"]),
+                    {"object_ids": pair, "boundary": "furniture"},
+                ))
+    if not candidates:
+        return unavailable_metric(
+            "bed_surrounding_space", "bed_surrounding_clearance_unavailable", source=source,
+        )
+    distance, position = min(candidates, key=lambda pair: pair[0])
+    bed_confidence = min(
+        (value for value in (confidence_value(item.get("confidence")) for item in beds) if value is not None),
+        default=None,
+    )
+    return build_metric(
+        "bed_surrounding_space", value=round(distance, 3), status="derived",
+        confidence=bed_confidence, position=position, source=source,
+    )
