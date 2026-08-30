@@ -94,3 +94,37 @@ def metric_record(
         source=source,
         reason=reason,
     ).to_dict()
+
+
+def build_metric(
+    metric_code: str,
+    *,
+    value: Any = None,
+    status: str = "not_evaluable",
+    confidence: float | None = None,
+    position: dict | list | None = None,
+    source: dict | str = "structured_artifacts",
+    reason: str | None = None,
+) -> dict:
+    """Build a catalog-backed metric and include its assessment category."""
+    try:
+        definition = METRIC_DEFINITION_BY_CODE[metric_code]
+    except KeyError as exc:
+        raise ValueError(f"unknown formal metric code: {metric_code}") from exc
+    record = metric_record(
+        metric_code,
+        definition["name"],
+        value=value,
+        unit=definition["unit"],
+        status=status,
+        confidence=confidence,
+        position=position,
+        source=source,
+        reason=reason,
+    )
+    return {"category": definition["category"], **record}
+
+
+def unavailable_metric(metric_code: str, reason: str, *, source: dict | str) -> dict:
+    """Create an explicit missing-data record; absence never implies safety."""
+    return build_metric(metric_code, reason=reason, source=source)
