@@ -255,3 +255,26 @@ def extract_door_width_metric(measurements: dict, passage: dict) -> dict:
         position={"object_id": selected.get("id"), "center_xyz": selected.get("center")},
         source=source,
     )
+
+
+def extract_entrance_space_metric(passage: dict) -> dict:
+    """Expose the door-connected walkable area computed by structure analysis."""
+    source = {
+        "artifact": "passage_analysis.json",
+        "field": "walkable_regions.door_connected_area_m2",
+    }
+    route = passage.get("primary_route") or {}
+    walkable = passage.get("walkable_regions") or {}
+    area = walkable.get("door_connected_area_m2")
+    if area is None:
+        return unavailable_metric("entrance_space", "door_connected_area_unavailable", source=source)
+    if not route.get("from"):
+        return unavailable_metric("entrance_space", "entrance_door_missing", source=source)
+    return build_metric(
+        "entrance_space",
+        value=round(float(area), 3),
+        status="derived",
+        confidence=confidence_value(walkable.get("confidence")),
+        position={"object_id": route.get("from")},
+        source=source,
+    )
