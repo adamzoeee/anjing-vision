@@ -125,3 +125,47 @@ def extract_bedside_clearance_metric(passage: dict, foundation: dict) -> dict:
         confidence=confidence_value(nearest.get("confidence")),
         position={"object_ids": list(nearest["between"])}, source=source,
     )
+
+
+def extract_activity_area_metric(foundation: dict) -> dict:
+    """Measure only an explicitly labelled activity anchor, never room centre."""
+    source = {"artifact": "spatial_foundation.json", "field": "furniture[*]"}
+    anchor = next((
+        item for item in foundation.get("furniture", [])
+        if item.get("type") in {"activity_area", "activity_anchor"} and item.get("id")
+    ), None)
+    if anchor is None:
+        return unavailable_metric("activity_area", "explicit_activity_anchor_missing", source=source)
+    area = anchor.get("area_m2")
+    if area is None and anchor.get("length_m") is not None and anchor.get("width_m") is not None:
+        area = float(anchor["length_m"]) * float(anchor["width_m"])
+    if area is None or float(area) <= 0:
+        return unavailable_metric("activity_area", "activity_anchor_geometry_unavailable", source=source)
+    return build_metric(
+        "activity_area", value=round(float(area), 3), status="derived",
+        confidence=confidence_value(anchor.get("confidence")),
+        position={"object_id": anchor.get("id"), "center_xyz": anchor.get("position_xyz")},
+        source=source,
+    )
+
+
+def extract_crowding_metric(foundation: dict) -> dict:
+    """Compute accepted furniture footprint area divided by structured room area."""
+    source = {"artifact": "spatial_foundation.json", "field": "room.area_m2+furniture[*]"}
+    room_area = (foundation.get("room") or {}).get("area_m2")
+    if room_area is None or float(room_area) <= 0:
+        return unavailable_metric("crowding", "verified_room_area_unavailable", source=source)
+    footprints = [
+        float(item["length_m"]) * float(item["width_m"])
+        for item in foundation.get("furniture", [])
+        if item.get("length_m") is not None and item.get("width_m") is not None
+    ]
+    if not footprints:
+        return unavailable_metric("crowding", "verified_furniture_footprints_unavailable", source=source)
+    ratio = sum(footprints) / float(room_area)
+    if ratio > 1.0:
+        return unavailable_metric("crowding", "furniture_footprint_area_exceeds_room_area", source=source)
+    return build_metric(
+        "crowding", value=round(ratio, 4), status="derived", confidence=None,
+        position={"room": True}, source=source,
+    )
