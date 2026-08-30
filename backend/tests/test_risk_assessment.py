@@ -1,8 +1,12 @@
+import hashlib
+import json
+
 import pytest
 
 from pipeline.risk_assessment import (
     RiskResult,
     build_risk_assessment,
+    build_risk_assessment_file,
     collect_specific_advice,
     evaluate_formal_metrics,
     rank_top_risks,
@@ -251,3 +255,24 @@ def test_unified_assessment_exposes_not_evaluable_without_fake_score():
     assert assessment["overall"]["score"] is None
     assert {item["metric_code"] for item in assessment["not_evaluable"]} == {"door_width"}
     assert all(item["risk_level"] is None for item in assessment["not_evaluable"])
+
+
+def test_assessment_file_is_serializable_and_preserves_metric_input(tmp_path):
+    source = tmp_path / "spatial_metrics.json"
+    source.write_text(json.dumps(_payload(), ensure_ascii=False), encoding="utf-8")
+    before = hashlib.sha256(source.read_bytes()).hexdigest()
+    output = tmp_path / "risk_assessment.json"
+    assessment = build_risk_assessment_file(source, output)
+    assert output.is_file()
+    assert json.loads(output.read_text(encoding="utf-8"))["schema_version"] == "1.0"
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == before
+    assert assessment["metric_input"] == {
+        "artifact": "spatial_metrics.json", "sha256": before, "input_modified": False,
+    }
+
+
+def test_assessment_file_rejects_non_json_input(tmp_path):
+    source = tmp_path / "scene.ply"
+    source.write_text("ply")
+    with pytest.raises(ValueError, match="must be a JSON"):
+        build_risk_assessment_file(source, tmp_path / "risk_assessment.json")
