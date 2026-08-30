@@ -7,6 +7,7 @@ from pipeline.spatial_metrics import (
     build_metric,
     build_metric_payload,
     confidence_value,
+    extract_passage_width_metrics,
     metric_record,
     unavailable_metric,
 )
@@ -146,3 +147,34 @@ def test_metric_payload_rejects_missing_or_duplicate_codes():
         build_metric_payload(metrics[:-1])
     with pytest.raises(ValueError, match="duplicate metric codes"):
         build_metric_payload([*metrics, metrics[0]])
+
+
+def test_passage_width_metrics_use_structured_route_and_narrowest_position():
+    passage = {
+        "status": "ok",
+        "primary_route": {
+            "id": "door_to_bed", "path_exists": True,
+            "minimum_clear_width_m": 0.72,
+            "narrowest_point_xy": [1.2, 0.8],
+        },
+    }
+    foundation = {
+        "passages": [
+            passage["primary_route"],
+            {"id": "door_to_chair", "path_exists": True, "minimum_clear_width_m": 0.64},
+        ],
+    }
+    metrics = {item["metric_code"]: item for item in extract_passage_width_metrics(passage, foundation)}
+    assert metrics["main_passage_width"]["value"] == 0.72
+    assert metrics["minimum_passage_width"]["value"] == 0.64
+    assert metrics["main_passage_width"]["position"] == {
+        "path_id": "door_to_bed", "point_xy": [1.2, 0.8],
+    }
+
+
+def test_missing_passage_width_is_not_evaluable_not_safe():
+    metrics = extract_passage_width_metrics({"status": "blocked", "reason": "no_path"})
+    assert len(metrics) == 2
+    assert all(item["status"] == "not_evaluable" for item in metrics)
+    assert all(item["value"] is None for item in metrics)
+    assert {item["reason"] for item in metrics} == {"no_path"}
