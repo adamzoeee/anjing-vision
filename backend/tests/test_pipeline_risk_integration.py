@@ -1,6 +1,6 @@
 import json
 
-from app.tasks.pipeline_runner import _build_formal_assessment
+from app.tasks.pipeline_runner import _build_formal_assessment, _build_formal_pdf
 
 
 def test_pipeline_helper_writes_formal_assessment_artifacts(tmp_path):
@@ -27,3 +27,15 @@ def test_pipeline_helper_writes_formal_assessment_artifacts(tmp_path):
     assert outputs["risk_assessment"].is_file()
     assert outputs["risk_payload"]["overall"]["status"] == "insufficient_data"
     assert outputs["risk_payload"]["overall"]["score"] is None
+
+
+def test_pipeline_helper_generates_pdf_from_same_formal_payload(tmp_path):
+    assessment = {
+        "official": True,
+        "overall": {"status": "evaluated", "score": 80.0, "coverage_percent": 100.0},
+        "category_scores": {}, "confidence": {}, "key_metrics": [],
+        "not_evaluable": [], "risks": [], "advice": [],
+    }
+    pdf_path = _build_formal_pdf(tmp_path, 46, assessment, {"scale_status": "relative"})
+    assert pdf_path == str(tmp_path / "report" / "report.pdf")
+    assert (tmp_path / "report" / "report.pdf").read_bytes().startswith(b"%PDF")
