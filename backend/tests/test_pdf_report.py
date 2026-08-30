@@ -4,7 +4,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pipeline.pdf_report import _formal_summary_rows, build_pdf_report
+from pipeline.pdf_report import (
+    _formal_metric_rows,
+    _formal_not_evaluable_rows,
+    _formal_summary_rows,
+    build_pdf_report,
+)
 
 pytest.importorskip("reportlab")
 
@@ -144,3 +149,19 @@ def test_formal_summary_rows_preserve_official_weights_and_coverage():
     assert rows[1] == ["通行能力", "80.0", "40%", "4/5"]
     assert rows[2] == ["空间布局", "60.0", "30%", "3/4"]
     assert rows[3] == ["使用安全", "无法评分", "30%", "0/2"]
+
+
+def test_formal_metric_rows_keep_backend_values_and_missing_evidence():
+    assessment = {
+        "key_metrics": [
+            {"metric_code": "door_width", "name": "门净宽", "value": 0.85, "unit": "m", "status": "evaluated"},
+            {"metric_code": "activity_space", "name": "活动空间", "value": None, "unit": "m²", "status": "not_evaluable", "reason": "activity_anchor_missing"},
+        ],
+        "not_evaluable": [
+            {"risk_name": "活动空间风险", "metric_code": "activity_space", "reason": "activity_anchor_missing"},
+        ],
+    }
+    rows = _formal_metric_rows(assessment)
+    assert rows[1] == ["门净宽", "0.85m", "已评估"]
+    assert rows[2] == ["活动空间", "—", "无法评估：activity_anchor_missing"]
+    assert _formal_not_evaluable_rows(assessment) == [["活动空间风险", "activity_anchor_missing"]]
