@@ -27,8 +27,16 @@ from reportlab.platypus import (
 
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 
-LEVEL_COLOR = {"red": "#E5484D", "yellow": "#F5B301", "green": "#2E9E5B", "unknown": "#8B98B5"}
-LEVEL_TEXT = {"red": "高风险", "yellow": "中风险", "green": "正常", "unknown": "未评估"}
+LEVEL_COLOR = {
+    "high": "#E5484D", "medium": "#F5B301", "low": "#2E9E5B",
+    "red": "#E5484D", "yellow": "#F5B301", "green": "#2E9E5B",
+    "unknown": "#8B98B5", None: "#8B98B5",
+}
+LEVEL_TEXT = {
+    "high": "高风险", "medium": "中风险", "low": "低风险",
+    "red": "高风险", "yellow": "中风险", "green": "正常",
+    "unknown": "未评估", None: "未评估",
+}
 
 RISK_NAMES = {
     "door_width": "门宽", "passage_width": "通道净宽", "threshold": "门槛高度",
@@ -95,6 +103,7 @@ def build_pdf_report(
     advice: list[str],
     images: list[str],
     out_path: str | Path,
+    risk_assessment: dict | None = None,
 ) -> str:
     """生成 PDF 报告，返回输出路径。
 
@@ -102,6 +111,11 @@ def build_pdf_report(
     measures: 管道 measures dict。
     images: 标注图 PNG 路径列表（嵌入报告）。
     """
+    if risk_assessment and risk_assessment.get("official") is True:
+        score = (risk_assessment.get("overall") or {}).get("score")
+        risks = list(risk_assessment.get("risks") or [])
+        advice = list(risk_assessment.get("advice") or [])
+        measures = {**measures, "risk_assessment": risk_assessment}
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     styles = _style()
@@ -116,7 +130,11 @@ def build_pdf_report(
     story.append(Paragraph("适老空间安全评估报告", styles["subtitle"]))
 
     # 评分
-    completeness = (measures.get("assessment_completeness") or {}).get("percent")
+    formal = measures.get("risk_assessment") or {}
+    formal_overall = formal.get("overall") or {}
+    completeness = formal_overall.get("coverage_percent")
+    if completeness is None:
+        completeness = (measures.get("assessment_completeness") or {}).get("percent")
     calibration = measures.get("calibration_quality") or {}
     calib_method = calibration.get("method", "—")
     scale_status = measures.get("scale_status", "relative")
@@ -178,8 +196,8 @@ def build_pdf_report(
     header = ["风险项", "测量值", "等级"]
     risk_rows = [header]
     for risk in risks:
-        level = risk.get("level", "unknown")
-        measure = risk.get("measure")
+        level = risk.get("risk_level", risk.get("level", "unknown"))
+        measure = risk.get("measured_value", risk.get("measure"))
         if isinstance(measure, list):
             measure_text = "、".join(item.get("label", str(item)) for item in measure) if measure else "无"
         else:
@@ -187,7 +205,7 @@ def build_pdf_report(
         if risk.get("assessment_status") == "not_evaluable":
             measure_text = f"无法评估：{risk.get('reason') or '数据不足'}"
         risk_rows.append([
-            RISK_NAMES.get(risk.get("code"), risk.get("name", "?")),
+            risk.get("risk_name") or RISK_NAMES.get(risk.get("code"), risk.get("name", "?")),
             measure_text,
             LEVEL_TEXT.get(level, level),
         ])
@@ -204,7 +222,7 @@ def build_pdf_report(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]
     for row_index, risk in enumerate(risks, start=1):
-        level = risk.get("level", "unknown")
+        level = risk.get("risk_level", risk.get("level", "unknown"))
         style_cmds.append(
             ("BACKGROUND", (2, row_index), (2, row_index), colors.HexColor(LEVEL_COLOR.get(level, "#8B98B5")))
         )
