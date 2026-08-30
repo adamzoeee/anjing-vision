@@ -1,0 +1,60 @@
+from pipeline.spatial_assessment_inputs import build_spatial_assessment_inputs
+
+
+def _structured_inputs():
+    route = {
+        "id": "door_to_bed", "from": "door_01", "to": "bed_001",
+        "path_exists": True, "path_blocked": False, "path_length_m": 1.5,
+        "minimum_clear_width_m": 0.72, "narrowest_point_xy": [2, 1],
+    }
+    measurements = {"openings": [{
+        "id": "door_01", "type": "door", "width_m": 0.86,
+        "measurement_status": "verified", "confidence": "high", "center": [2, 0, 1],
+    }]}
+    passage = {
+        "status": "ok", "primary_route": route,
+        "walkable_regions": {"door_connected_area_m2": 4.0},
+        "furniture_clearances": [{
+            "between": ["bed_001", "desk_001"], "clearance_m": 0.45,
+        }],
+    }
+    foundation = {
+        "room": {
+            "area_m2": 12.0,
+            "floor_polygon": [[0, 0], [4, 0], [4, 3], [0, 3]],
+        },
+        "passages": [route],
+        "furniture": [
+            {
+                "id": "bed_001", "type": "bed", "position_xyz": [2, 2, 0.3],
+                "length_m": 2, "width_m": 1, "confidence": "high",
+            },
+            {
+                "id": "desk_001", "type": "desk", "position_xyz": [0.7, 1.5, 0.4],
+                "length_m": 1, "width_m": 0.5,
+            },
+        ],
+    }
+    return measurements, passage, foundation
+
+
+def test_assessment_input_contains_all_formal_metrics_and_paths():
+    payload = build_spatial_assessment_inputs(*_structured_inputs())
+    assert len(payload["metrics"]) == 15
+    assert len({item["metric_code"] for item in payload["metrics"]}) == 15
+    assert payload["scope"] == {
+        "structured_inputs_only": True,
+        "raw_media_accessed": False,
+        "point_cloud_accessed": False,
+        "risk_rules_applied": False,
+    }
+    activity_path = next(item for item in payload["paths"] if item["path_id"] == "entrance_to_activity")
+    assert activity_path["status"] == "not_evaluable"
+
+
+def test_assessment_input_keeps_missing_activity_evidence_in_coverage():
+    payload = build_spatial_assessment_inputs(*_structured_inputs())
+    by_code = {item["metric_code"]: item for item in payload["metrics"]}
+    assert by_code["activity_area"]["reason"] == "explicit_activity_anchor_missing"
+    assert by_code["main_activity_area_safety"]["status"] == "not_evaluable"
+    assert payload["coverage"]["not_evaluable_count"] >= 2
