@@ -198,3 +198,53 @@ def score_formal_risks(risks: list[dict]) -> dict:
         "missing_categories": missing_categories,
         "minimum_coverage_percent": MINIMUM_OFFICIAL_COVERAGE * 100,
     }
+
+
+def summarize_assessment_confidence(metric_payload: dict, risks: list[dict]) -> dict:
+    """Report evidence coverage and confidence independently from risk level."""
+    metrics = metric_payload.get("metrics", [])
+    evaluable_metrics = [item for item in metrics if item.get("status") != "not_evaluable"]
+    evaluated_risks = [item for item in risks if item.get("assessment_status") == "evaluated"]
+    total = len(risks)
+    evaluated_count = len(evaluated_risks)
+    coverage_percent = round(evaluated_count / total * 100, 1) if total else 0.0
+    confidence_values = [
+        float(item["confidence"]) for item in evaluated_risks
+        if item.get("confidence") is not None
+    ]
+    evidence_confidence = (
+        round(sum(confidence_values) / len(confidence_values), 3)
+        if confidence_values else None
+    )
+    adjusted_confidence = (
+        round(evidence_confidence * evaluated_count / total, 3)
+        if evidence_confidence is not None and total else None
+    )
+    by_category = {}
+    for category in FORMAL_CATEGORY_WEIGHTS:
+        category_risks = [item for item in risks if item.get("risk_type") == category]
+        known = [item for item in category_risks if item.get("assessment_status") == "evaluated"]
+        values = [float(item["confidence"]) for item in known if item.get("confidence") is not None]
+        by_category[category] = {
+            "coverage_percent": round(len(known) / len(category_risks) * 100, 1) if category_risks else 0.0,
+            "evidence_confidence": round(sum(values) / len(values), 3) if values else None,
+        }
+    return {
+        "assessment_coverage": {
+            "evaluated_count": evaluated_count,
+            "not_evaluable_count": total - evaluated_count,
+            "total_count": total,
+            "percent": coverage_percent,
+        },
+        "metric_coverage": metric_payload.get("coverage") or {
+            "evaluable_count": len(evaluable_metrics),
+            "not_evaluable_count": len(metrics) - len(evaluable_metrics),
+            "total_count": len(metrics),
+            "percent": round(len(evaluable_metrics) / len(metrics) * 100, 1) if metrics else 0.0,
+        },
+        "evidence_confidence": evidence_confidence,
+        "coverage_adjusted_confidence": adjusted_confidence,
+        "confidence_sample_count": len(confidence_values),
+        "by_category": by_category,
+        "reason": None if confidence_values else "numeric_confidence_unavailable",
+    }
