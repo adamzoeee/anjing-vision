@@ -1,5 +1,7 @@
 from pipeline.spatial_layout import (
     extract_bedside_clearance_metric,
+    extract_activity_area_metric,
+    extract_crowding_metric,
     extract_furniture_spacing_metric,
     extract_wall_clearance_metrics,
 )
@@ -81,3 +83,39 @@ def test_bedside_clearance_requires_bed_and_relationship_evidence():
     })
     assert metric["status"] == "not_evaluable"
     assert metric["reason"] == "bedside_clearance_unavailable"
+
+
+def test_activity_area_requires_explicit_anchor():
+    metric = extract_activity_area_metric({
+        "room": {"area_m2": 12.0},
+        "furniture": [{"id": "bed_001", "type": "bed", "length_m": 2, "width_m": 1.5}],
+    })
+    assert metric["status"] == "not_evaluable"
+    assert metric["reason"] == "explicit_activity_anchor_missing"
+
+    measured = extract_activity_area_metric({"furniture": [{
+        "id": "activity_01", "type": "activity_area", "length_m": 2.0,
+        "width_m": 1.5, "confidence": "medium", "position_xyz": [2, 2, 0],
+    }]})
+    assert measured["value"] == 3.0
+    assert measured["position"]["object_id"] == "activity_01"
+
+
+def test_crowding_uses_room_and_verified_furniture_footprints():
+    metric = extract_crowding_metric({
+        "room": {"area_m2": 12.0},
+        "furniture": [
+            {"length_m": 2.0, "width_m": 1.5},
+            {"length_m": 1.0, "width_m": 0.6},
+        ],
+    })
+    assert metric["value"] == 0.3
+
+
+def test_invalid_crowding_evidence_is_not_evaluable():
+    assert extract_crowding_metric({"room": {}})["status"] == "not_evaluable"
+    metric = extract_crowding_metric({
+        "room": {"area_m2": 1.0},
+        "furniture": [{"length_m": 2.0, "width_m": 2.0}],
+    })
+    assert metric["reason"] == "furniture_footprint_area_exceeds_room_area"
