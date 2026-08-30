@@ -125,6 +125,28 @@ def _build_formal_assessment(work: Path, scan_id: int) -> dict:
     return outputs
 
 
+def _build_formal_pdf(work: Path, scan_id: int, assessment: dict, measures: dict) -> str | None:
+    """Generate the PDF from the exact formal assessment persisted by the pipeline."""
+    from pipeline.report_composer import compose_report
+
+    composed = compose_report(
+        title=f"扫描 {scan_id}",
+        score=(assessment.get("overall") or {}).get("score"),
+        risks=list(assessment.get("risks") or []),
+        measures=measures,
+        advice=list(assessment.get("advice") or []),
+        points=None,
+        out_dir=Path(work) / "report",
+        risk_assessment=assessment,
+    )
+    if composed.status != "ok":
+        logger.warning(
+            "formal_pdf_partial scan_id=%s status=%s reason=%s",
+            scan_id, composed.status, composed.reason,
+        )
+    return composed.pdf_path
+
+
 def _upsert_report(
     db,
     *,
@@ -403,6 +425,13 @@ def _run_slam3r_pipeline(
         "risk_assessment": f"/api/preview/{scan.id}/risk-assessment.json" if assessment_outputs else None,
         "backend": "slam3r",
     }
+    if assessment:
+        try:
+            pdf_path = _build_formal_pdf(work, scan.id, assessment, measures)
+            preview["pdf"] = f"/static/{scan.id}/pdf" if pdf_path else None
+        except Exception as exc:  # noqa: BLE001 - PDF 失败不阻断结构化报告
+            logger.exception("formal_pdf_failed scan_id=%s", scan.id)
+            preview["pdf"] = None
     _upsert_report(
         db,
         scan_id=scan.id,
