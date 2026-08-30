@@ -101,3 +101,27 @@ def extract_wall_clearance_metrics(foundation: dict) -> list[dict]:
     else:
         bed_metric = unavailable_metric("bed_wall_distance", "verified_bed_geometry_unavailable", source=source)
     return [wall_metric, bed_metric]
+
+
+def extract_bedside_clearance_metric(passage: dict, foundation: dict) -> dict:
+    """Return the minimum structured clearance from a verified bed to furniture."""
+    source = {"artifact": "passage_analysis.json", "field": "furniture_clearances[*]"}
+    bed_ids = {
+        item.get("id") for item in foundation.get("furniture", [])
+        if item.get("type") == "bed" and item.get("id")
+    }
+    if not bed_ids:
+        return unavailable_metric("bedside_clearance", "verified_bed_geometry_unavailable", source=source)
+    candidates = []
+    for item in passage.get("furniture_clearances", []):
+        pair = list(item.get("between") or [])
+        if len(pair) == 2 and bed_ids.intersection(pair) and item.get("clearance_m") is not None:
+            candidates.append(item)
+    if not candidates:
+        return unavailable_metric("bedside_clearance", "bedside_clearance_unavailable", source=source)
+    nearest = min(candidates, key=lambda item: float(item["clearance_m"]))
+    return build_metric(
+        "bedside_clearance", value=round(float(nearest["clearance_m"]), 3), status="derived",
+        confidence=confidence_value(nearest.get("confidence")),
+        position={"object_ids": list(nearest["between"])}, source=source,
+    )

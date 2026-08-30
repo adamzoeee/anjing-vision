@@ -1,4 +1,8 @@
-from pipeline.spatial_layout import extract_furniture_spacing_metric, extract_wall_clearance_metrics
+from pipeline.spatial_layout import (
+    extract_bedside_clearance_metric,
+    extract_furniture_spacing_metric,
+    extract_wall_clearance_metrics,
+)
 
 
 def test_furniture_spacing_selects_smallest_structured_clearance():
@@ -54,3 +58,26 @@ def test_missing_floor_or_bed_does_not_create_zero_clearance():
     })}
     assert metrics["wall_furniture_clearance"]["status"] == "not_evaluable"
     assert metrics["bed_wall_distance"]["status"] == "not_evaluable"
+
+
+def test_bedside_clearance_selects_nearest_non_attached_furniture():
+    passage = {"furniture_clearances": [
+        {"between": ["bed_001", "table_001"], "clearance_m": 0.3},
+        {"between": ["bed_001", "wardrobe_001"], "clearance_m": 0.62},
+        {"between": ["desk_001", "wardrobe_001"], "clearance_m": 0.1},
+    ]}
+    foundation = {"furniture": [{"id": "bed_001", "type": "bed"}]}
+    metric = extract_bedside_clearance_metric(passage, foundation)
+    assert metric["value"] == 0.3
+    assert metric["position"] == {"object_ids": ["bed_001", "table_001"]}
+
+
+def test_bedside_clearance_requires_bed_and_relationship_evidence():
+    assert extract_bedside_clearance_metric({}, {"furniture": []})["reason"] == (
+        "verified_bed_geometry_unavailable"
+    )
+    metric = extract_bedside_clearance_metric({}, {
+        "furniture": [{"id": "bed_001", "type": "bed"}],
+    })
+    assert metric["status"] == "not_evaluable"
+    assert metric["reason"] == "bedside_clearance_unavailable"
