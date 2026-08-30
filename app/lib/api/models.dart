@@ -128,6 +128,8 @@ class Report {
   final String? previewGaussianPly;
   final String? previewCameras;
   final String? previewViewer;
+  final String? reportPdf;
+  final String? riskMap;
   final Map<String, dynamic> measures;
   final Map<String, dynamic> riskAssessment;
   Report({
@@ -141,6 +143,8 @@ class Report {
     this.previewGaussianPly,
     this.previewCameras,
     this.previewViewer,
+    this.reportPdf,
+    this.riskMap,
     this.measures = const {},
     this.riskAssessment = const {},
   });
@@ -162,6 +166,8 @@ class Report {
       previewCameras: (j['preview'] as Map<String, dynamic>?)?['cameras']
           ?.toString(),
       previewViewer: (j['preview'] as Map<String, dynamic>?)?['viewer']?.toString(),
+      reportPdf: (j['preview'] as Map<String, dynamic>?)?['pdf']?.toString(),
+      riskMap: (j['preview'] as Map<String, dynamic>?)?['risk_map']?.toString(),
       measures: measures,
       riskAssessment: assessment,
     );
