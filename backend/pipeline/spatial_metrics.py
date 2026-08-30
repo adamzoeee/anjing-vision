@@ -35,6 +35,19 @@ METRIC_DEFINITION_BY_CODE = {
     for category, code, name, unit in METRIC_DEFINITIONS
 }
 
+_CONFIDENCE_LEVELS = {"low": 0.4, "medium": 0.7, "high": 0.9}
+
+
+def confidence_value(value: Any, *, default: float | None = None) -> float | None:
+    """Normalize structured confidence values without inventing missing evidence."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return round(max(0.0, min(1.0, float(value))), 4)
+    return _CONFIDENCE_LEVELS.get(str(value).strip().lower(), default)
+
 
 @dataclass(frozen=True)
 class SpatialMetric:
