@@ -116,6 +116,34 @@ def _formal_summary_rows(assessment: dict) -> list[list[str]]:
     return rows
 
 
+def _formal_metric_rows(assessment: dict) -> list[list[str]]:
+    """Format backend-owned key metrics without recalculating any value."""
+    rows = [["关键指标", "测量值", "证据状态"]]
+    for metric in assessment.get("key_metrics") or []:
+        status = metric.get("status", "not_evaluable")
+        value = (
+            _fmt(metric.get("value"), metric.get("unit", ""))
+            if status != "not_evaluable" else "—"
+        )
+        rows.append([
+            metric.get("name") or metric.get("metric_code") or "未命名指标",
+            value,
+            "已评估" if status != "not_evaluable" else f"无法评估：{metric.get('reason') or '证据不足'}",
+        ])
+    return rows
+
+
+def _formal_not_evaluable_rows(assessment: dict) -> list[list[str]]:
+    """Expose missing evidence explicitly instead of treating it as safe."""
+    return [
+        [
+            item.get("risk_name") or item.get("metric_code") or "未命名指标",
+            item.get("reason") or "证据不足",
+        ]
+        for item in (assessment.get("not_evaluable") or [])
+    ]
+
+
 def build_pdf_report(
     *,
     title: str,
@@ -239,6 +267,28 @@ def build_pdf_report(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
     story.append(measure_table)
+
+    if formal.get("key_metrics"):
+        story.append(Paragraph("关键评估指标", styles["h2"]))
+        key_metric_table = Table(
+            [[Paragraph(str(cell), styles["small"]) for cell in row]
+             for row in _formal_metric_rows(formal)],
+            colWidths=[56 * mm, 42 * mm, 70 * mm],
+        )
+        key_metric_table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D8DEE9")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F6FA")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(key_metric_table)
+
+    unavailable_rows = _formal_not_evaluable_rows(formal)
+    if unavailable_rows:
+        story.append(Paragraph("证据不足项", styles["h2"]))
+        for name, reason in unavailable_rows:
+            story.append(Paragraph(f"• {name}：{reason}", styles["body"]))
 
     # 风险表
     story.append(Paragraph("二、风险项", styles["h2"]))
