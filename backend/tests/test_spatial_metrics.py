@@ -5,6 +5,7 @@ from pipeline.spatial_metrics import (
     METRIC_DEFINITIONS,
     SpatialMetric,
     build_metric,
+    confidence_value,
     metric_record,
     unavailable_metric,
 )
@@ -101,3 +102,12 @@ def test_unavailable_builder_is_explicit_and_unknown_codes_are_rejected():
 
     with pytest.raises(ValueError, match="unknown formal metric code"):
         build_metric("invented_metric", value=1, status="derived")
+
+
+def test_confidence_normalization_handles_labels_numbers_and_missing_values():
+    assert confidence_value("high") == 0.9
+    assert confidence_value("MEDIUM") == 0.7
+    assert confidence_value(1.4) == 1.0
+    assert confidence_value(-0.2) == 0.0
+    assert confidence_value(None) is None
+    assert confidence_value("unsupported", default=0.5) == 0.5
