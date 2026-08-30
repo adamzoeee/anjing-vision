@@ -91,5 +91,26 @@ def test_compose_report_without_points_pdf_only():
         out_dir=out_dir,
     )
     assert report.pdf_path and Path(report.pdf_path).is_file()
+
+
+def test_compose_report_accepts_formal_assessment_as_single_source():
+    out_dir = Path(r"E:\anlingzhijing\anjing-vision\.recovery\report-composer-formal")
+    assessment = {
+        "official": True,
+        "overall": {"status": "evaluated", "score": 75.0, "coverage_percent": 100.0},
+        "category_scores": {},
+        "risks": [],
+        "advice": [],
+        "confidence": {},
+        "key_metrics": [],
+        "not_evaluable": [],
+    }
+    report = compose_report(
+        title="正式评估", score=1.0, risks=SAMPLE_RISKS, measures={}, advice=["旧建议"],
+        points=None, out_dir=out_dir, risk_assessment=assessment,
+    )
+    assert report.status == "ok"
+    assert report.pdf_path and Path(report.pdf_path).is_file()
+    assert report.risk_geometries == []
     assert report.risk_images == []
     assert report.status == "ok"
