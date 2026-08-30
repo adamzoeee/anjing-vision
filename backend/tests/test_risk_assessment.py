@@ -2,6 +2,7 @@ import pytest
 
 from pipeline.risk_assessment import (
     RiskResult,
+    build_risk_assessment,
     collect_specific_advice,
     evaluate_formal_metrics,
     rank_top_risks,
@@ -221,3 +222,32 @@ def test_actionable_risks_have_specific_deduplicated_advice():
 def test_top_risk_limit_is_validated():
     with pytest.raises(ValueError, match="must not be negative"):
         rank_top_risks([], limit=-1)
+
+
+def test_unified_assessment_contains_required_backend_sections():
+    assessment = build_risk_assessment(_payload({
+        "door_width": 0.75, "main_passage_width": 0.85,
+    }))
+    assert set(assessment) == {
+        "schema_version", "official", "overall", "category_scores", "weights",
+        "key_metrics", "metrics", "paths", "risks", "top_risks", "not_evaluable",
+        "advice", "confidence", "provenance", "scope",
+    }
+    assert assessment["official"] is True
+    assert assessment["overall"]["score"] is not None
+    assert assessment["weights"] == {"mobility": 0.4, "layout": 0.3, "usage_safety": 0.3}
+    assert assessment["scope"]["backend_source_of_truth"] is True
+
+
+def test_unified_assessment_exposes_not_evaluable_without_fake_score():
+    payload = _payload()
+    payload["metrics"] = [
+        unavailable_metric(item["metric_code"], "missing", source="fixture")
+        if item["metric_code"] == "door_width" else item
+        for item in payload["metrics"]
+    ]
+    assessment = build_risk_assessment(payload)
+    assert assessment["overall"]["status"] == "insufficient_data"
+    assert assessment["overall"]["score"] is None
+    assert {item["metric_code"] for item in assessment["not_evaluable"]} == {"door_width"}
+    assert all(item["risk_level"] is None for item in assessment["not_evaluable"])
