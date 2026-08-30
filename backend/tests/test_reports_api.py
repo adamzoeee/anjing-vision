@@ -72,6 +72,38 @@ def test_get_report_prefers_rebuilt_measurements_file(client):
     assert len(body["measures"]["reference_measurements"]) == 2
 
 
+def test_get_report_prefers_backend_formal_risk_assessment_file(client):
+    import json
+    from app.config import get_settings
+
+    headers = _auth(client, email="fresh-risk@x.com")
+    _pid, scan_id, _rid = _make_report(client, headers)
+    post = Path(get_settings().data_dir) / "work" / str(scan_id) / "postprocess"
+    post.mkdir(parents=True, exist_ok=True)
+    formal = {
+        "schema_version": "1.0", "official": True,
+        "overall": {"status": "evaluated", "score": 78.5},
+        "risks": [{
+            "risk_code": "door_width_medium", "risk_type": "mobility",
+            "risk_name": "门净宽风险", "metric_code": "door_width",
+            "measured_value": 0.85, "unit": "m", "threshold": {},
+            "position": {"object_id": "door_01"}, "risk_level": "medium",
+            "confidence": 0.9, "reason": "threshold", "advice": "调整门口净宽",
+            "assessment_status": "evaluated", "related_object_ids": ["door_01"],
+            "related_path_id": None,
+        }],
+        "advice": ["调整门口净宽"],
+    }
+    (post / "risk_assessment.json").write_text(
+        json.dumps(formal, ensure_ascii=False), encoding="utf-8",
+    )
+    body = client.get(f"/api/reports/scans/{scan_id}", headers=headers).json()
+    assert body["score"] == 78.5
+    assert body["risks"][0]["risk_level"] == "medium"
+    assert body["advice"] == ["调整门口净宽"]
+    assert body["measures"]["risk_assessment"]["official"] is True
+
+
 def test_report_annotation_image_is_served_with_organization_auth(client, tmp_path):
     from app.config import get_settings
     from app.db import SessionLocal

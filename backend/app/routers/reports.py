@@ -121,13 +121,26 @@ def get_report(
         measures["calibration_quality"] = current_measurements.get("scale", {})
     else:
         current_measurements = measures.get("measurements") or {}
+    risk_path = (
+        Path(settings.data_dir) / "work" / str(scan_id) / "postprocess" / "risk_assessment.json"
+    )
+    if risk_path.is_file():
+        current_assessment = json.loads(risk_path.read_text(encoding="utf-8"))
+        measures["risk_assessment"] = current_assessment
+        score = (current_assessment.get("overall") or {}).get("score")
+        risks = current_assessment.get("risks") or []
+        advice = current_assessment.get("advice") or []
+    else:
+        score = scan.report.score
+        risks = scan.report.risks
+        advice = scan.report.advice
     calibrated = 3 if current_measurements.get("metric_scale_available") else scan.report.calibrated
     return {
         "scan_id": scan_id,
-        "score": scan.report.score,
-        "risks": scan.report.risks,
+        "score": score,
+        "risks": risks,
         "measures": measures,
-        "advice": scan.report.advice,
+        "advice": advice,
         "images": [f"/static/{scan_id}/{Path(img).name}" for img in scan.report.images],
         "preview": scan.report.preview,
         "calibrated": calibrated,
