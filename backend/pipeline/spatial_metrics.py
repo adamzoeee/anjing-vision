@@ -226,3 +226,32 @@ def extract_passage_width_metrics(passage: dict, foundation: dict | None = None)
             **common,
         ),
     ]
+
+
+def extract_door_width_metric(measurements: dict, passage: dict) -> dict:
+    """Select the route entrance door and expose its verified clear width."""
+    route = passage.get("primary_route") or {}
+    entrance_id = route.get("from")
+    doors = [item for item in measurements.get("openings", []) if item.get("type") == "door"]
+    selected = next((item for item in doors if item.get("id") == entrance_id), None)
+    if selected is None and len(doors) == 1:
+        selected = doors[0]
+    source = {"artifact": "measurements.json", "field": "openings[*].width_m"}
+    if selected is None:
+        return unavailable_metric("door_width", "entrance_door_missing", source=source)
+    if selected.get("measurement_status") != "verified":
+        return unavailable_metric(
+            "door_width", selected.get("reason") or "door_measurement_not_verified",
+            source=source,
+        )
+    width = selected.get("width_m")
+    if width is None:
+        return unavailable_metric("door_width", "door_width_unavailable", source=source)
+    return build_metric(
+        "door_width",
+        value=round(float(width), 3),
+        status="measured",
+        confidence=confidence_value(selected.get("confidence")),
+        position={"object_id": selected.get("id"), "center_xyz": selected.get("center")},
+        source=source,
+    )
