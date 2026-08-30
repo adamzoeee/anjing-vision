@@ -106,3 +106,28 @@ def test_build_pdf_report_metric_calibrated():
         out_path=out_dir / "metric.pdf",
     )
     assert Path(pdf_path).is_file()
+
+
+def test_build_pdf_report_consumes_formal_assessment_as_source_of_truth():
+    out_dir = Path(r"E:\anlingzhijing\anjing-vision\.recovery\pdf-test")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    assessment = {
+        "official": True,
+        "overall": {"status": "evaluated", "score": 73.2, "coverage_percent": 86.7},
+        "risks": [{
+            "risk_code": "door_width_medium", "risk_type": "mobility",
+            "risk_name": "门净宽风险", "metric_code": "door_width",
+            "measured_value": 0.85, "unit": "m", "threshold": {},
+            "position": None, "risk_level": "medium", "confidence": 0.9,
+            "reason": "threshold", "advice": "调整门口净宽",
+            "assessment_status": "evaluated", "related_object_ids": [],
+            "related_path_id": None,
+        }],
+        "advice": ["调整门口净宽"],
+    }
+    pdf_path = build_pdf_report(
+        title="正式评估", score=99.0, risks=[], measures={}, advice=[], images=[],
+        out_path=out_dir / "formal.pdf", risk_assessment=assessment,
+    )
+    assert Path(pdf_path).is_file()
+    assert Path(pdf_path).stat().st_size > 500
