@@ -9,6 +9,7 @@ from pipeline.spatial_metrics import (
     confidence_value,
     extract_passage_width_metrics,
     extract_door_width_metric,
+    extract_entrance_space_metric,
     metric_record,
     unavailable_metric,
 )
@@ -212,3 +213,21 @@ def test_unverified_door_width_remains_not_evaluable():
     assert metric["value"] is None
     assert metric["status"] == "not_evaluable"
     assert metric["reason"] == "door_measurement_not_verified"
+
+
+def test_entrance_space_uses_door_connected_walkable_area():
+    metric = extract_entrance_space_metric({
+        "primary_route": {"from": "door_01"},
+        "walkable_regions": {"door_connected_area_m2": 2.163},
+    })
+    assert metric["value"] == 2.163
+    assert metric["unit"] == "m²"
+    assert metric["position"] == {"object_id": "door_01"}
+
+
+def test_entrance_space_requires_explicit_door_and_area():
+    assert extract_entrance_space_metric({})["status"] == "not_evaluable"
+    metric = extract_entrance_space_metric({
+        "walkable_regions": {"door_connected_area_m2": 4.0},
+    })
+    assert metric["reason"] == "entrance_door_missing"
