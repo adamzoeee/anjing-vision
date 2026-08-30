@@ -158,6 +158,86 @@ void main() {
     expect(find.text('暂无标注图'), findsOneWidget);
   });
 
+  testWidgets('正式评估显示覆盖率分类分数Top风险和不可评估项', (tester) async {
+    final highRisk = {
+      'risk_code': 'door_width_high',
+      'risk_type': 'mobility',
+      'risk_name': '门净宽风险',
+      'metric_code': 'door_width',
+      'measured_value': 0.75,
+      'unit': 'm',
+      'threshold': {},
+      'position': {'object_id': 'door_01'},
+      'risk_level': 'high',
+      'confidence': 0.9,
+      'reason': 'threshold',
+      'advice': '评估扩宽门洞。',
+      'assessment_status': 'evaluated',
+      'related_object_ids': ['door_01'],
+      'related_path_id': null,
+    };
+    final unknownRisk = {
+      'risk_code': 'activity_area_not_evaluable',
+      'risk_type': 'layout',
+      'risk_name': '活动区域面积风险',
+      'metric_code': 'activity_area',
+      'measured_value': null,
+      'unit': 'm²',
+      'threshold': {},
+      'position': null,
+      'risk_level': null,
+      'confidence': null,
+      'reason': 'explicit_activity_anchor_missing',
+      'advice': null,
+      'assessment_status': 'not_evaluable',
+      'related_object_ids': [],
+      'related_path_id': null,
+    };
+    adapter.onGet(
+      '/api/reports/scans/12',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 72.5,
+        'risks': [highRisk, unknownRisk],
+        'advice': ['评估扩宽门洞。'],
+        'images': [],
+        'calibrated': 3,
+        'measures': {
+          'risk_assessment': {
+            'official': true,
+            'overall': {
+              'status': 'evaluated',
+              'score': 72.5,
+              'confidence': 0.82,
+              'coverage_percent': 86.7,
+            },
+            'category_scores': {
+              'mobility': {'score': 68.0, 'weight': 0.4},
+              'layout': {'score': 75.0, 'weight': 0.3},
+              'usage_safety': {'score': 76.0, 'weight': 0.3},
+            },
+            'top_risks': [highRisk],
+            'not_evaluable': [unknownRisk],
+          },
+        },
+      }),
+    );
+    await tester.pumpWidget(reportApp());
+    await tester.pumpAndSettle();
+    expect(find.text('正式空间风险评估'), findsOneWidget);
+    expect(find.text('评估覆盖率：86.7%'), findsOneWidget);
+    expect(find.text('综合置信度：82.0%'), findsOneWidget);
+    expect(find.text('通行能力（40.0%）'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('风险项（1）'), 300, scrollable: find.byType(Scrollable),
+    );
+    expect(find.text('门净宽风险'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('不可评估项（1）'), 300, scrollable: find.byType(Scrollable),
+    );
+    expect(find.text('活动区域面积风险'), findsOneWidget);
+  });
+
   testWidgets('未知风险状态使用帮助图标而不是正常图标', (tester) async {
     adapter.onGet(
       '/api/reports/scans/12',
