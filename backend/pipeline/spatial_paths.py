@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pipeline.spatial_metrics import confidence_value
+from pipeline.spatial_metrics import build_metric, confidence_value, unavailable_metric
 
 
 PATH_STATUSES = frozenset({"complete", "blocked", "not_evaluable"})
@@ -78,3 +78,39 @@ def normalize_paths(passage: dict, foundation: dict) -> list[dict[str, Any]]:
             "reason": reason,
         })
     return paths
+
+
+def extract_path_metrics(paths: list[dict]) -> list[dict]:
+    """Build formal mobility metrics from the normalized primary route."""
+    path = next((item for item in paths if item.get("path_id") != "entrance_to_activity"), None)
+    source = {"artifact": "normalized_paths", "field": "primary_path"}
+    if path is None or path.get("status") == "not_evaluable":
+        reason = (path or {}).get("reason") or "primary_path_unavailable"
+        return [
+            unavailable_metric(code, reason, source=source)
+            for code in ("path_length", "path_continuity", "path_obstruction")
+        ]
+    position = {
+        "path_id": path.get("path_id"),
+        "bottleneck": path.get("bottleneck"),
+    }
+    confidence = path.get("confidence")
+    metrics = []
+    if path.get("length_m") is None:
+        metrics.append(unavailable_metric("path_length", "path_length_unavailable", source=source))
+    else:
+        metrics.append(build_metric(
+            "path_length", value=round(float(path["length_m"]), 3), status="derived",
+            confidence=confidence, position=position, source=source,
+        ))
+    metrics.extend([
+        build_metric(
+            "path_continuity", value=bool(path.get("continuous")), status="derived",
+            confidence=confidence, position=position, source=source,
+        ),
+        build_metric(
+            "path_obstruction", value=bool(path.get("obstructed")), status="derived",
+            confidence=confidence, position=position, source=source,
+        ),
+    ])
+    return metrics
