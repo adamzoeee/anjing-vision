@@ -4,11 +4,17 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from pipeline.rules import FORMAL_RULES
+from pipeline.rules import FORMAL_CATEGORY_WEIGHTS, FORMAL_RULES
 
 
 RISK_LEVELS = frozenset({"low", "medium", "high"})
 ASSESSMENT_STATUSES = frozenset({"evaluated", "not_evaluable"})
+RISK_LEVEL_SCORES = {"low": 100.0, "medium": 60.0, "high": 20.0}
+CORE_REQUIRED_METRICS = frozenset({
+    "main_passage_width", "door_width", "path_continuity",
+    "furniture_spacing", "bed_surrounding_space",
+})
+MINIMUM_OFFICIAL_COVERAGE = 0.60
 
 
 @dataclass(frozen=True)
@@ -145,3 +151,50 @@ def evaluate_formal_metrics(metric_payload: dict) -> list[dict]:
             **common,
         ))
     return results
+
+
+def score_formal_risks(risks: list[dict]) -> dict:
+    """Compute the single official 40/30/30 score or report insufficient data."""
+    evaluated = [item for item in risks if item.get("assessment_status") == "evaluated"]
+    coverage_ratio = len(evaluated) / len(risks) if risks else 0.0
+    evaluated_codes = {item["metric_code"] for item in evaluated}
+    missing_core = sorted(CORE_REQUIRED_METRICS - evaluated_codes)
+    category_scores = {}
+    missing_categories = []
+    for category, weight in FORMAL_CATEGORY_WEIGHTS.items():
+        category_items = [item for item in risks if item.get("risk_type") == category]
+        known = [item for item in category_items if item.get("assessment_status") == "evaluated"]
+        if known:
+            score = round(sum(RISK_LEVEL_SCORES[item["risk_level"]] for item in known) / len(known), 1)
+            status = "evaluated"
+        else:
+            score = None
+            status = "not_evaluable"
+            missing_categories.append(category)
+        category_scores[category] = {
+            "score": score,
+            "weight": weight,
+            "status": status,
+            "evaluated_count": len(known),
+            "not_evaluable_count": len(category_items) - len(known),
+            "total_count": len(category_items),
+        }
+    insufficient = (
+        not risks
+        or coverage_ratio < MINIMUM_OFFICIAL_COVERAGE
+        or bool(missing_core)
+        or bool(missing_categories)
+    )
+    overall_score = None if insufficient else round(sum(
+        category_scores[category]["score"] * weight
+        for category, weight in FORMAL_CATEGORY_WEIGHTS.items()
+    ), 1)
+    return {
+        "status": "insufficient_data" if insufficient else "evaluated",
+        "score": overall_score,
+        "weights": FORMAL_CATEGORY_WEIGHTS,
+        "category_scores": category_scores,
+        "missing_core_metrics": missing_core,
+        "missing_categories": missing_categories,
+        "minimum_coverage_percent": MINIMUM_OFFICIAL_COVERAGE * 100,
+    }

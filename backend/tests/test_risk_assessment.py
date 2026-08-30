@@ -1,6 +1,11 @@
 import pytest
 
-from pipeline.risk_assessment import RiskResult, evaluate_formal_metrics, risk_result
+from pipeline.risk_assessment import (
+    RiskResult,
+    evaluate_formal_metrics,
+    risk_result,
+    score_formal_risks,
+)
 from pipeline.spatial_metrics import METRIC_DEFINITION_BY_CODE, build_metric, unavailable_metric
 
 
@@ -108,3 +113,50 @@ def test_rule_boundaries_are_not_triggered_by_equality_for_directional_threshold
     risks = evaluate_formal_metrics(_payload({"door_width": 0.8, "crowding": 0.6}))
     assert next(item for item in risks if item["metric_code"] == "door_width")["risk_level"] == "medium"
     assert next(item for item in risks if item["metric_code"] == "crowding")["risk_level"] == "medium"
+
+
+def test_official_score_is_100_when_every_metric_is_low_risk():
+    result = score_formal_risks(evaluate_formal_metrics(_payload()))
+    assert result["status"] == "evaluated"
+    assert result["score"] == 100.0
+    assert result["weights"] == {"mobility": 0.4, "layout": 0.3, "usage_safety": 0.3}
+
+
+def test_official_score_applies_category_weights():
+    risks = evaluate_formal_metrics(_payload({
+        "main_passage_width": 0.7,
+        "furniture_spacing": 0.2,
+        "bed_surrounding_space": 0.3,
+    }))
+    result = score_formal_risks(risks)
+    expected = round(sum(
+        result["category_scores"][category]["score"] * weight
+        for category, weight in result["weights"].items()
+    ), 1)
+    assert result["score"] == expected
+    assert result["score"] < 100
+
+
+def test_missing_core_metric_makes_overall_score_null():
+    payload = _payload()
+    payload["metrics"] = [
+        unavailable_metric(item["metric_code"], "missing", source="fixture")
+        if item["metric_code"] == "door_width" else item
+        for item in payload["metrics"]
+    ]
+    result = score_formal_risks(evaluate_formal_metrics(payload))
+    assert result["status"] == "insufficient_data"
+    assert result["score"] is None
+    assert result["missing_core_metrics"] == ["door_width"]
+
+
+def test_noncore_unknown_is_excluded_without_becoming_safe():
+    payload = _payload()
+    payload["metrics"] = [
+        unavailable_metric(item["metric_code"], "missing", source="fixture")
+        if item["metric_code"] == "activity_area" else item
+        for item in payload["metrics"]
+    ]
+    result = score_formal_risks(evaluate_formal_metrics(payload))
+    assert result["status"] == "evaluated"
+    assert result["category_scores"]["layout"]["not_evaluable_count"] == 1
