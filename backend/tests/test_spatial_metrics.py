@@ -29,6 +29,7 @@ def test_formal_metric_catalog_has_all_required_categories_and_codes():
     assert METRIC_DEFINITION_BY_CODE["door_width"] == {
         "category": "mobility", "name": "门净宽", "unit": "m",
     }
+    assert METRIC_DEFINITION_BY_CODE["bed_surrounding_space"]["unit"] == "m"
 
 
 def test_spatial_metric_serializes_all_contract_fields():
