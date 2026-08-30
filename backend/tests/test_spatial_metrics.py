@@ -5,6 +5,7 @@ from pipeline.spatial_metrics import (
     METRIC_DEFINITIONS,
     SpatialMetric,
     build_metric,
+    build_metric_payload,
     confidence_value,
     metric_record,
     unavailable_metric,
@@ -111,3 +112,37 @@ def test_confidence_normalization_handles_labels_numbers_and_missing_values():
     assert confidence_value(-0.2) == 0.0
     assert confidence_value(None) is None
     assert confidence_value("unsupported", default=0.5) == 0.5
+
+
+def _complete_unavailable_metric_set():
+    return [
+        unavailable_metric(code, "fixture_missing", source="fixture")
+        for code in METRIC_DEFINITION_BY_CODE
+    ]
+
+
+def test_metric_payload_groups_complete_catalog_and_reports_coverage():
+    metrics = _complete_unavailable_metric_set()
+    metrics[0] = build_metric(
+        metrics[0]["metric_code"], value=0.8, status="derived",
+        confidence=0.9, source="fixture",
+    )
+    payload = build_metric_payload(metrics)
+    assert payload["schema_version"] == "1.0"
+    assert payload["coverage"] == {
+        "evaluable_count": 1,
+        "not_evaluable_count": 14,
+        "total_count": 15,
+        "percent": 6.7,
+    }
+    assert {item["category"] for item in payload["metrics"]} == {
+        "mobility", "layout", "usage_safety",
+    }
+
+
+def test_metric_payload_rejects_missing_or_duplicate_codes():
+    metrics = _complete_unavailable_metric_set()
+    with pytest.raises(ValueError, match="missing formal metric codes"):
+        build_metric_payload(metrics[:-1])
+    with pytest.raises(ValueError, match="duplicate metric codes"):
+        build_metric_payload([*metrics, metrics[0]])
