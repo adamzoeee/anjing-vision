@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   // 先于 viewer.js 声明模式，防止点云查看器自动启动造成双加载
-  window.__PREVIEW_MODE__ = 'gaussian';
+  window.__PREVIEW_MODE__ = 'gaussian'; // 仅用于阻止点云脚本抢先自启动；正式默认是 structure。
 
   var params = new URLSearchParams(location.search);
   var scanId = params.get('scan');
@@ -207,7 +207,7 @@
     $('btn-mode-points').style.display = 'none';
     window.__PREVIEW_MODE__ = 'points';
     showOverlay();
-    setStatus('加载几何点云（调试模式）', 0.05);
+    setStatus('加载真实场景（稠密点云）', 0.05);
     window.__startPointsViewer__();
   }
 
@@ -216,8 +216,10 @@
     if (!manifestUrl) { fail('缺少 scan 参数'); return; }
     $('btn-mode-points').addEventListener('click', startPoints);
     $('btn-mode-gaussian').addEventListener('click', function () {
+      // 强制带时间戳重载：同 URL 直接赋值在浏览器里是空操作，会导致“点了没反应”
       var next = new URL(location.href);
       next.searchParams.delete('mode');
+      next.searchParams.set('_t', String(Date.now()));
       location.href = next.toString();
     });
     if (requestedMode === 'points') {
@@ -230,6 +232,11 @@
       if (!resp.ok) throw new Error('清单加载失败 HTTP ' + resp.status + '（请确认已登录）');
       var manifest = await resp.json();
       $('scene-title').textContent = manifest.name || ('扫描 #' + scanId);
+      if (manifest.structure && window.__startStructureViewer__) {
+        setStatus('加载空间结构', 0.35);
+        await window.__startStructureViewer__(manifest, token);
+        return;
+      }
       if (manifest.gaussian_ply) {
         await startGaussian(manifest);
       } else {

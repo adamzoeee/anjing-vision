@@ -87,6 +87,16 @@ class _ReportPageState extends State<ReportPage> {
                     ),
                   ),
                   const SizedBox(height: 16),
+                  ..._keyMetricsSection(context, r),
+                  const SizedBox(height: 16),
+                  _structurePlanSection(context, api, widget.scan.id),
+                  const SizedBox(height: 16),
+                  _passagePlanSection(context, api, widget.scan.id),
+                  const SizedBox(height: 16),
+                  _metricFrameworkSection(context, r),
+                  const SizedBox(height: 16),
+                  ..._furnitureDetailSection(context, r),
+                  const SizedBox(height: 16),
                   Text('尺寸信息', style: Theme.of(context).textTheme.titleMedium),
                   ..._measurementTiles(r),
                   const SizedBox(height: 16),
@@ -94,16 +104,16 @@ class _ReportPageState extends State<ReportPage> {
                   ..._qualityTiles(r),
                   const SizedBox(height: 16),
                   Text(
-                    '风险项（${r.risks.length}）',
+                    '风险项（${_visibleRisks(r).length}）',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
-                  if (r.risks.isEmpty)
+                  if (_visibleRisks(r).isEmpty)
                     const Padding(
                       padding: EdgeInsets.all(8),
                       child: Text('未检测到风险项'),
                     )
                   else
-                    ...r.risks.map((risk) => RiskCard(risk: risk)),
+                    ..._visibleRisks(r).map((risk) => RiskCard(risk: risk)),
                   const SizedBox(height: 16),
                   Text('改造建议', style: Theme.of(context).textTheme.titleMedium),
                   if (r.advice.isEmpty)
@@ -129,28 +139,20 @@ class _ReportPageState extends State<ReportPage> {
                     width: double.infinity,
                     color: Colors.black,
                     alignment: Alignment.center,
-                    child: r.previewPly == null
+                    child: r.previewViewer == null
                         ? const Text(
                             '暂无 3D 预览',
                             style: TextStyle(color: Colors.white54),
                           )
                         : ElevatedButton.icon(
                             onPressed: () {
-                              final gaussianPly = r.previewGaussianPly;
-                              final cameras = r.previewCameras;
-                              final model = Uri.encodeComponent(
-                                '/static/${r.scanId}/preview/'
-                                '${gaussianPly ?? r.previewPly}',
-                              );
+                              // 新 3D 预览：高密度点云 + SpatialLM 墙/门/窗/家具框
                               final token = Uri.encodeComponent(
                                 api.token ?? '',
                               );
-                              final cameraQuery = cameras == null
-                                  ? ''
-                                  : '&cameras=${Uri.encodeComponent('/static/${r.scanId}/preview/$cameras')}';
-                              final previewUrl = gaussianPly == null
-                                  ? '${api.dio.options.baseUrl}/preview/?ply=$model&token=$token'
-                                  : '${api.dio.options.baseUrl}/preview/gaussian.html?url=$model$cameraQuery#token=$token';
+                              final previewUrl =
+                                  '${api.dio.options.baseUrl}${r.previewViewer}'
+                                  '?scan=${r.scanId}&token=$token';
                               openPreview(context, previewUrl);
                             },
                             icon: const Icon(Icons.view_in_ar),
@@ -179,6 +181,287 @@ class _ReportPageState extends State<ReportPage> {
               ),
             ),
     );
+  }
+
+  Widget _structurePlanSection(BuildContext context, ApiClient api, int scanId) {
+    final url =
+        '${api.dio.options.baseUrl}/api/preview/$scanId/structure_plan.png?v=20260822';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('2.5D 结构图（按测量结果绘制）',
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.network(
+            url,
+            headers: api.authorizationHeaders,
+            errorBuilder: (context, error, stack) => const Padding(
+              padding: EdgeInsets.all(12),
+              child: Text('结构图尚未生成'),
+            ),
+            loadingBuilder: (context, child, progress) => progress == null
+                ? child
+                : const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _passagePlanSection(BuildContext context, ApiClient api, int scanId) {
+    final url =
+        '${api.dio.options.baseUrl}/api/preview/$scanId/passage_plan.png?v=20260822';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('通行图（结构平面 + 门→床路径与通道净宽标注）',
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.network(
+            url,
+            headers: api.authorizationHeaders,
+            errorBuilder: (context, error, stack) => const Padding(
+              padding: EdgeInsets.all(12),
+              child: Text('通行图尚未生成'),
+            ),
+            loadingBuilder: (context, child, progress) => progress == null
+                ? child
+                : const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 风险项过滤：门槛/台阶/坡度/不平/卫生间门口暂不评估，先不显示。
+  static const Set<String> _hiddenRiskCodes = {
+    'threshold', 'stairs', 'slope', 'uneven', 'bathroom_door',
+  };
+
+  List<Risk> _visibleRisks(Report report) =>
+      report.risks.where((risk) => !_hiddenRiskCodes.contains(risk.code)).toList();
+
+  /// 评价框架（只改指标名称与分组，不评分——评分由下一步实现）：
+  /// 通行能力 40% / 空间布局 30% / 使用安全 30%。
+  Widget _metricFrameworkSection(BuildContext context, Report report) {
+    final raw = report.measures['measurements'];
+    final m = raw is Map ? raw as Map : const {};
+    final passage = m['passage'] is Map ? m['passage'] as Map : const {};
+    final walkable = m['walkable_area_m2'];
+    final openings = m['openings'] is List ? m['openings'] as List : const [];
+    final door = openings.whereType<Map>().where((o) => o['type'] == 'door').firstOrNull;
+    final distances = m['distances'] is List ? m['distances'] as List : const [];
+    final nearest = distances.whereType<Map>().firstWhere(
+          (d) => (d['clearance_m'] is num) && (d['clearance_m'] as num) > 0.001,
+          orElse: () => distances.isNotEmpty ? distances.first as Map : const {},
+        );
+    String fmt(Object? value) =>
+        value is num ? value.toStringAsFixed(2) : (value?.toString() ?? '—');
+
+    final groups = <(String, String, List<String>)>[
+      ('通行能力', '占比 40%', [
+        if (passage['passage_width_m'] != null)
+          '通道宽度 ${fmt(passage['passage_width_m'])}m',
+        if (passage['path_length_m'] != null)
+          '主要路径长度 ${fmt(passage['path_length_m'])}m',
+        if (door != null) '门口空间：门宽 ${fmt(door['width_m'])}m',
+        '路径阻碍情况：通道障碍物',
+      ]),
+      ('空间布局', '占比 30%', [
+        if (nearest.isNotEmpty)
+          '家具间距（最近）${fmt(nearest['clearance_m'])}m',
+        if (walkable is num) '活动面积 ${walkable.toStringAsFixed(1)}m²',
+        '拥挤程度',
+      ]),
+      ('使用安全', '占比 30%', [
+        '床周围空间',
+        '主要活动区域',
+      ]),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('空间评价框架（待评分）',
+            style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        ...groups.map((group) {
+          final (name, weight, items) = group;
+          return Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('$name（$weight）',
+                      style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 6),
+                  ...items.map((item) => Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text('· $item',
+                            style: Theme.of(context).textTheme.bodyMedium),
+                      )),
+                ],
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  List<Widget> _keyMetricsSection(BuildContext context, Report report) {
+    final raw = report.measures['measurements'];
+    final m = raw is Map ? raw : const {};
+    final room = m['room'] is Map ? m['room'] as Map : const {};
+    final scale = m['scale'] is Map ? m['scale'] as Map : const {};
+    final openings = m['openings'] is List ? m['openings'] as List : const [];
+    final door = openings.whereType<Map>().where((o) => o['type'] == 'door').firstOrNull;
+    final validation = m['quality'] is Map && m['quality']['validation'] is List
+        ? m['quality']['validation'] as List
+        : const [];
+    if (m.isEmpty && validation.isEmpty) return const [];
+
+    String fmt(Object? value) =>
+        value is num ? '${value.toStringAsFixed(2)}m' : (value?.toString() ?? '—');
+    final rows = <Widget>[
+      if (room.isNotEmpty)
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.home_outlined),
+          title: const Text('房间尺寸'),
+          subtitle: Text(
+            '长 ${fmt(room['length_m'])} × 宽 ${fmt(room['width_m'])} × 高 ${fmt(room['height_m'])}',
+          ),
+        ),
+      if (door != null)
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.door_front_door_outlined),
+          title: const Text('门洞净尺寸'),
+          subtitle: Text('宽 ${fmt(door['width_m'])} × 高 ${fmt(door['height_m'])}'),
+        ),
+    ];
+    final passage = m['passage'] is Map ? m['passage'] as Map : const {};
+    final walkable = m['walkable_area_m2'];
+    if (passage.isNotEmpty && passage['status'] == 'ok') {
+      rows.add(ListTile(
+        dense: true,
+        leading: const Icon(Icons.directions_walk_outlined),
+        title: const Text('通道与可行走'),
+        subtitle: Text(
+          '最窄通道 ${fmt(passage['passage_width_m'])} · 门→床路径 ${fmt(passage['path_length_m'])}'
+          '${walkable is num ? ' · 可行走 ${walkable.toStringAsFixed(1)}m²' : ''}',
+        ),
+      ));
+    }
+    final distances = m['distances'] is List ? m['distances'] as List : const [];
+    if (distances.isNotEmpty) {
+      final nearest = distances.whereType<Map>().firstWhere(
+            (d) => (d['clearance_m'] is num) && (d['clearance_m'] as num) > 0.001,
+            orElse: () => distances.first as Map,
+          );
+      rows.add(ListTile(
+        dense: true,
+        leading: const Icon(Icons.square_foot_outlined),
+        title: const Text('家具净距（最近）'),
+        subtitle: Text(
+          '${(nearest['between'] as List).join(' ↔ ')}：'
+          '${(nearest['clearance_m'] as num).toStringAsFixed(2)}m',
+        ),
+      ));
+    }
+    final scaleOk = scale['status']?.toString() == 'metric_references';
+    rows.add(ListTile(
+      dense: true,
+      leading: Icon(scaleOk ? Icons.straighten : Icons.info_outline,
+          color: scaleOk ? Colors.green : Colors.orange),
+      title: Text(scaleOk ? '真实尺寸标定：成功' : '真实尺寸标定：未完成'),
+      subtitle: Text(
+        scaleOk
+            ? '比例系数 ${((scale['scale'] ?? 0) as num).toStringAsFixed(3)}'
+                '（参考值换算一致度 ${(((scale['max_relative_disagreement'] ?? 0) as num) * 100).toStringAsFixed(1)}%）'
+            : (scale['reason']?.toString() ?? '需要至少两个一致的实测参考尺寸'),
+      ),
+    ));
+    if (validation.isNotEmpty) {
+      rows.add(Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Text('测量验收（未参与标定的真值对比）',
+            style: Theme.of(context).textTheme.labelLarge),
+      ));
+      for (final check in validation.whereType<Map>()) {
+        final labels = {'bed': '床', 'table': '书桌', 'door': '门'};
+        final dims = {'length': '长', 'width': '宽', 'height': '高'};
+        final name =
+            '${labels[check['object_type']?.toString()] ?? check['object_type']}'
+            '${dims[check['dimension']?.toString()] ?? check['dimension']}';
+        final predicted = check['predicted_m'];
+        final actual = check['meters'];
+        final rel = check['relative_error'];
+        rows.add(ListTile(
+          dense: true,
+          title: Text(name),
+          subtitle: Text(
+            predicted == null
+                ? '未测出'
+                : '预测 ${(predicted as num).toStringAsFixed(2)}m / 实测 '
+                    '${(actual as num).toStringAsFixed(2)}m / 误差 '
+                    '${((rel as num) * 100).toStringAsFixed(1)}%',
+          ),
+        ));
+      }
+    }
+    return rows;
+  }
+
+  List<Widget> _furnitureDetailSection(BuildContext context, Report report) {
+    final raw = report.measures['measurements'];
+    final m = raw is Map ? raw : const {};
+    final objects = m['objects'] is List ? m['objects'] as List : const [];
+    if (objects.isEmpty) return const [];
+    const cn = {
+      'bed': '床', 'wardrobe': '衣柜', 'sofa': '沙发', 'desk': '书桌', 'table': '桌子',
+      'cabinet': '柜子', 'bookshelf': '书架', 'chair': '椅子', 'stool': '凳子',
+      'small_table': '小桌', 'chandelier': '吊灯', 'carpet': '地毯', 'curtain': '窗帘',
+    };
+    const nums = ['一', '二', '三', '四', '五', '六'];
+    final counted = <String, int>{};
+    final tiles = <Widget>[
+      Text('家具详情', style: Theme.of(context).textTheme.titleMedium),
+    ];
+    for (final item in objects.whereType<Map>()) {
+      String fmt(Object? value) =>
+          value is num ? value.toStringAsFixed(2) : (value?.toString() ?? '—');
+      final type = item['type']?.toString() ?? item['label']?.toString() ?? '物品';
+      final index = counted[type] ?? 0;
+      counted[type] = index + 1;
+      final name = '${cn[type] ?? type}${nums[index < nums.length ? index : nums.length - 1]}';
+      final confidence = item['confidence']?.toString() ?? 'unknown';
+      final confText = switch (confidence) {
+        'high' => '高',
+        'medium' => '中',
+        _ => '低',
+      };
+      tiles.add(ListTile(
+        dense: true,
+        leading: const Icon(Icons.chair_outlined),
+        title: Text('$name：长 ${fmt(item['length_m'])}m × 宽 '
+            '${fmt(item['width_m'])}m × 高 ${fmt(item['height_m'])}m'),
+        subtitle: Text('测量置信度：$confText'),
+      ));
+    }
+    return tiles;
   }
 
   List<Widget> _measurementTiles(Report report) {
@@ -440,7 +723,7 @@ class _ReportPageState extends State<ReportPage> {
         leading: const Icon(Icons.timer_outlined),
         title: Text('实际迭代 ${training['iterations'] ?? '未知'}'),
         subtitle: Text(
-          seconds is num ? '3DGS ${seconds.toStringAsFixed(1)} 秒' : '训练耗时未知',
+          seconds is num ? '重建 ${seconds.toStringAsFixed(1)} 秒' : '重建耗时未知',
         ),
       ),
     ];
