@@ -21,6 +21,7 @@ backend/**/*.sqlite3
 backend/.pytest_cache/
 /.pytest-*/
 backend/pytest-cache-files-*/
+backend/.pytest-*/
 backend/.risk-render-test/
 backend/.cache/
 backend/.coverage
@@ -28,6 +29,7 @@ backend/htmlcov/
 backend/.mypy_cache/
 backend/.ruff_cache/
 backend/*.log
+app/*.log
 backend/tmp/
 backend/temp/
 out-demo/
