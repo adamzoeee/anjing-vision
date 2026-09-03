@@ -85,6 +85,7 @@ class Report {
   final String? previewPly;
   final String? previewGaussianPly;
   final String? previewCameras;
+  final String? previewViewer;
   final Map<String, dynamic> measures;
   Report({
     required this.scanId,
@@ -96,6 +97,7 @@ class Report {
     this.previewPly,
     this.previewGaussianPly,
     this.previewCameras,
+    this.previewViewer,
     this.measures = const {},
   });
   factory Report.fromJson(Map<String, dynamic> j) => Report(
@@ -110,6 +112,7 @@ class Report {
         ?.toString(),
     previewCameras: (j['preview'] as Map<String, dynamic>?)?['cameras']
         ?.toString(),
+    previewViewer: (j['preview'] as Map<String, dynamic>?)?['viewer']?.toString(),
     measures: Map<String, dynamic>.from(j['measures'] as Map? ?? const {}),
   );
 }

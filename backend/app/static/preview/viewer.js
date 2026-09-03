@@ -18,8 +18,8 @@
   var manifestUrl = scanId ? '/api/preview/' + encodeURIComponent(scanId) + '/manifest.json' : null;
 
   var scene, camera, renderer, controls, worldGroup;
-  var pcdGroup, boxesGroup;
-  var layerState = { pcd: true, walls: true, doors: true, windows: true, objects: true, labels: true };
+  var pcdGroup, boxesGroup, repairGroup;
+  var layerState = { pcd: true, repair: true, walls: true, doors: true, windows: true, objects: true, labels: true };
   var boxGroups = { walls: null, doors: null, windows: null, objects: null };
   var labelGroup = null;
   var pointMaterial = null;
@@ -43,27 +43,45 @@
   function createRenderer() {
     // 只创建一个 canvas/context。连续 new WebGLRenderer 会额外消耗浏览器的
     // WebGL context 配额，多次打开预览后可能直接得到“Error creating WebGL context”。
-    var canvas = document.createElement('canvas');
-    var attributes = {
-      alpha: false,
-      antialias: false,
-      depth: true,
-      stencil: false,
-      powerPreference: 'high-performance',
-      failIfMajorPerformanceCaveat: false,
-      preserveDrawingBuffer: false,
-    };
-    var context = canvas.getContext('webgl2', attributes) ||
-      canvas.getContext('webgl', attributes) ||
-      canvas.getContext('experimental-webgl', attributes);
-    if (!context) {
+    // 高性能显卡上下文不可用时，依次降级到默认/低功耗适配器。每次使用
+    // 新 canvas，避免同一 canvas 首次创建失败后被浏览器锁定。
+    var attempts = [
+      { type: 'webgl2', powerPreference: 'high-performance' },
+      { type: 'webgl2', powerPreference: 'default' },
+      { type: 'webgl', powerPreference: 'default' },
+      { type: 'webgl', powerPreference: 'low-power' },
+      { type: 'experimental-webgl', powerPreference: 'default' },
+    ];
+    var canvas = null;
+    var context = null;
+    var selectedPowerPreference = 'default';
+    for (var i = 0; i < attempts.length && !context; i++) {
+      canvas = document.createElement('canvas');
+      var attempt = attempts[i];
+      var attributes = {
+        alpha: false,
+        antialias: false,
+        depth: true,
+        stencil: false,
+        powerPreference: attempt.powerPreference,
+        failIfMajorPerformanceCaveat: false,
+        preserveDrawingBuffer: false,
+      };
+      try {
+        context = canvas.getContext(attempt.type, attributes);
+        if (context) selectedPowerPreference = attempt.powerPreference;
+      } catch (_) {
+        context = null;
+      }
+    }
+    if (!context || !canvas) {
       throw new Error('浏览器未能创建 WebGL 上下文。请关闭旧的 3D 预览标签页后重试；若仍失败，请在 Edge/Chrome 设置中开启图形加速并重启浏览器');
     }
     return new THREE.WebGLRenderer({
       canvas: canvas,
       context: context,
       antialias: false,
-      powerPreference: 'high-performance',
+      powerPreference: selectedPowerPreference,
     });
   }
 
@@ -137,8 +155,12 @@
     worldGroup.add(axes);
 
     pcdGroup = new THREE.Group();
+    repairGroup = new THREE.Group();
     boxesGroup = new THREE.Group();
     labelGroup = new THREE.Group();
+    // 补底层先加入场景并位于真实观测点后方。它只负责遮住黑色背景，
+    // 不写回 PLY、不参与尺寸/结构/风险计算。
+    worldGroup.add(repairGroup);
     worldGroup.add(pcdGroup);
     worldGroup.add(boxesGroup);
     worldGroup.add(labelGroup);
@@ -320,6 +342,106 @@
     feedChunk();
   }
 
+  /* ---------------- 开顶房间补底层 ---------------- */
+  function roomMaterial(color) {
+    return new THREE.MeshBasicMaterial({
+      color: color,
+      side: THREE.DoubleSide,
+      // 补底只填背景像素，不得遮挡随后绘制的真实观测点。
+      depthWrite: false,
+      transparent: false,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
+    });
+  }
+
+  function addRepairBox(size, center, rotationDeg, material) {
+    if (size[0] <= 0.005 || size[1] <= 0.005 || size[2] <= 0.005) return;
+    var mesh = new THREE.Mesh(new THREE.BoxGeometry(size[0], size[1], size[2]), material);
+    mesh.position.set(center[0], center[1], center[2]);
+    mesh.rotation.z = THREE.MathUtils.degToRad(rotationDeg || 0);
+    mesh.renderOrder = -20;
+    repairGroup.add(mesh);
+  }
+
+  function localOpening(wall, opening) {
+    var theta = THREE.MathUtils.degToRad(wall.rotation_z_deg || 0);
+    var dx = opening.center[0] - wall.center[0];
+    var dy = opening.center[1] - wall.center[1];
+    return {
+      minX: dx * Math.cos(theta) + dy * Math.sin(theta) - opening.size[0] / 2,
+      maxX: dx * Math.cos(theta) + dy * Math.sin(theta) + opening.size[0] / 2,
+      minZ: Math.max(0, opening.center[2] - opening.size[2] / 2),
+      maxZ: opening.center[2] + opening.size[2] / 2,
+    };
+  }
+
+  function addWallWithOpenings(wall, openings, material) {
+    var length = wall.size[0];
+    var height = wall.size[2];
+    var half = length / 2;
+    var holes = openings.map(function (opening) { return localOpening(wall, opening); }).map(function (hole) {
+      hole.minX = Math.max(-half, hole.minX);
+      hole.maxX = Math.min(half, hole.maxX);
+      hole.maxZ = Math.min(height, hole.maxZ);
+      return hole;
+    }).filter(function (hole) { return hole.maxX > hole.minX && hole.maxZ > hole.minZ; });
+    var xs = [-half, half], zs = [0, height];
+    holes.forEach(function (hole) {
+      xs.push(hole.minX, hole.maxX);
+      zs.push(hole.minZ, hole.maxZ);
+    });
+    xs.sort(function (a, b) { return a - b; });
+    zs.sort(function (a, b) { return a - b; });
+    xs = xs.filter(function (value, index) { return index === 0 || Math.abs(value - xs[index - 1]) > 0.002; });
+    zs = zs.filter(function (value, index) { return index === 0 || Math.abs(value - zs[index - 1]) > 0.002; });
+    var theta = THREE.MathUtils.degToRad(wall.rotation_z_deg || 0);
+    for (var xi = 0; xi < xs.length - 1; xi++) {
+      for (var zi = 0; zi < zs.length - 1; zi++) {
+        var x0 = xs[xi], x1 = xs[xi + 1], z0 = zs[zi], z1 = zs[zi + 1];
+        var cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+        var inHole = holes.some(function (hole) {
+          return cx > hole.minX && cx < hole.maxX && cz > hole.minZ && cz < hole.maxZ;
+        });
+        if (inHole) continue;
+        addRepairBox(
+          [x1 - x0, 0.025, z1 - z0],
+          [wall.center[0] + cx * Math.cos(theta), wall.center[1] + cx * Math.sin(theta), cz],
+          wall.rotation_z_deg || 0,
+          material
+        );
+      }
+    }
+  }
+
+  function addOpenTopRepairSurface(structure) {
+    if (!structure || !structure.room || !repairGroup) return;
+    var wallMaterial = roomMaterial(0xd7d6d0);
+    var floorMaterial = roomMaterial(0xc5b9a5);
+    var polygon = structure.room.floor_polygon || [];
+    if (polygon.length >= 3) {
+      var shape = new THREE.Shape();
+      polygon.forEach(function (point, index) {
+        if (index === 0) shape.moveTo(point[0], point[1]);
+        else shape.lineTo(point[0], point[1]);
+      });
+      shape.closePath();
+      var floor = new THREE.Mesh(new THREE.ShapeGeometry(shape), floorMaterial);
+      floor.position.z = -0.018;
+      floor.renderOrder = -20;
+      repairGroup.add(floor);
+    }
+    var openings = [];
+    (structure.doors || []).forEach(function (item) { openings.push(item); });
+    (structure.windows || []).forEach(function (item) { openings.push(item); });
+    (structure.walls || []).forEach(function (wall) {
+      addWallWithOpenings(wall, openings.filter(function (opening) {
+        return Number(opening.wall_id) === Number(wall.id);
+      }), wallMaterial);
+    });
+  }
+
   /* ---------------- 3D 框叠加 ---------------- */
   var KIND_STYLE = {
     wall: { color: 0x4f9cf9, label: false },
@@ -379,10 +501,12 @@
   /* ---------------- UI ---------------- */
   function bindUI(alignment) {
     pointMaterial = new THREE.PointsMaterial({
-      size: 0.02, vertexColors: true, sizeAttenuation: true
+      // 保持原始点云的细粒度显示。圆形贴图会把相邻点视觉上糊成斑块，
+      // 尤其会夸大多视角边缘处的轻微误差。
+      size: 0.0175, vertexColors: true, sizeAttenuation: true
     });
     $('point-size').addEventListener('input', function () {
-      if (pointMaterial) pointMaterial.size = parseFloat(this.value) * 0.012;
+      if (pointMaterial) pointMaterial.size = parseFloat(this.value) * 0.005;
     });
     $('ck-pcd').addEventListener('change', function () { layerState.pcd = this.checked; pcdGroup.visible = this.checked; });
     $('ck-walls').addEventListener('change', function () { layerState.walls = this.checked; boxGroups.walls.visible = this.checked; });

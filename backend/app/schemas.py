@@ -109,3 +109,11 @@ class ScanOut(BaseModel):
     message: str
     capture_type: Literal["video", "photos"]
     reference_measurements: list[ReferenceMeasurement] = Field(default_factory=list)
+
+    @field_validator("progress", mode="before")
+    @classmethod
+    def _coerce_progress(cls, value: object) -> object:
+        # 兼容历史数据中可能残留的小数进度（如 25.4），统一取整
+        if isinstance(value, float):
+            return int(round(value))
+        return value

@@ -14,17 +14,16 @@ celery==5.4.*
 redis==5.*
 minio==7.2.*
 httpx==0.27.*
-# 管道
+# 管道（稠密重建在独立 slam3r conda 环境；空间理解在独立 spatiallm conda 环境）
 numpy<2.3
 scipy
 opencv-python
 pillow
 tqdm
 open3d==0.19.*
-pycolmap==4.1.1
-gsplat==1.5.3
 torch==2.7.*
 torchvision==0.22.*
 segment-anything==1.0
 transformers==4.48.*
+python-dotenv
 psycopg2-binary==2.9.*

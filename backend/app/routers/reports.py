@@ -72,6 +72,28 @@ def get_preview_model(
     return FileResponse(model_path)
 
 
+@assets_router.get("/{scan_id}/pdf", response_class=FileResponse)
+def get_report_pdf(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    """Serve the generated PDF report to the scan's organization."""
+    scan = db.get(Scan, scan_id)
+    if scan is None or scan.project.org_id != org_id or scan.report is None:
+        raise HTTPException(404, "PDF 报告不存在")
+    pdf_root = (Path(settings.data_dir) / "work" / str(scan_id) / "report").resolve()
+    pdf_path = pdf_root / "report.pdf"
+    if not pdf_path.is_file():
+        raise HTTPException(404, "PDF 报告尚未生成")
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename=f"anjing_report_{scan_id}.pdf",
+    )
+
+
 @router.get("/scans/{scan_id}")
 def get_report(scan_id: int, db: Session = Depends(get_db), org_id: int = Depends(get_org_scope)):
     scan = db.get(Scan, scan_id)

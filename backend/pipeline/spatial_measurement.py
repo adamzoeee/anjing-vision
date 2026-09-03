@@ -477,10 +477,12 @@ def _label_detection_hits(
         shape = tuple(int(value) for value in image_shape)
         uv, depth, valid = project_points_to_view(points[flat_ids], camera, image_shape=shape)
         valid_ids = np.where(valid)[0]
+        height, width = shape
         pixel_x = np.zeros(len(valid), dtype=int)
         pixel_y = np.zeros(len(valid), dtype=int)
-        pixel_x[valid_ids] = np.rint(uv[valid_ids, 0]).astype(int)
-        pixel_y[valid_ids] = np.rint(uv[valid_ids, 1]).astype(int)
+        # rint 会把边界像素舍入到图像尺寸外，必须 clamp。
+        pixel_x[valid_ids] = np.clip(np.rint(uv[valid_ids, 0]).astype(int), 0, width - 1)
+        pixel_y[valid_ids] = np.clip(np.rint(uv[valid_ids, 1]).astype(int), 0, height - 1)
         for detection_index, detection in enumerate(record.get("detections") or []):
             if str(detection.get("label", "")) != label:
                 continue
@@ -1143,6 +1145,9 @@ def rescale_semantic_space(space: dict, scale: float, *, unit: str = "meters") -
                 room_dims["dimensions"][key] = float(value) * scale
     result["unit"] = unit
     result["metric_available"] = unit == "meters"
+    statistics = result.get("statistics")
+    if isinstance(statistics, dict):
+        statistics["metric_available"] = unit == "meters"
     return result
 
 

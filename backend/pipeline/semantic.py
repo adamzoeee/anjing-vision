@@ -558,10 +558,12 @@ def fuse_multiview_semantics(
         valid_ids = np.where(valid)[0]
         # ``uv`` 对无效点使用 NaN。不能先对整列 astype(int)，否则即使随后
         # 用 np.where 丢弃无效值，NumPy 仍会先转换 NaN 并产生运行时警告。
+        # rint 会把边界像素（如 1919.6）舍入到图像尺寸外，必须 clamp。
+        height, width = image_shape
         pixel_x = np.zeros(point_count, dtype=int)
         pixel_y = np.zeros(point_count, dtype=int)
-        pixel_x[valid_ids] = np.rint(uv[valid_ids, 0]).astype(int)
-        pixel_y[valid_ids] = np.rint(uv[valid_ids, 1]).astype(int)
+        pixel_x[valid_ids] = np.clip(np.rint(uv[valid_ids, 0]).astype(int), 0, width - 1)
+        pixel_y[valid_ids] = np.clip(np.rint(uv[valid_ids, 1]).astype(int), 0, height - 1)
         for detection in detections:
             mask = np.asarray(detection.get("mask"), dtype=bool)
             if mask.shape != image_shape or not bool(np.any(mask)):
@@ -651,3 +653,33 @@ def model_runtime_info() -> dict:
         "sam_device": sam_device,
         "sam_eval": bool(_sam_predictor is not None and not _sam_predictor.model.training),
     }
+
+
+def preflight_semantic_models() -> list[str]:
+    """重建前预检语义模型可用性；返回问题描述列表（空 = 就绪）。
+
+    只检查权重文件与缓存是否存在，不实际加载模型（避免提前占用显存/时间）。
+    """
+    problems: list[str] = []
+    sam_checkpoint = Path(
+        os.environ.get("SAM_CHECKPOINT", _BACKEND_ROOT / "models" / "sam_vit_h_4b8939.pth")
+    )
+    if not sam_checkpoint.is_file() or sam_checkpoint.stat().st_size < 1e8:
+        problems.append(
+            f"SAM 权重缺失或损坏：{sam_checkpoint}"
+            "（运行 backend/scripts/download_models.py 下载）"
+        )
+    cache_dir = Path(os.environ.get("HF_HOME", _BACKEND_ROOT / ".cache" / "huggingface"))
+    dino_dir = cache_dir / "models--IDEA-Research--grounding-dino-base"
+    has_weights = False
+    if dino_dir.is_dir():
+        for snapshot in dino_dir.glob("snapshots/*/model.safetensors"):
+            if snapshot.is_file() and snapshot.stat().st_size > 1e8:
+                has_weights = True
+                break
+    if not has_weights:
+        problems.append(
+            f"GroundingDINO 模型未缓存：{dino_dir}"
+            "（首次运行需要联网下载约 900MB，或预先放入缓存目录）"
+        )
+    return problems
