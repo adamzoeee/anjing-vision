@@ -19,10 +19,6 @@ def _dims_from_size(item: dict, *, opening: bool = False) -> dict:
     if opening:
         return {"width_m": max(size[0], size[1]), "height_m": size[2]}
     horizontal = sorted(size[:2], reverse=True)
-    label = str(item.get("label", ""))
-    if label == "desk":
-        # 书桌“宽”指贴墙/前沿方向的长边（用户卷尺量法）
-        return {"length_m": horizontal[1], "width_m": horizontal[0], "height_m": size[2]}
     return {"length_m": horizontal[0], "width_m": horizontal[1], "height_m": size[2]}
 
 
@@ -164,6 +160,45 @@ def build_measurements(
         "room": room_result, "openings": openings, "objects": objects,
         "passage": {"status": "deferred_until_object_geometry_verified"},
         "quality": {"validation": checks},
+    }
+
+
+def build_risk_inputs(measurements: dict) -> dict:
+    """把正式测量转换为带资格状态的旧规则输入，不把未知项当安全。"""
+    door = next((
+        item for item in measurements.get("openings", [])
+        if item.get("type") == "door"
+        and item.get("measurement_status", "verified") == "verified"
+        and item.get("risk_eligibility", "eligible") == "eligible"
+    ), None)
+    passage = measurements.get("passage") or {}
+    passage_eligible = (
+        passage.get("status") == "ok"
+        and passage.get("risk_eligibility", "eligible") == "eligible"
+    )
+    passage_reason = passage.get("reason", "insufficient_measurement_confidence")
+    eligibility = {
+        "door_width": {"status": "eligible" if door else "not_evaluable",
+                       "reason": None if door else "insufficient_measurement_confidence"},
+        **{
+            code: {"status": "eligible" if passage_eligible else "not_evaluable",
+                   "reason": None if passage_eligible else passage_reason}
+            for code in ("passage_width", "threshold", "stairs", "slope")
+        },
+        "uneven": {"status": "not_evaluable", "reason": "measurement_unavailable"},
+        "obstacle": {"status": "not_evaluable", "reason": "spatial_obstacle_validation_unavailable"},
+        "bathroom_door": {"status": "not_evaluable", "reason": "bathroom_door_not_identified"},
+    }
+    return {
+        "door_width_m": door.get("width_m") if door else None,
+        "passage_width_m": passage.get("passage_width_m") if passage_eligible else None,
+        "threshold_m": passage.get("threshold_m") if passage_eligible else None,
+        "stairs_exist": passage.get("stairs_exist") if passage_eligible else None,
+        "slope": passage.get("slope") if passage_eligible else None,
+        "uneven_m": None,
+        "obstacles_in_passage": None,
+        "bathroom_door_m": None,
+        "risk_eligibility": eligibility,
     }
 
 

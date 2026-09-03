@@ -50,6 +50,75 @@ def _load_json(path: Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _new_object_diagnostic(index: int, candidate: dict) -> dict:
+    """建立只读候选追踪记录，不影响结构接受/拒绝决策。"""
+    source_label = str(candidate.get("category", "unknown")).lower().strip()
+    normalized_label = LABEL_ALIASES.get(source_label, source_label)
+    return {
+        "candidate_id": f"candidate_{index:03d}",
+        "instance_id": None,
+        "spatiallm_candidate": {
+            "label": source_label, "normalized_label": normalized_label,
+            "center": candidate.get("center"), "size": candidate.get("size"),
+            "rotation_z_deg": candidate.get("rotation_z_deg", 0.0),
+            "confidence": candidate.get("confidence", candidate.get("score")),
+        },
+        "semantic_evidence": {
+            "status": "not_run", "support_views": 0,
+            "groundingdino_detections": 0, "sam_masks": 0,
+            "semantic_votes": {}, "semantic_point_count": 0,
+        },
+        "geometry": {
+            "points_before_filter": 0, "points_after_filter": 0,
+            "cluster_count": 0, "selected_cluster_points": 0,
+            "bbox": None, "geometry_confidence": None,
+        },
+        "video_geometry_evidence": {"status": "not_available", "support_views": 0},
+        "status": "pending", "reject_reason": None,
+    }
+
+
+def _write_object_diagnostics(
+    path: Path, records: list[dict], accepted: list[dict], rejected: list[dict],
+    *, video_fusion_status: str, source_files: dict,
+) -> dict:
+    """记录最终几何决策，仅写诊断文件，不改点云或结构。"""
+    by_id = {record["candidate_id"]: record for record in records}
+    for item in accepted:
+        record = by_id.get(item.get("_diagnostic_id"))
+        if record is None:
+            continue
+        record.update(instance_id=item.get("instance_id"), status="accepted", reject_reason=None)
+        record["geometry"]["bbox"] = {
+            "center": item.get("center"), "size": item.get("size"),
+            "rotation_z_deg": item.get("rotation_z_deg", 0.0),
+        }
+        record["geometry"]["geometry_confidence"] = item.get("geometry_confidence")
+    for item in rejected:
+        record = by_id.get(item.get("_diagnostic_id"))
+        if record is None:
+            continue
+        record.update(
+            instance_id=item.get("instance_id"), status="rejected",
+            reject_reason=item.get("rejection_reason", "geometry_not_verified"),
+        )
+    payload = {
+        "schema_version": 1, "diagnostic_stage": "geometry_baseline",
+        "decision_behavior": "observational_only", "semantic_pipeline_status": "not_run",
+        "video_fusion_status": video_fusion_status, "source": source_files,
+        "counts": {
+            "candidates": len(records),
+            "accepted": sum(record["status"] == "accepted" for record in records),
+            "rejected": sum(record["status"] == "rejected" for record in records),
+        },
+        "objects": records,
+    }
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return payload
+
+
 def _room_bounds(points: np.ndarray, alignment: dict) -> tuple[np.ndarray, np.ndarray, float]:
     ext = alignment.get("extents_m") or {}
     lo = np.array([
@@ -603,7 +672,7 @@ def _geometric_obstacles(points: np.ndarray, objects: list[dict], lo: np.ndarray
             continue
         center = (low + high) / 2
         obstacles.append({
-            "instance_id": "", "label": "box", "center": center.tolist(),
+            "instance_id": "", "label": "unknown_obstacle", "center": center.tolist(),
             "size": size.tolist(), "rotation_z_deg": 0.0,
             "footprint": [[low[0], low[1]], [high[0], low[1]], [high[0], high[1]], [low[0], high[1]]],
             "height_range_m": [float(low[2]), float(high[2])],

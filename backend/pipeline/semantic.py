@@ -48,6 +48,17 @@ _model_lock = threading.Lock()
 _sam_inference_lock = threading.Lock()
 
 
+def release_semantic_models() -> None:
+    """释放语义模型和 CUDA 缓存，供结构化证据链安全复用。"""
+    global _sam_predictor, _dino_model, _dino_processor
+    with _model_lock:
+        _sam_predictor = None
+        _dino_model = None
+        _dino_processor = None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
 def build_prompt(texts: Iterable[str] | None = None) -> str:
     """构造 GroundingDINO 单图文本提示；短语以句点分隔。"""
     prompts = [str(text).strip().rstrip(".") for text in (texts or PROMPT_OBJECTS)]
