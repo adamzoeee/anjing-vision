@@ -27,8 +27,22 @@ from reportlab.platypus import (
 
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 
-LEVEL_COLOR = {"red": "#E5484D", "yellow": "#F5B301", "green": "#2E9E5B", "unknown": "#8B98B5"}
-LEVEL_TEXT = {"red": "高风险", "yellow": "中风险", "green": "正常", "unknown": "未评估"}
+LEVEL_COLOR = {
+    "high": "#E5484D", "medium": "#F5B301", "low": "#2E9E5B",
+    "red": "#E5484D", "yellow": "#F5B301", "green": "#2E9E5B",
+    "unknown": "#8B98B5", None: "#8B98B5",
+}
+LEVEL_TEXT = {
+    "high": "高风险", "medium": "中风险", "low": "低风险",
+    "red": "高风险", "yellow": "中风险", "green": "正常",
+    "unknown": "未评估", None: "未评估",
+}
+
+CATEGORY_TEXT = {
+    "mobility": "通行能力",
+    "layout": "空间布局",
+    "usage_safety": "使用安全",
+}
 
 RISK_NAMES = {
     "door_width": "门宽", "passage_width": "通道净宽", "threshold": "门槛高度",
@@ -66,7 +80,9 @@ def _style() -> dict:
     }
 
 
-def _score_color(score: float) -> str:
+def _score_color(score: float | None) -> str:
+    if score is None:
+        return LEVEL_COLOR["unknown"]
     if score >= 80:
         return LEVEL_COLOR["green"]
     if score >= 60:
@@ -84,15 +100,60 @@ def _fmt(value, unit: str = "") -> str:
     return str(value)
 
 
+def _formal_summary_rows(assessment: dict) -> list[list[str]]:
+    """Build stable PDF rows for the official category score summary."""
+    rows = [["评估维度", "得分", "权重", "覆盖情况"]]
+    for code in ("mobility", "layout", "usage_safety"):
+        category = (assessment.get("category_scores") or {}).get(code) or {}
+        score = category.get("score")
+        weight = category.get("weight")
+        rows.append([
+            CATEGORY_TEXT[code],
+            f"{score:.1f}" if isinstance(score, (int, float)) else "无法评分",
+            f"{float(weight) * 100:.0f}%" if isinstance(weight, (int, float)) else "—",
+            f"{category.get('evaluated_count', 0)}/{category.get('total_count', 0)}",
+        ])
+    return rows
+
+
+def _formal_metric_rows(assessment: dict) -> list[list[str]]:
+    """Format backend-owned key metrics without recalculating any value."""
+    rows = [["关键指标", "测量值", "证据状态"]]
+    for metric in assessment.get("key_metrics") or []:
+        status = metric.get("status", "not_evaluable")
+        value = (
+            _fmt(metric.get("value"), metric.get("unit", ""))
+            if status != "not_evaluable" else "—"
+        )
+        rows.append([
+            metric.get("name") or metric.get("metric_code") or "未命名指标",
+            value,
+            "已评估" if status != "not_evaluable" else f"无法评估：{metric.get('reason') or '证据不足'}",
+        ])
+    return rows
+
+
+def _formal_not_evaluable_rows(assessment: dict) -> list[list[str]]:
+    """Expose missing evidence explicitly instead of treating it as safe."""
+    return [
+        [
+            item.get("risk_name") or item.get("metric_code") or "未命名指标",
+            item.get("reason") or "证据不足",
+        ]
+        for item in (assessment.get("not_evaluable") or [])
+    ]
+
+
 def build_pdf_report(
     *,
     title: str,
-    score: float,
+    score: float | None,
     risks: list[dict],
     measures: dict,
     advice: list[str],
     images: list[str],
     out_path: str | Path,
+    risk_assessment: dict | None = None,
 ) -> str:
     """生成 PDF 报告，返回输出路径。
 
@@ -100,6 +161,11 @@ def build_pdf_report(
     measures: 管道 measures dict。
     images: 标注图 PNG 路径列表（嵌入报告）。
     """
+    if risk_assessment and risk_assessment.get("official") is True:
+        score = (risk_assessment.get("overall") or {}).get("score")
+        risks = list(risk_assessment.get("risks") or [])
+        advice = list(risk_assessment.get("advice") or [])
+        measures = {**measures, "risk_assessment": risk_assessment}
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     styles = _style()
@@ -114,13 +180,18 @@ def build_pdf_report(
     story.append(Paragraph("适老空间安全评估报告", styles["subtitle"]))
 
     # 评分
-    completeness = (measures.get("assessment_completeness") or {}).get("percent")
+    formal = measures.get("risk_assessment") or {}
+    formal_overall = formal.get("overall") or {}
+    completeness = formal_overall.get("coverage_percent")
+    if completeness is None:
+        completeness = (measures.get("assessment_completeness") or {}).get("percent")
     calibration = measures.get("calibration_quality") or {}
     calib_method = calibration.get("method", "—")
     scale_status = measures.get("scale_status", "relative")
     scale_text = "米制（已标定）" if scale_status == "metric_references" else "相对尺度"
+    score_text = f"{score:.1f}" if score is not None else "无法评分"
     story.append(Paragraph(
-        f'<font size="46" color="{_score_color(score)}"><b>{score:.1f}</b></font>',
+        f'<font size="46" color="{_score_color(score)}"><b>{score_text}</b></font>',
         styles["score"],
     ))
     story.append(Paragraph(
@@ -130,6 +201,45 @@ def build_pdf_report(
         styles["score"],
     ))
     story.append(Spacer(1, 4 * mm))
+
+    confidence = measures.get("confidence_summary") or {}
+    measurement_coverage = confidence.get("measurement_coverage") or measures.get("measurement_coverage") or {}
+    risk_coverage = confidence.get("risk_assessment_coverage") or measures.get("risk_assessment_coverage") or {}
+    story.append(Paragraph(
+        "重建状态：{}　语义状态：{}　尺度状态：{}　可靠测量：{}/{}　正式风险评估：{}/{}".format(
+            confidence.get("reconstruction_status", "—"), confidence.get("semantic_status", "—"),
+            confidence.get("scale_status", scale_status), measurement_coverage.get("verified_count", 0),
+            measurement_coverage.get("total_count", 0), risk_coverage.get("evaluated_count", 0),
+            risk_coverage.get("total_count", 0),
+        ), styles["small"],
+    ))
+
+    if formal:
+        story.append(Paragraph("正式评估维度", styles["h2"]))
+        summary_table = Table(
+            [[Paragraph(str(cell), styles["small"]) for cell in row]
+             for row in _formal_summary_rows(formal)],
+            colWidths=[55 * mm, 35 * mm, 35 * mm, 43 * mm],
+        )
+        summary_table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D8DEE9")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F6FA")),
+            ("ALIGN", (1, 1), (-1, -1), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(summary_table)
+        formal_confidence = formal.get("confidence") or {}
+        evidence_confidence = formal_confidence.get("evidence_confidence")
+        adjusted_confidence = formal_confidence.get("coverage_adjusted_confidence")
+        story.append(Paragraph(
+            "证据置信度：{}　覆盖修正置信度：{}".format(
+                f"{evidence_confidence * 100:.1f}%" if isinstance(evidence_confidence, (int, float)) else "—",
+                f"{adjusted_confidence * 100:.1f}%" if isinstance(adjusted_confidence, (int, float)) else "—",
+            ),
+            styles["small"],
+        ))
 
     # 测量值表
     story.append(Paragraph("一、空间测量", styles["h2"]))
@@ -158,19 +268,43 @@ def build_pdf_report(
     ]))
     story.append(measure_table)
 
+    if formal.get("key_metrics"):
+        story.append(Paragraph("关键评估指标", styles["h2"]))
+        key_metric_table = Table(
+            [[Paragraph(str(cell), styles["small"]) for cell in row]
+             for row in _formal_metric_rows(formal)],
+            colWidths=[56 * mm, 42 * mm, 70 * mm],
+        )
+        key_metric_table.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#D8DEE9")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F6FA")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(key_metric_table)
+
+    unavailable_rows = _formal_not_evaluable_rows(formal)
+    if unavailable_rows:
+        story.append(Paragraph("证据不足项", styles["h2"]))
+        for name, reason in unavailable_rows:
+            story.append(Paragraph(f"• {name}：{reason}", styles["body"]))
+
     # 风险表
     story.append(Paragraph("二、风险项", styles["h2"]))
     header = ["风险项", "测量值", "等级"]
     risk_rows = [header]
     for risk in risks:
-        level = risk.get("level", "unknown")
-        measure = risk.get("measure")
+        level = risk.get("risk_level", risk.get("level", "unknown"))
+        measure = risk.get("measured_value", risk.get("measure"))
         if isinstance(measure, list):
             measure_text = "、".join(item.get("label", str(item)) for item in measure) if measure else "无"
         else:
             measure_text = _fmt(measure, risk.get("unit", ""))
+        if risk.get("assessment_status") == "not_evaluable":
+            measure_text = f"无法评估：{risk.get('reason') or '数据不足'}"
         risk_rows.append([
-            RISK_NAMES.get(risk.get("code"), risk.get("name", "?")),
+            risk.get("risk_name") or RISK_NAMES.get(risk.get("code"), risk.get("name", "?")),
             measure_text,
             LEVEL_TEXT.get(level, level),
         ])
@@ -187,7 +321,7 @@ def build_pdf_report(
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]
     for row_index, risk in enumerate(risks, start=1):
-        level = risk.get("level", "unknown")
+        level = risk.get("risk_level", risk.get("level", "unknown"))
         style_cmds.append(
             ("BACKGROUND", (2, row_index), (2, row_index), colors.HexColor(LEVEL_COLOR.get(level, "#8B98B5")))
         )

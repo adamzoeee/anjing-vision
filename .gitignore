@@ -19,6 +19,9 @@ backend/**/*.sqlite
 backend/*.sqlite3
 backend/**/*.sqlite3
 backend/.pytest_cache/
+/.pytest-*/
+backend/pytest-cache-files-*/
+backend/.risk-render-test/
 backend/.cache/
 backend/.coverage
 backend/htmlcov/
@@ -39,3 +42,4 @@ app/android/.gradle/
 app/android/local.properties
 app/ios/Pods/
 downloads/
+debug_assets/**/*.mp4

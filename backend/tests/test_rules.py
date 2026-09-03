@@ -1,4 +1,34 @@
-from pipeline.rules import evaluate_risks, compute_score
+from pipeline.rules import FORMAL_CATEGORY_WEIGHTS, FORMAL_RULES, evaluate_risks, compute_score
+
+
+def test_formal_rules_are_versioned_centralized_and_traceable():
+    required_fields = {
+        "rule_code", "metric_code", "category", "threshold", "direction",
+        "severity", "advice_template", "reference", "version",
+    }
+    assert FORMAL_RULES
+    assert all(set(rule) == required_fields for rule in FORMAL_RULES)
+    assert len({rule["rule_code"] for rule in FORMAL_RULES}) == len(FORMAL_RULES)
+    assert {rule["category"] for rule in FORMAL_RULES} == {
+        "mobility", "layout", "usage_safety",
+    }
+    assert {rule["severity"] for rule in FORMAL_RULES} == {"medium", "high"}
+    assert all(rule["reference"] == "reference_pending" for rule in FORMAL_RULES)
+
+
+def test_every_formal_metric_has_a_rule():
+    from pipeline.spatial_metrics import METRIC_DEFINITION_BY_CODE
+
+    assert {rule["metric_code"] for rule in FORMAL_RULES} == set(METRIC_DEFINITION_BY_CODE)
+
+
+def test_official_category_weights_are_exactly_40_30_30():
+    assert FORMAL_CATEGORY_WEIGHTS == {
+        "mobility": 0.40,
+        "layout": 0.30,
+        "usage_safety": 0.30,
+    }
+    assert sum(FORMAL_CATEGORY_WEIGHTS.values()) == 1.0
 
 
 def test_evaluate_risks_door_width():
@@ -67,7 +97,8 @@ def test_compute_score_uses_worst_risk_when_category_has_mixed_levels():
     })
 
     assert detail["parts"]["通行性"] == 0.0
-    assert score == 60.0
+    # 未评估类别不再按“安全”补满分；仅对实际评估类别归一化。
+    assert score == 0.0
 
 
 def test_compute_score_excludes_unknown_and_reports_assessment_completeness():
@@ -86,7 +117,7 @@ def test_compute_score_excludes_unknown_and_reports_assessment_completeness():
     score, detail = compute_score(measures)
 
     assert score == 100.0
-    assert detail["parts"] == {"通行性": 100.0, "跌倒风险": 100.0, "无障碍": 100.0}
+    assert detail["parts"] == {"通行性": 100.0, "跌倒风险": 100.0, "无障碍": None}
     assert detail["assessment_completeness"] == {
         "known_count": 5,
         "unknown_count": 2,
@@ -96,6 +127,10 @@ def test_compute_score_excludes_unknown_and_reports_assessment_completeness():
         "bathroom_door",
         "obstacle",
     }
+    assert all(
+        risk["assessment_status"] == "not_evaluable"
+        for risk in detail["risks"] if risk["level"] == "unknown"
+    )
 
 
 def test_compute_score_all_unknown_returns_none_instead_of_fake_perfect():

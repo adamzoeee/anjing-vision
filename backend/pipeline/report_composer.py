@@ -89,7 +89,7 @@ def build_risk_geometries(
 def compose_report(
     *,
     title: str,
-    score: float,
+    score: float | None,
     risks: list[dict],
     measures: dict,
     advice: list[str],
@@ -98,6 +98,8 @@ def compose_report(
     colors: np.ndarray | None = None,
     semantic_objects: dict | None = None,
     n_views: int = 3,
+    risk_assessment: dict | None = None,
+    images: list[str] | None = None,
 ) -> ComposedReport:
     """一次生成：3D 风险标注图 + PDF 报告。
 
@@ -108,10 +110,14 @@ def compose_report(
     out_dir.mkdir(parents=True, exist_ok=True)
     composed = ComposedReport()
 
+    if risk_assessment and risk_assessment.get("official") is True:
+        score = (risk_assessment.get("overall") or {}).get("score")
+        risks = list(risk_assessment.get("risks") or [])
+        advice = list(risk_assessment.get("advice") or [])
     geometries = build_risk_geometries(risks, measures, semantic_objects)
     composed.risk_geometries = geometries
 
-    risk_images: list[str] = []
+    risk_images: list[str] = list(images or [])
     if points is not None and len(np.asarray(points).reshape(-1, 3)) >= 10:
         try:
             risk_images = render_risk_annotations(
@@ -135,6 +141,7 @@ def compose_report(
             advice=advice,
             images=risk_images,
             out_path=out_dir / "report.pdf",
+            risk_assessment=risk_assessment,
         )
         composed.pdf_path = pdf_path
     except ImportError as exc:

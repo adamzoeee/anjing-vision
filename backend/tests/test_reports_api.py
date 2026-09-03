@@ -42,6 +42,68 @@ def test_get_report(client):
     assert body["calibrated"] == 1
 
 
+def test_get_report_prefers_rebuilt_measurements_file(client):
+    import json
+    from app.config import get_settings
+    from app.db import SessionLocal
+    from app.models import Scan
+
+    headers = _auth(client, email="fresh-measurements@x.com")
+    _pid, scan_id, _rid = _make_report(client, headers)
+    db = SessionLocal()
+    scan = db.get(Scan, scan_id)
+    scan.reference_measurements = [
+        {"object_type": "bed", "dimension": "length", "meters": 2.05},
+        {"object_type": "door", "dimension": "height", "meters": 2.10},
+    ]
+    db.commit()
+    db.close()
+    path = Path(get_settings().data_dir) / "work" / str(scan_id) / "postprocess" / "measurements.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "metric_scale_available": True,
+        "scale": {"status": "metric_references", "forced_estimate": True},
+        "room": {"length_m": 3.2, "width_m": 2.5, "height_m": 2.6},
+    }), encoding="utf-8")
+
+    body = client.get(f"/api/reports/scans/{scan_id}", headers=headers).json()
+    assert body["calibrated"] == 3
+    assert body["measures"]["measurements"]["room"]["length_m"] == 3.2
+    assert len(body["measures"]["reference_measurements"]) == 2
+
+
+def test_get_report_prefers_backend_formal_risk_assessment_file(client):
+    import json
+    from app.config import get_settings
+
+    headers = _auth(client, email="fresh-risk@x.com")
+    _pid, scan_id, _rid = _make_report(client, headers)
+    post = Path(get_settings().data_dir) / "work" / str(scan_id) / "postprocess"
+    post.mkdir(parents=True, exist_ok=True)
+    formal = {
+        "schema_version": "1.0", "official": True,
+        "overall": {"status": "evaluated", "score": 78.5},
+        "risks": [{
+            "risk_code": "door_width_medium", "risk_type": "mobility",
+            "risk_name": "门净宽风险", "metric_code": "door_width",
+            "measured_value": 0.85, "unit": "m", "threshold": {},
+            "position": {"object_id": "door_01"}, "risk_level": "medium",
+            "confidence": 0.9, "reason": "threshold", "advice": "调整门口净宽",
+            "assessment_status": "evaluated", "related_object_ids": ["door_01"],
+            "related_path_id": None,
+        }],
+        "advice": ["调整门口净宽"],
+    }
+    (post / "risk_assessment.json").write_text(
+        json.dumps(formal, ensure_ascii=False), encoding="utf-8",
+    )
+    body = client.get(f"/api/reports/scans/{scan_id}", headers=headers).json()
+    assert body["score"] == 78.5
+    assert body["risks"][0]["risk_level"] == "medium"
+    assert body["advice"] == ["调整门口净宽"]
+    assert body["measures"]["risk_assessment"]["official"] is True
+
+
 def test_report_annotation_image_is_served_with_organization_auth(client, tmp_path):
     from app.config import get_settings
     from app.db import SessionLocal
@@ -113,6 +175,33 @@ def test_preview_serves_gaussian_model_and_camera_poses_with_auth(client):
     assert client.get(f"{base}/scene_gaussian.ply", headers=headers).content == b"ply\n"
     assert client.get(f"{base}/cameras.json", headers=headers).json() == []
     assert client.get(f"{base}/not-allowed.ply", headers=headers).status_code == 404
+
+
+def test_preview_serves_formal_metrics_and_risk_assessment_with_auth(client):
+    import json
+    from app.config import get_settings
+
+    headers = _auth(client, email="formal-risk-preview@x.com")
+    _pid, scan_id, _report_id = _make_report(client, headers)
+    post = Path(get_settings().data_dir) / "work" / str(scan_id) / "postprocess"
+    post.mkdir(parents=True, exist_ok=True)
+    (post / "spatial_metrics.json").write_text(
+        json.dumps({"schema_version": "1.0", "metrics": []}), encoding="utf-8",
+    )
+    (post / "risk_assessment.json").write_text(
+        json.dumps({"schema_version": "1.0", "official": True}), encoding="utf-8",
+    )
+    metrics = client.get(f"/api/preview/{scan_id}/spatial-metrics.json", headers=headers)
+    assessment = client.get(f"/api/preview/{scan_id}/risk-assessment.json", headers=headers)
+    assert metrics.status_code == 200
+    assert metrics.json()["schema_version"] == "1.0"
+    assert assessment.status_code == 200
+    assert assessment.json()["official"] is True
+
+    other_headers = _auth(client, org="养老院B", email="formal-risk-other@x.com")
+    assert client.get(
+        f"/api/preview/{scan_id}/risk-assessment.json", headers=other_headers,
+    ).status_code == 404
 
 
 def test_get_report_requires_ownership(client):
