@@ -1,8 +1,12 @@
 .worktrees/
 backend/.venv/
 backend/data/
+data/
+anjing.db
 backend/.test-data/
 /*_raw.mp4
+/*.mp4
+.reasonix/tasks/
 task4_local/
 backend/.env
 backend/.env.*

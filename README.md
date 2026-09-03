@@ -1,86 +1,89 @@
 # 安龄智境（Anjing Vision）
 
-用普通手机拍摄一段房间视频，自动重建 3D 场景，评估老人居住空间的**通行安全性**——检测门宽、通道宽度、门槛高度、地面坡度、台阶与临时障碍物，生成带可视化标注的评估报告与改造建议。
+用普通手机拍摄一段房间视频，自动完成**稠密 3D 重建**与**空间结构识别**——墙、门、窗、家具以 3D 框形式叠加在可自由旋转的高密度点云预览上。长度测量、风险识别与评分在后续阶段接入。
 
-本项目使用 **3D Gaussian Splatting（3DGS）** 取代 Apple RoomPlan 等专有方案：任何手机（无需 LiDAR）拍摄的视频即可重建。重建核心采用开源项目 [vid2scene](https://github.com/samuelm2/vid2scene)（Apache-2.0）的端到端管线（HLoc 检索式 SfM + gsplat MCMC 训练），全部算法基于开源 Python 生态，**Windows + NVIDIA GPU 即可本地部署**。
+重建核心为 [SLAM3R](https://github.com/pku-vcl-3dv/SLAM3R)（CVPR 2025 Highlight）：逐帧回归稠密 3D 点云、无需显式相机位姿估计，比传统 SfM+训练式高斯溅射快一个数量级；空间理解核心为 [SpatialLM1.1-Qwen-0.5B](https://huggingface.co/manycore-research/SpatialLM1.1-Qwen-0.5B)（NeurIPS 2025），直接从点云输出墙/门/窗/家具的结构化 3D 框。全部基于开源 Python 生态，**Windows + NVIDIA GPU 本地部署**。
 
 ## 特性
 
-- **视频采集为主**：绕房间随意录 1~3 分钟视频即可，自动抽帧；也支持逐张拍照模式
-- **端到端 3D 重建**：vid2scene（EigenPlaces 检索 + ALIKED/LightGlue 匹配 + COLMAP SfM + gsplat MCMC 训练，带 bilateral grid 外观建模与高斯数量上限）
-- **真实尺度标定**：用户填写 2～3 个门、床或家具真实尺寸，多参考物一致性校验后恢复米制比例；分歧超限时自动退化为单参考物 + 层高门禁兜底
-- **8 类风险规则**：门宽 / 通道净宽 / 门槛高度 / 台阶 / 地面坡度 / 地面高差 / 通道障碍物 / 卫生间门口，按「通行性 40% + 跌倒风险 40% + 无障碍 20%」加权评分
-- **语义辅助**：GroundingDINO 零样本识别纸箱、杂物、宠物等临时障碍物，SAM 实例分割
-- **可视化报告**：多视角标注渲染图 + 交互式 3D 点云预览（WebGL，无外部依赖）
-- **多机构隔离**：机构/成员注册登录（JWT），数据按机构隔离，支持改造前后两次扫描对比
+- **视频直接重建**：上传普通手机视频（1~3 分钟，任意移动），SLAM3R 输出稠密彩色点云
+- **自动后处理**：统计离群点去噪 → 地板/墙面方向自动对齐（z-up + Manhattan 贴轴）→ 层高恢复米制尺度
+- **SpatialLM 结构识别**：墙、门、窗 3D 框 + 家具实例框（59 类家具，含朝向）
+- **高密度 3D 预览**：自研 three.js 查看器，百万级点云渐进式连续加载，自由旋转/缩放/平移，结构框叠加开关、自动旋转、截图
+- **独立环境隔离**：SLAM3R 与 SpatialLM 各自独立 conda 环境，后端通过 subprocess 调用
+- **多机构隔离**：机构/成员注册登录（JWT），数据按机构隔离
 - **跨平台 App**：Flutter 实现 iOS + Android 双端
 
 ## 技术栈
 
 | 层 | 选型 | 说明 |
 |----|------|------|
-| 采集端 | Flutter 3.x（Dart） | 视频录制引导、上传、进度轮询、报告展示 |
+| 采集端 | Flutter 3.x（Dart） | 视频录制引导、上传、进度轮询、3D 预览 |
 | 后端 | Python 3.12 + FastAPI | REST API、JWT 认证、多机构数据隔离 |
-| 任务队列 | Celery + Redis（可选） | 管道异步编排；本地部署默认同步执行，无需 Redis |
-| 3D 重建 | vid2scene（Apache-2.0） | 端到端重建：抽帧 → HLoc SfM → gsplat MCMC 训练，运行在独立 conda 环境 |
-| 深度学习 | PyTorch 2.7（cu128）+ segment-anything + transformers | GPU 训练与零样本语义分割 |
-| 点云处理 | Open3D 0.19 | RANSAC 平面提取、几何测量、渲染 |
-| 视频处理 | ffmpeg | 抽帧、格式兼容 |
-| 数据库 | SQLite（开发，默认）/ PostgreSQL 16（生产） | 元数据、报告、用户 |
-| 对象存储 | 本地文件（开发，默认）/ MinIO（生产） | 视频、点云、渲染图 |
-| 部署 | 本地裸机（conda 双环境，默认） | Docker Compose 作为生产形态备选 |
+| 稠密重建 | SLAM3R（独立 `slam3r` conda 环境） | 视频 → 逐帧 I2P → L2W 全局注册 → 稠密点云 PLY |
+| 空间理解 | SpatialLM1.1-Qwen-0.5B（独立 `spatiallm` conda 环境） | 点云 → 墙/门/窗/家具结构化 3D 框 |
+| 点云处理 | Open3D 0.19（后端 venv） | 去噪、方向对齐、体素化、预览导出 |
+| 视频处理 | ffmpeg | 抽帧 |
+| 可视化 | three.js（本地内置，无外部 CDN） | 高密度点云 Web 预览 + 结构框叠加 |
+| 数据库 | SQLite（开发，默认）/ PostgreSQL（生产） | 元数据、报告 |
+| 部署 | 本地裸机（conda 三环境） | SLAM3R / SpatialLM / 后端 |
 
 ## 系统架构
 
 ```
 ┌─────────────────────┐
-│  Flutter App        │  拍摄引导 / 上传 / 进度 / 报告 / 3D 预览
-│  (iOS + Android)    │
+│  Flutter App        │  拍摄 / 上传 / 进度 / 3D 预览（webview 打开 /preview/{scan}）
 └──────────┬──────────┘
            │ REST + JWT
 ┌──────────▼──────────────────────────────────────────┐
-│  FastAPI 后端（backend/.venv）                       │
-│  auth / projects / scans / reports + 管道编排        │
-└──────────┬──────────────────────────────────────────┘
-           │ subprocess 调用
-┌──────────▼──────────────────────────┐
-│  vid2scene 独立 conda 环境（GPU）    │
-│  抽帧 → HLoc SfM → gsplat MCMC 训练  │
-│  → COLMAP 相机模型 + splat.ply       │
-└──────────┬──────────────────────────┘
-           │ 解析为下游契约（cameras/points3D/高斯）
-┌──────────▼──────────────────────────────────────────┐
-│  语义分割 → 多参考物标定 → 几何测量 → 规则评分 → 报告  │
-└─────────────────────────────────────────────────────┘
+│  FastAPI 后端（backend/.venv，Python 3.12）          │
+│  auth / projects / scans / preview + 管道编排        │
+└──────┬────────────────────────┬─────────────────────┘
+       │ subprocess             │ subprocess
+┌──────▼──────────────┐  ┌──────▼────────────────────┐
+│ slam3r conda 环境   │  │ spatiallm conda 环境       │
+│ ffmpeg 抽帧         │  │ SpatialLM1.1-Qwen-0.5B     │
+│ SLAM3R 稠密重建      │  │ → layout.txt（墙/门/窗/框） │
+│ → scene_recon.ply   │  └──────┬────────────────────┘
+└──────┬──────────────┘         │
+       ▼                        │
+┌──────────────────────────┐    │
+│ Open3D 后处理（后端 venv）│    │
+│ 去噪 → z-up/贴轴 → 缩放  │◄───┘
+│ → scene_aligned.ply      │
+│ → scene_preview.ply      │
+└──────┬───────────────────┘
+       ▼
+┌──────────────────────────┐
+│ /preview/{scan} Web 查看器 │  three.js 点云 + 结构框叠加
+└──────────────────────────┘
 ```
 
 ### 管道链路
 
 ```
-视频 → vid2scene 端到端重建（抽帧 → EigenPlaces 检索配对 → ALIKED+LightGlue 特征匹配
-→ COLMAP SfM → gsplat MCMC 训练 + bilateral grid 外观建模）
-→ 解析 COLMAP 相机模型与 splat.ply → 点云导出与统计滤波 → GroundingDINO/SAM 语义分割
-→ 多参考物米制标定（分歧超限自动单参考物兜底）→ 几何分析（门宽/门槛/坡度/高差）
-→ 规则评分 → 报告（标注图 + 交互 3D 预览）
+视频 → ffmpeg 抽帧(4fps) → SLAM3R（I2P 逐帧点图 + L2W 全局注册，置信度过滤）
+→ scene_recon.ply → 统计去噪 → 竖直轴估计（法向投票×RANSAC 主平面）
+→ z-up + 地面平移 + 墙面贴轴 → 层高(2.6m)恢复米制尺度
+→ SpatialLM 推理（all：墙/门/窗/家具框）→ layout.txt → 统一 boxes JSON
+→ 高密度预览 PLY + /preview/{scan} 交互式 3D 查看器
 ```
 
 ## 本地部署教程
 
-> 目标形态：一台 Windows 11 + NVIDIA GPU 的机器，跑通「Flutter App → FastAPI → vid2scene 重建 → 报告」完整链路。
+> 目标形态：一台 Windows 11 + NVIDIA RTX 50 系（或 30/40 系）GPU 的机器，跑通「Flutter App → FastAPI → SLAM3R → SpatialLM → 3D 预览」完整链路。
 
 ### 0. 前置条件
 
 | 组件 | 要求 | 说明 |
 |------|------|------|
 | 操作系统 | Windows 10/11 | 无需 Docker、无需 WSL2 |
-| GPU | NVIDIA，RTX 30 系及以上 | **RTX 50 系（sm_120）必须 torch 2.7+cu128**，本教程已固定该版本 |
-| CUDA Toolkit | 12.8 | 安装到默认路径 `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8` |
-| MSVC | Visual Studio Build Tools 2022（C++ 生成工具） | 编译 gsplat / fused-ssim / fused-bilagrid 用 |
-| Miniconda | 最新版 | 创建 vid2scene 隔离环境 |
-| Git | 最新版 | 含 submodule 支持 |
-| ffmpeg | ≥ 5.x（推荐 9.x） | 抽帧用；推荐安装到 `C:\ffmpeg\bin` |
-| 磁盘 | ≥ 50GB 可用 | 环境 ~15GB + 模型权重 ~1GB + 扫描数据 |
-| Python | 3.12 | 后端 venv 用（open3d 不支持 3.13+） |
+| GPU | NVIDIA，RTX 30 系及以上，≥16GB 显存 | **RTX 50 系（sm_120）必须 torch 2.7+cu128**，本教程已固定 |
+| CUDA Toolkit | 12.8（编译 spconv/torch-scatter 时才需要） | 安装到默认路径 `C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8` |
+| Miniconda/Anaconda | 任意版本 | 创建 slam3r / spatiallm 隔离环境 |
+| Git | 最新版 | 克隆两个上游仓库 |
+| ffmpeg | ≥5.x（推荐 9.x） | 抽帧用；推荐安装到 `C:\ffmpeg\bin` |
+| 磁盘 | ≥40GB 可用 | 两环境 ~15GB + 权重 ~6.5GB + 扫描数据 |
 
 ### 1. 克隆本项目
 
@@ -89,196 +92,133 @@ git clone git@github.com:adamzoeee/anjing-vision.git
 cd anjing-vision
 ```
 
-### 2. 获取 vid2scene 源码并打 Windows 补丁
-
-vid2scene 是独立仓库，固定在 `E:\.PJs\vid2scene`（可用环境变量 `VID2SCENE_CORE_DIR` 覆盖）：
+### 2. 一键搭建重建栈（源码 + 环境 + 权重）
 
 ```powershell
-git clone https://github.com/samuelm2/vid2scene.git E:\.PJs\vid2scene
-cd E:\.PJs\vid2scene
-git submodule update --init gsplat glomap Hierarchical-Localization spz
-git -C gsplat submodule update --init        # gsplat 内部依赖的 glm 头文件
-
-# Windows 原生适配补丁（存放在本项目 backend/scripts/vid2scene/）：
-git apply <本仓库>\backend\scripts\vid2scene\vid2scene-core-windows.patch
-git -C gsplat apply <本仓库>\backend\scripts\vid2scene\gsplat-windows.patch
+powershell -NoProfile -ExecutionPolicy Bypass -File backend\scripts\slam3r\setup_slam3r_stack.ps1
 ```
 
-三个补丁解决的问题：
-- ffmpeg ≥ 7 移除 `-vsync`（改用 `-fps_mode`）、filtergraph 逗号转义、抽帧失败显式报错
-- pycolmap 4.x 返回 dict 时选取注册帧最多的模型；`model_orientation_aligner` 在 Windows 上崩溃时优雅跳过
-- 新增 `--no_normalize_world_space` 保留 COLMAP 世界坐标（下游几何测量必需）；vggt 路径惰性导入
-- 训练器 DataLoader 在 Windows spawn 多进程时管道溢出（数百相机的畸变矫正映射可达数 GB）→ 自动回退单进程加载
+脚本完成：克隆 SLAM3R / SpatialLM 源码 → SpatialLM Windows 补丁（禁用 flash-attn，官方无 Windows 轮子）→ 创建 `slam3r` 与 `spatiallm` 两个 conda 环境（Python 3.11 + torch 2.7.1 cu128；spatiallm 另装 transformers 4.46 / spconv cu128 / torch-scatter）→ 下载三套权重 → 双模型加载冒烟自检。日志在 `E:\.PJs\deploy\setup_slam3r_stack.log`。
 
-### 3. 一键搭建 vid2scene conda 环境
+可选参数：`-SkipSources` / `-SkipEnv` / `-SkipWeights`（已装过的部分可跳过）。
 
-```powershell
-cd <本仓库>\backend\scripts\vid2scene
-powershell -NoProfile -ExecutionPolicy Bypass -File setup_vid2scene.ps1
-```
+**权重来源（境内网络）**：SLAM3R 的 `slam3r_i2p.pth` / `slam3r_l2w.pth` 走 AIFastHub 镜像；`SpatialLM1.1-Qwen-0.5B` 走 ModelScope 镜像。全部落盘到 `E:\.PJs\models\`。**不下载任何训练/测试数据集，不做训练与微调。**
 
-脚本会完成：`conda create`（Python 3.12 + COLMAP 4.1.1 CLI）→ torch 2.7.1+cu128 →
-Python 依赖（hloc/pycolmap/opencv 等）→ pycolmap_parser（HEAD + 补丁）→
-MSVC 编译 fused-ssim / fused-bilagrid / gsplat fork → 冒烟自检。全程日志在
-`E:\.PJs\vid2scene\setup_vid2scene.log`。
-
-脚本要点（换机器排错时对照）：
-- 自动探测最新 CUDA（`C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*`）与 vcvars64.bat
-- 所有 pip 调用使用 `python -I` 并清空 `PYTHONPATH`，避免其他 Python 环境串入
-- `DISTUTILS_USE_SDK=1` 是 MSVC 下编译 torch 扩展的必需项
-
-**首次运行会联网下载模型权重**（EigenPlaces/ALIKED/LightGlue，约 500MB，缓存在
-`C:\Users\<你>\.cache\torch\hub`，之后不再下载）。仅重建本身**不需要** HuggingFace
-账号（glomm/vggt 才需要，默认不使用）。
-
-### 4. 配置后端
+### 3. 配置后端
 
 ```powershell
-cd <本仓库>\backend
+cd backend
 py -3.12 -m venv .venv
-.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt
+.venv\Scripts\pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-`.env` 中需要确认/修改：
+`.env` 中确认（路径与第 2 步实际安装位置一致）：
 
 ```ini
-DATABASE_URL=sqlite:///./anjing.db   # 本地部署默认 SQLite，无需安装数据库
-TASK_SYNC=true                       # 同步执行管道，无需 Redis/Celery
+DATABASE_URL=sqlite:///./anjing.db   # 本地部署默认 SQLite
+TASK_SYNC=true                       # 同步执行管道（后台线程），无需 Redis/Celery
 DATA_DIR=./data
 
-# ---- vid2scene 重建（默认开启）----
-VID2SCENE_ENABLED=true
-VID2SCENE_CORE_DIR=<部署目录>\vid2scene\vid2scene_core
-VID2SCENE_GSPLAT_SCRIPT=<部署目录>\vid2scene\gsplat\examples\simple_trainer.py
-VID2SCENE_FRAMECOUNT=300             # 抽帧数
-VID2SCENE_TRAINING_STEPS=20000       # 训练步数
-VID2SCENE_MAX_GAUSSIANS=1200000      # 高斯数量上限
-VID2SCENE_RECONSTRUCTION_METHOD=colmap
-APRILTAG_ENABLED=true
-APRILTAG_FAMILY=tagStandard41h12
-APRILTAG_SIZE_M=0.09             # 标准打印版 detection-corner 边长
+# ---- SLAM3R 稠密重建（默认值即本机部署值）----
+SLAM3R_DIR=E:\.PJs\slam3r
+SLAM3R_PYTHON=C:\Users\<你>\.conda\envs\slam3r\python.exe
+SLAM3R_I2P_WEIGHTS=E:\.PJs\models\slam3r_i2p\slam3r_i2p.pth
+SLAM3R_L2W_WEIGHTS=E:\.PJs\models\slam3r_l2w\slam3r_l2w.pth
+SLAM3R_FPS=4
+SLAM3R_TARGET_HEIGHT_M=2.6          # 层高米制缩放（住宅 2.6~2.8m）
+
+# ---- SpatialLM 空间结构识别 ----
+SPATIALLM_DIR=E:\.PJs\spatiallm
+SPATIALLM_PYTHON=C:\Users\<你>\.conda\envs\spatiallm\python.exe
+SPATIALLM_MODEL_PATH=E:\.PJs\models\SpatialLM1.1-Qwen-0.5B
 ```
 
-### 5. 启动后端
+> 后端 requirements 不再包含 vid2scene/gsplat/pycolmap；后端点云处理只用 open3d。
+
+### 4. 启动后端
 
 ```powershell
-cd <本仓库>\backend
+cd backend
 .venv\Scripts\uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 API 文档：<http://localhost:8000/docs>
 
-### 6. 端到端验证（不启动 App 也能测）
+### 5. 端到端验证（不启动 App 也能测）
 
 ```powershell
-cd <本仓库>\backend
+cd backend
 .venv\Scripts\python scripts\run_pipeline.py `
   --input 你的房间视频.mp4 `
   --outdir out
 ```
 
-输出 `out\report.json`：评分、风险项、米制测量、预览资源清单。参考耗时：2.5 分钟
-1080p 视频在 RTX 5080 Laptop 上约 **24 分钟**（重建 23.7 分钟 + 语义/报告约 1 分钟）。
+参考耗时（2.5 分钟 1080p 视频，RTX 5080 Laptop）：抽帧 ~13s → SLAM3R 重建 ~10~20 分钟 → 后处理 ~1 分钟 → SpatialLM ~1~2 分钟。
 
-### 7. Flutter App（可选）
+输出 `out\report.json`，其中 `measures.spatial_understanding` 为结构识别结果；预览地址为 `http://localhost:8000/preview/{scan_id}`（登录后打开，或在 URL 带 `?scan={id}&token={jwt}`）。
+
+### 6. Flutter App（可选）
 
 ```powershell
-cd <本仓库>\app
+cd app
 flutter pub get
 flutter run   # Android 模拟器默认连 http://10.0.2.2:8000
 ```
 
-### 常见问题
+## 3D 预览（验收标准）
 
-| 现象 | 处理 |
+`/preview/{scan_id}`（或 API `GET /api/preview/{scan_id}/manifest.json`）：
+
+- 自由旋转（左键）/ 缩放（滚轮）/ 平移（右键）查看整个房间
+- 百万级稠密点云**渐进式连续加载**（分块上屏，不白屏不卡死）
+- 叠加 SpatialLM 的墙（蓝）/ 门（黄）/ 窗（绿）/ 家具（粉）3D 框与家具标签，可分别开关
+- 点大小、自动旋转、重置视角、截图
+
+验收：墙、床、桌、门、柜等主要结构肉眼清楚可辨（允许少量孔洞/噪点/局部模糊）；结构框与点云对齐叠加。
+
+## 接口说明（后续接入现有项目）
+
+| 接口 | 说明 |
 |------|------|
-| `未找到 vid2scene conda 环境` | 重跑第 3 步，或设置 `VID2SCENE_PYTHON` 指向 `...\envs\vid2scene\python.exe` |
-| 重建报 `ffmpeg ... Unrecognized option 'vsync'` | 补丁未生效：重新执行第 2 步的 `git apply` |
-| 训练报 `num_workers`/管道错误 | gsplat 补丁未生效：`git -C E:\.PJs\vid2scene\gsplat apply gsplat-windows.patch` |
-| 首次重建很慢 | 正常：首次要下载模型权重；另确认 GPU 未被其他程序占用 |
-| 尺度标定失败 | 确认使用 tagStandard41h12 / ID 00000 标准打印版、100% 比例打印，并让完整 Tag 在多个视角清晰可见 |
+| `POST /api/scans/{scan_id}/upload` | 上传视频，自动进入管道 |
+| `GET /api/scans/{scan_id}` | 状态/进度轮询（status: uploading→extracting→reconstructing→cleaning→understanding→done） |
+| `GET /api/reports/scans/{scan_id}` | 报告：`measures.spatial_understanding` 含全部 3D 框 |
+| `GET /api/preview/{scan_id}/manifest.json` | 预览清单（点云/结构文件 URL、对齐与缩放元数据） |
+| `GET /api/preview/{scan_id}/scene.ply` | 高密度预览点云（binary PLY） |
+| `GET /api/preview/{scan_id}/layout.json` | 结构框 JSON：`{walls,doors,windows,objects,counts}`，米制 z-up |
+| `GET /preview/{scan_id}` | 3D 查看器页面 |
 
-## 生产部署（可选）
-
-本地单机模式适合评估机构内网使用。多实例/公网部署时：
-
-- 数据库换 PostgreSQL、对象存储换 MinIO（`.env` 指向对应地址）
-- 关闭 `TASK_SYNC`，启动 Celery worker 消费 Redis 队列
-- 或使用 `backend/docker-compose.yml`（PostgreSQL + Redis + MinIO + API + GPU Worker 五服务）
-- 公网暴露必须更换 `SECRET_KEY` 与默认密码，并限制 CORS
-
-## 采集与评估流程
-
-1. 注册机构账号 → 新建评估项目（如「王奶奶家」）
-2. 将标准 AprilTag 标定纸平整放置并以 100% 比例打印，录制或选择 1～3 分钟单房间视频；系统自动恢复米制尺度
-3. 上传后实时查看进度（3D 重建 → 语义分割 → 标定 → 分析 → 评分）
-4. 查看报告：安全评分、风险项列表、改造建议、标注图、交互式 3D 预览
-5. 改造完成后再次扫描，使用「改造前后对比」查看评分变化
+结构框 JSON 中每个框为 `{center:[x,y,z], size:[sx,sy,sz], rotation_z_deg, kind/category}`（米）。管道产物目录：`data/work/{scan_id}/`（`frames/`、`slam3r/scene/scene_recon.ply`、`postprocess/`）。
 
 ## 项目结构
 
 ```
 ├── backend/
 │   ├── app/                 # FastAPI 应用
-│   │   ├── routers/         # auth / projects / scans / reports API
-│   │   └── tasks/           # Celery 任务与 vid2scene 正式管道编排器
-│   ├── pipeline/            # 核心算法（无框架依赖，可独立测试）
-│   │   ├── vid2scene_runner.py  # vid2scene 适配层：subprocess 调用 + 产物解析
-│   │   ├── scene_contract.py    # 统一相机、点云、米制状态数据契约
-│   │   ├── sfm.py / trainer.py  # 仅保留新管道复用的后处理算法，不再作为重建入口
-│   │   ├── exporter.py          # 高斯场 → 点云 / 预览 PLY 导出
-│   │   ├── calibrator.py        # 历史扫描兼容的参考物标定工具
-│   │   ├── semantic.py          # GroundingDINO + SAM 语义分割
-│   │   ├── geometry.py / spatial_measurement.py  # 点云几何测量
-│   │   ├── rules.py             # 风险规则与评分（全 unknown 时不可评分）
-│   │   └── report_builder.py    # 标注图与预览资源（含抽稀）
-│   ├── scripts/             # CLI：run_pipeline / download_models
-│   │   └── vid2scene/       # vid2scene 部署：一键环境脚本 + Windows 补丁
-│   ├── tests/               # 后端自动测试
-│   ├── docker-compose.yml   # 生产形态（可选）
-│   └── ENV_SETUP.md         # 历史：Windows GPU 环境搭建记录
+│   │   ├── routers/         # auth / projects / scans / reports / preview API
+│   │   ├── static/preview/  # three.js 高密度点云查看器（本地内置）
+│   │   └── tasks/           # pipeline_runner：SLAM3R+SpatialLM 管道编排
+│   ├── pipeline/
+│   │   ├── slam3r_runner.py     # SLAM3R 适配层：ffmpeg 抽帧 + subprocess 重建
+│   │   ├── scene_postprocess.py # Open3D 去噪 / z-up / 贴轴 / 层高缩放 / 预览导出
+│   │   ├── spatiallm_runner.py  # SpatialLM 适配层：subprocess 推理 + layout 解析
+│   │   └── …（calibrator/semantic/geometry/rules 等历史模块保留）
+│   ├── scripts/
+│   │   ├── run_pipeline.py      # CLI 端到端验证
+│   │   └── slam3r/              # setup_slam3r_stack.ps1 一键部署 + 权重下载
+│   └── tests/
 └── app/                     # Flutter 客户端
-    ├── lib/api/             # Dio 客户端与数据模型
-    ├── lib/pages/           # 登录/项目/采集/上传/报告/对比页
-    ├── lib/widgets/         # 评分环、风险卡片
-    └── web/preview/         # 自研 WebGL 点云渲染器
-```
-
-## 测试
-
-```bash
-# 后端
-cd backend && .venv/Scripts/python -m pytest tests/ -v
-
-# Flutter
-cd app && flutter test
 ```
 
 ## 已知限制
 
-- 管道需要 GPU（gsplat 光栅化依赖 CUDA），无 GPU 环境无法完成训练阶段
-- 正常产品流程依赖 AprilTag 自动恢复米制尺度；标定失败时明确返回失败状态，绝不把相对坐标伪装成米。旧参考物标定仅用于历史扫描兼容
+- 管道需要 NVIDIA GPU（SLAM3R 前馈重建、SpatialLM 推理均依赖 CUDA）
+- SLAM3R 输出方向任意、尺度未定：本管道自动做 z-up/墙面贴轴对齐并以默认层高 2.6m 恢复米制尺度（`SLAM3R_TARGET_HEIGHT_M` 可调）；精确米制标定在后续阶段接入
+- SpatialLM 输入要求 z-up + 墙面贴 x/y 轴 + 米制：后处理已满足该约定
+- 长度测量、风险识别、评分暂缓（报告 `measures.deferred` 已标注），后续在 pipeline_runner 扩展
 - 重建质量受拍摄条件影响：光线充足、慢速移动、避免反光面效果最佳
-- 3D 交互预览目前是独立 Web 页面（`app/web/preview/index.html`），App 内的 webview 集成待完成
-- 正式重建入口只有 vid2scene；旧自研抽帧/SfM/训练入口已退役，仍被调用的文件只提供畸变校正、曝光归一化等后处理能力
-
-## 重建后端：vid2scene（替代自研管线）
-
-自研的「抽帧 → pycolmap SfM → gsplat 训练」已被 [vid2scene](https://github.com/samuelm2/vid2scene)（Apache-2.0）端到端重建替代：视频直接送入，内部完成抽帧 → HLoc（EigenPlaces 检索 + ALIKED/LightGlue 匹配）→ COLMAP SfM → gsplat MCMC 训练（bilateral grid 外观建模、高斯数量硬上限）。下游的语义分割、尺度标定、几何测量、风险规则与报告全部保留，只消费 vid2scene 产出的 COLMAP 相机模型与 `splat.ply`，通过 `backend/pipeline/vid2scene_runner.py` 适配。
-
-### 与旧自研管线的既有实测对比（单房间样本，2.5 分钟，同机 GPU）
-
-| 指标 | 自研（Scan 11） | vid2scene（Scan 18） |
-|------|----------------|-----------|
-| 总耗时 | 4 小时 10 分 | **约 24 分钟**（重建 23.7 分钟 + 语义/报告约 1 分钟） |
-| SfM | 699 帧 68 分钟、漂移严重（跳变比 12.5） | 282/282 帧注册、跳变比 4.8、重投影误差 1.16px |
-| 训练 | 3 小时、损失 0.199、PSNR 16.5dB | 约 19 分钟、损失 0.03~0.12 |
-| 高斯数 | 566 万（膨胀 37 倍） | **91 万**（硬上限 120 万） |
-| 标定 | 26.3% 分歧 → 失败 | **10.1% 分歧 → 标定成功**（米制房间 6.99×6.58m、床 2.22×0.76m、门宽 0.85m） |
-| 报告 | 全部 unknown 假 100 分 | 全 unknown 不再产出分数（显示"无法评分"） |
-| 预览体积 | 168MB + 1.4GB | **24MB scene.ply + 74MB gaussian ply** |
 
 ## 许可证
 
-本项目仅供学习与研究使用。依赖的开源组件（PyTorch、gsplat、Open3D、FastAPI、Flutter、vid2scene（Apache-2.0）等）遵循各自许可证；请勿将本项目用于商业用途前确认所有依赖的许可条款。
+本项目仅供学习与研究使用。依赖的开源组件（PyTorch、Open3D、FastAPI、Flutter、three.js、SLAM3R、SpatialLM 等）遵循各自许可证；SpatialLM 权重为 CC-BY-NC-4.0，SLAM3R 权重/代码为 CC BY-NC-SA 4.0（非商业），请勿用于商业用途前确认所有依赖的许可条款。

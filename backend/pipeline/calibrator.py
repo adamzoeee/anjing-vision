@@ -174,7 +174,7 @@ def fallback_single_reference_scale(
         candidate = float(item["meters"]) / float(item["model_units"])
         if not np.isfinite(candidate) or candidate <= 0:
             continue
-        from .quality import assess_metric_scene
+        from .metric_quality import assess_metric_scene
 
         metric_points = points * candidate
         if not assess_metric_scene(metric_points, calibrated=1).ok:
