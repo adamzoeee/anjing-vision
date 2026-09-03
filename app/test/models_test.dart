@@ -53,6 +53,8 @@ void main() {
           'ply': 'scene.ply',
           'gaussian_ply': 'scene_gaussian.ply',
           'cameras': 'cameras.json',
+          'pdf': '/static/1/pdf',
+          'risk_map': '/static/1/formal_risks.png',
         },
       });
       expect(r.score, 62.5);
@@ -63,7 +65,103 @@ void main() {
       expect(r.previewPly, 'scene.ply');
       expect(r.previewGaussianPly, 'scene_gaussian.ply');
       expect(r.previewCameras, 'cameras.json');
+      expect(r.reportPdf, '/static/1/pdf');
+      expect(r.riskMap, '/static/1/formal_risks.png');
       expect(r.measures['reference_measurements'].first['dimension'], 'width');
+    });
+
+    test('Report.fromJson 解析正式风险评估字段', () {
+      final r = Report.fromJson({
+        'scan_id': 46,
+        'score': 73.2,
+        'risks': [
+          {
+            'risk_code': 'door_width_medium',
+            'risk_type': 'mobility',
+            'risk_name': '门净宽风险',
+            'metric_code': 'door_width',
+            'measured_value': 0.85,
+            'unit': 'm',
+            'threshold': {'direction': 'below', 'levels': {'medium': 0.9}},
+            'position': {'object_id': 'door_01'},
+            'risk_level': 'medium',
+            'confidence': 0.9,
+            'reason': 'threshold',
+            'advice': '调整门口净宽',
+            'assessment_status': 'evaluated',
+            'related_object_ids': ['door_01'],
+            'related_path_id': null,
+          },
+        ],
+        'advice': ['调整门口净宽'],
+        'images': [],
+        'calibrated': 3,
+        'measures': {
+          'risk_assessment': {
+            'official': true,
+            'overall': {'score': 73.2, 'coverage_percent': 86.7},
+          },
+        },
+      });
+      final risk = r.risks.single;
+      expect(risk.code, 'door_width_medium');
+      expect(risk.metricCode, 'door_width');
+      expect(risk.riskType, 'mobility');
+      expect(risk.level, 'medium');
+      expect(risk.measure, 0.85);
+      expect(risk.confidence, 0.9);
+      expect(risk.relatedObjectIds, ['door_01']);
+      expect(r.riskAssessment['official'], true);
+    });
+
+    test('Report.fromJson 解析风险图与PDF产物链接', () {
+      final r = Report.fromJson({
+        'scan_id': 46,
+        'images': ['/static/46/formal_risks.png'],
+        'preview': {
+          'risk_map': '/static/46/formal_risks.png',
+          'pdf': '/static/46/pdf',
+        },
+      });
+      expect(r.riskMap, '/static/46/formal_risks.png');
+      expect(r.reportPdf, '/static/46/pdf');
+      expect(r.images, ['/static/46/formal_risks.png']);
+    });
+
+    test('Report.fromJson 保留null与空产物链接供UI安全降级', () {
+      final nullLinks = Report.fromJson({
+        'scan_id': 46,
+        'preview': {'risk_map': null, 'pdf': null},
+      });
+      final emptyLinks = Report.fromJson({
+        'scan_id': 47,
+        'preview': {'risk_map': '', 'pdf': ''},
+      });
+      expect(nullLinks.riskMap, isNull);
+      expect(nullLinks.reportPdf, isNull);
+      expect(emptyLinks.riskMap, '');
+      expect(emptyLinks.reportPdf, '');
+    });
+
+    test('Report.fromJson 缺失artifact字段时保持向后兼容', () {
+      final missingArtifacts = Report.fromJson({'scan_id': 46});
+      final legacyPreview = Report.fromJson({
+        'scan_id': 47,
+        'preview': {
+          'ply': 'scene.ply',
+          'gaussian_ply': 'scene_gaussian.ply',
+          'cameras': 'cameras.json',
+          'viewer': '/preview/47',
+        },
+      });
+      expect(missingArtifacts.riskMap, isNull);
+      expect(missingArtifacts.reportPdf, isNull);
+      expect(legacyPreview.riskMap, isNull);
+      expect(legacyPreview.reportPdf, isNull);
+      expect(legacyPreview.previewPly, 'scene.ply');
+      expect(legacyPreview.previewGaussianPly, 'scene_gaussian.ply');
+      expect(legacyPreview.previewCameras, 'cameras.json');
+      expect(legacyPreview.previewViewer, '/preview/47');
     });
 
     test('Project.fromJson 默认 address 空串', () {

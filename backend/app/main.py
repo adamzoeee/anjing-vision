@@ -16,7 +16,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import Settings, get_settings
 from .db import Base, engine, get_db
-from .routers import auth, preview, projects, reports, scans
+from .routers import auth, preview, projects, renovation, reports, scans
 
 logger = logging.getLogger("anjing.api")
 
@@ -154,6 +154,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(scans.router, prefix="/api/scans", tags=["scans"])
     application.include_router(preview.router, prefix="/api/preview", tags=["preview"])
     application.include_router(reports.router, prefix="/api/reports", tags=["reports"])
+    application.include_router(renovation.router, prefix="/api/assistant", tags=["renovation-assistant"])
     application.include_router(
         reports.assets_router,
         prefix="/static",

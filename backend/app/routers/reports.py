@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pathlib import Path
@@ -95,21 +97,53 @@ def get_report_pdf(
 
 
 @router.get("/scans/{scan_id}")
-def get_report(scan_id: int, db: Session = Depends(get_db), org_id: int = Depends(get_org_scope)):
+def get_report(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
     scan = db.get(Scan, scan_id)
     if scan is None or scan.project.org_id != org_id:
         raise HTTPException(404, "扫描任务不存在")
     if scan.report is None:
         raise HTTPException(404, "报告尚未生成")
+    # 测量和2.5D框架可在不重跑SLAM3R的情况下重建。报告接口优先读取当前
+    # measurements.json，避免数据库里的旧报告快照让前端继续显示“无长度”。
+    measures = dict(scan.report.measures or {})
+    measurements_path = (
+        Path(settings.data_dir) / "work" / str(scan_id) / "postprocess" / "measurements.json"
+    )
+    if measurements_path.is_file():
+        current_measurements = json.loads(measurements_path.read_text(encoding="utf-8"))
+        measures["measurements"] = current_measurements
+        measures["reference_measurements"] = list(scan.reference_measurements or [])
+        measures["calibration_quality"] = current_measurements.get("scale", {})
+    else:
+        current_measurements = measures.get("measurements") or {}
+    risk_path = (
+        Path(settings.data_dir) / "work" / str(scan_id) / "postprocess" / "risk_assessment.json"
+    )
+    if risk_path.is_file():
+        current_assessment = json.loads(risk_path.read_text(encoding="utf-8"))
+        measures["risk_assessment"] = current_assessment
+        score = (current_assessment.get("overall") or {}).get("score")
+        risks = current_assessment.get("risks") or []
+        advice = current_assessment.get("advice") or []
+    else:
+        score = scan.report.score
+        risks = scan.report.risks
+        advice = scan.report.advice
+    calibrated = 3 if current_measurements.get("metric_scale_available") else scan.report.calibrated
     return {
         "scan_id": scan_id,
-        "score": scan.report.score,
-        "risks": scan.report.risks,
-        "measures": scan.report.measures,
-        "advice": scan.report.advice,
+        "score": score,
+        "risks": risks,
+        "measures": measures,
+        "advice": advice,
         "images": [f"/static/{scan_id}/{Path(img).name}" for img in scan.report.images],
         "preview": scan.report.preview,
-        "calibrated": scan.report.calibrated,
+        "calibrated": calibrated,
         "created_at": scan.report.created_at.isoformat(),
     }
 

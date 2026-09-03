@@ -153,6 +153,17 @@ class ApiClient {
   Future<Report> report(int scanId) async =>
       Report.fromJson((await dio.get('/api/reports/scans/$scanId')).data);
 
+  Future<Map<String, dynamic>> simulateRenovation(
+    int scanId,
+    String prompt,
+  ) async => Map<String, dynamic>.from(
+    (await dio.post(
+          '/api/assistant/scans/$scanId/simulate',
+          data: {'prompt': prompt},
+        )).data
+        as Map,
+  );
+
   Future<Map<String, dynamic>> compare(
     int beforeScanId,
     int afterScanId,

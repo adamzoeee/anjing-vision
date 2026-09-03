@@ -4,7 +4,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from pipeline.pdf_report import build_pdf_report
+from pipeline.pdf_report import (
+    _formal_metric_rows,
+    _formal_not_evaluable_rows,
+    _formal_summary_rows,
+    build_pdf_report,
+)
 
 pytest.importorskip("reportlab")
 
@@ -54,9 +59,8 @@ def _make_image(path: Path):
     return path
 
 
-def test_build_pdf_report_structure(tmp_path_factory):
-    # tmp_path 在沙箱受限环境可能不可用，落到工作区临时目录
-    out_dir = Path(r"E:\anlingzhijing\anjing-vision\.recovery\pdf-test")
+def test_build_pdf_report_structure(tmp_path):
+    out_dir = tmp_path / "pdf-test"
     out_dir.mkdir(parents=True, exist_ok=True)
     img = _make_image(out_dir / "view.png")
     pdf_path = build_pdf_report(
@@ -74,8 +78,8 @@ def test_build_pdf_report_structure(tmp_path_factory):
     assert b"%%EOF" in data[-1024:]
 
 
-def test_build_pdf_report_without_images():
-    out_dir = Path(r"E:\anlingzhijing\anjing-vision\.recovery\pdf-test")
+def test_build_pdf_report_without_images(tmp_path):
+    out_dir = tmp_path / "pdf-test"
     out_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = build_pdf_report(
         title="空报告",
@@ -90,8 +94,8 @@ def test_build_pdf_report_without_images():
     assert Path(pdf_path).stat().st_size > 500
 
 
-def test_build_pdf_report_metric_calibrated():
-    out_dir = Path(r"E:\anlingzhijing\anjing-vision\.recovery\pdf-test")
+def test_build_pdf_report_metric_calibrated(tmp_path):
+    out_dir = tmp_path / "pdf-test"
     out_dir.mkdir(parents=True, exist_ok=True)
     measures = dict(SAMPLE_MEASURES)
     measures["scale_status"] = "metric_references"
@@ -106,3 +110,57 @@ def test_build_pdf_report_metric_calibrated():
         out_path=out_dir / "metric.pdf",
     )
     assert Path(pdf_path).is_file()
+
+
+def test_build_pdf_report_consumes_formal_assessment_as_source_of_truth(tmp_path):
+    out_dir = tmp_path / "pdf-test"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    assessment = {
+        "official": True,
+        "overall": {"status": "evaluated", "score": 73.2, "coverage_percent": 86.7},
+        "risks": [{
+            "risk_code": "door_width_medium", "risk_type": "mobility",
+            "risk_name": "门净宽风险", "metric_code": "door_width",
+            "measured_value": 0.85, "unit": "m", "threshold": {},
+            "position": None, "risk_level": "medium", "confidence": 0.9,
+            "reason": "threshold", "advice": "调整门口净宽",
+            "assessment_status": "evaluated", "related_object_ids": [],
+            "related_path_id": None,
+        }],
+        "advice": ["调整门口净宽"],
+    }
+    pdf_path = build_pdf_report(
+        title="正式评估", score=99.0, risks=[], measures={}, advice=[], images=[],
+        out_path=out_dir / "formal.pdf", risk_assessment=assessment,
+    )
+    assert Path(pdf_path).is_file()
+    assert Path(pdf_path).stat().st_size > 500
+
+
+def test_formal_summary_rows_preserve_official_weights_and_coverage():
+    rows = _formal_summary_rows({
+        "category_scores": {
+            "mobility": {"score": 80.0, "weight": 0.4, "evaluated_count": 4, "total_count": 5},
+            "layout": {"score": 60.0, "weight": 0.3, "evaluated_count": 3, "total_count": 4},
+            "usage_safety": {"score": None, "weight": 0.3, "evaluated_count": 0, "total_count": 2},
+        },
+    })
+    assert rows[1] == ["通行能力", "80.0", "40%", "4/5"]
+    assert rows[2] == ["空间布局", "60.0", "30%", "3/4"]
+    assert rows[3] == ["使用安全", "无法评分", "30%", "0/2"]
+
+
+def test_formal_metric_rows_keep_backend_values_and_missing_evidence():
+    assessment = {
+        "key_metrics": [
+            {"metric_code": "door_width", "name": "门净宽", "value": 0.85, "unit": "m", "status": "evaluated"},
+            {"metric_code": "activity_space", "name": "活动空间", "value": None, "unit": "m²", "status": "not_evaluable", "reason": "activity_anchor_missing"},
+        ],
+        "not_evaluable": [
+            {"risk_name": "活动空间风险", "metric_code": "activity_space", "reason": "activity_anchor_missing"},
+        ],
+    }
+    rows = _formal_metric_rows(assessment)
+    assert rows[1] == ["门净宽", "0.85m", "已评估"]
+    assert rows[2] == ["活动空间", "—", "无法评估：activity_anchor_missing"]
+    assert _formal_not_evaluable_rows(assessment) == [["活动空间风险", "activity_anchor_missing"]]
