@@ -153,15 +153,25 @@ class ApiClient {
   Future<Report> report(int scanId) async =>
       Report.fromJson((await dio.get('/api/reports/scans/$scanId')).data);
 
+  Future<Map<String, dynamic>> assistantSuggestions(int scanId) async =>
+      Map<String, dynamic>.from(
+        (await dio.get('/api/assistant/scans/$scanId/suggestions')).data as Map,
+      );
+
   Future<Map<String, dynamic>> simulateRenovation(
-    int scanId,
-    String prompt,
-  ) async => Map<String, dynamic>.from(
+    int scanId, {
+    String? prompt,
+    List<int>? suggestionIds,
+  }) async => Map<String, dynamic>.from(
     (await dio.post(
           '/api/assistant/scans/$scanId/simulate',
-          data: {'prompt': prompt},
-        )).data
-        as Map,
+          data: {
+            if (prompt != null && prompt.trim().isNotEmpty)
+              'prompt': prompt.trim(),
+            if (suggestionIds != null && suggestionIds.isNotEmpty)
+              'suggestion_ids': suggestionIds,
+          },
+        )).data as Map,
   );
 
   Future<Map<String, dynamic>> compare(
