@@ -23,6 +23,8 @@ class _ReportPageState extends State<ReportPage> {
   Report? _report;
   String? _error;
   final _assistantController = TextEditingController();
+  List<Map<String, dynamic>> _suggestions = [];
+  final Set<int> _selectedSuggestionIds = {};
   Map<String, dynamic>? _assistantResult;
   bool _assistantBusy = false;
 
@@ -36,6 +38,7 @@ class _ReportPageState extends State<ReportPage> {
   void initState() {
     super.initState();
     _load();
+    _loadSuggestions();
   }
 
   Future<void> _load() async {
@@ -52,13 +55,34 @@ class _ReportPageState extends State<ReportPage> {
     }
   }
 
-  Future<void> _simulate(String prompt) async {
-    if (prompt.trim().isEmpty || _assistantBusy) return;
+  Future<void> _loadSuggestions() async {
+    try {
+      final data = await context
+          .read<ApiClient>()
+          .assistantSuggestions(widget.scan.id);
+      if (!mounted) return;
+      setState(() {
+        _suggestions = (data['suggestions'] as List? ?? const [])
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+        _selectedSuggestionIds.removeWhere(
+          (id) => !_suggestions.any((suggestion) => suggestion['id'] == id),
+        );
+      });
+    } catch (_) {
+      // 建议列表加载失败不阻塞报告页
+    }
+  }
+
+  Future<void> _runSimulation({String? prompt, List<int>? suggestionIds}) async {
+    if (_assistantBusy) return;
     setState(() => _assistantBusy = true);
     try {
       final result = await context.read<ApiClient>().simulateRenovation(
         widget.scan.id,
-        prompt.trim(),
+        prompt: prompt,
+        suggestionIds: suggestionIds,
       );
       if (!mounted) return;
       setState(() => _assistantResult = result);
@@ -259,8 +283,11 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Widget _renovationAssistant(BuildContext context) {
-    final comparison = _assistantResult?['comparison'] as Map?;
-    final improvements = comparison?['improvements'] as List? ?? const [];
+    Widget busyIndicator() => const SizedBox(
+      width: 16,
+      height: 16,
+      child: CircularProgressIndicator(strokeWidth: 2),
+    );
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -269,86 +296,183 @@ class _ReportPageState extends State<ReportPage> {
           children: [
             Text('AI 安全改造助手', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 4),
-            const Text('只模拟增加、移除、移动和尺寸调整；不会修改真实房间数据。'),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                ActionChip(
-                  label: const Text('模拟全部建议'),
-                  onPressed: () => _simulate('模拟全部建议'),
-                ),
-                ActionChip(
-                  label: const Text('移除主要障碍'),
-                  onPressed: () => _simulate('移除主要障碍'),
-                ),
-                ActionChip(
-                  label: const Text('最佳提升'),
-                  onPressed: () => _simulate('最佳提升'),
-                ),
-              ],
+            const Text(
+              '仅做内存沙盒模拟：不会修改真实房间、点云、结构数据或正式报告。',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 12),
+            Text(
+              '（一）根据装修建议预估评分',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            if (_suggestions.isEmpty)
+              const Text('暂无可用建议（未检测到中高风险项）')
+            else ...[
+              ..._suggestions.map((suggestion) {
+                final id = suggestion['id'] is int
+                    ? suggestion['id'] as int
+                    : int.tryParse(suggestion['id'].toString()) ?? 0;
+                final level = suggestion['level']?.toString() ?? '';
+                final levelText = switch (level) {
+                  'high' => '高风险',
+                  'medium' => '中风险',
+                  _ => '',
+                };
+                return CheckboxListTile(
+                  dense: true,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  value: _selectedSuggestionIds.contains(id),
+                  onChanged: (checked) => setState(() {
+                    if (checked == true) {
+                      _selectedSuggestionIds.add(id);
+                    } else {
+                      _selectedSuggestionIds.remove(id);
+                    }
+                  }),
+                  title: Text(
+                    '建议${suggestion['id']} · ${suggestion['name']}'
+                    '${levelText.isEmpty ? '' : '（$levelText）'}',
+                  ),
+                  subtitle: Text(suggestion['advice']?.toString() ?? ''),
+                );
+              }),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  onPressed:
+                      _assistantBusy || _selectedSuggestionIds.isEmpty
+                      ? null
+                      : () => _runSimulation(
+                          suggestionIds: _selectedSuggestionIds.toList()
+                            ..sort(),
+                        ),
+                  icon: _assistantBusy
+                      ? busyIndicator()
+                      : const Icon(Icons.play_arrow),
+                  label: const Text('模拟执行'),
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            Text(
+              '（二）自由改造评估',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
             TextField(
               controller: _assistantController,
               maxLength: 300,
               decoration: const InputDecoration(
                 border: OutlineInputBorder(),
-                hintText: '例如：把书架往墙边移动 30 厘米',
+                hintText: '例如：把床向左移动30厘米 / 在床边放一个60×40×50厘米的箱子',
               ),
-              onSubmitted: _simulate,
+              onSubmitted: (text) => _runSimulation(prompt: text),
             ),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
                 onPressed: _assistantBusy
                     ? null
-                    : () => _simulate(_assistantController.text),
+                    : () => _runSimulation(prompt: _assistantController.text),
                 icon: _assistantBusy
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                    ? busyIndicator()
                     : const Icon(Icons.auto_fix_high),
-                label: const Text('开始模拟'),
+                label: const Text('开始评估'),
               ),
             ),
             if (_assistantResult != null) ...[
               const Divider(height: 24),
-              Text(_assistantResult!['message']?.toString() ?? ''),
-              const SizedBox(height: 8),
-              Text(
-                '评分：${comparison?['before_score'] ?? '无法评分'} → ${comparison?['after_score'] ?? '无法评分'}'
-                '${comparison?['score_delta'] is num ? '（${(comparison!['score_delta'] as num) >= 0 ? '+' : ''}${comparison['score_delta']}）' : ''}',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              if (improvements.isNotEmpty)
-                ...improvements
-                    .take(5)
-                    .map(
-                      (item) => ListTile(
-                        dense: true,
-                        leading: const Icon(
-                          Icons.trending_up,
-                          color: Colors.green,
-                        ),
-                        title: Text(
-                          (item as Map)['name']?.toString() ?? '风险改善',
-                        ),
-                        subtitle: Text('${item['before']} → ${item['after']}'),
-                      ),
-                    ),
-              const Text(
-                '仅为沙盒模拟，不代表真实施工结果。',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
+              ..._assistantResultView(context),
             ],
           ],
         ),
       ),
     );
+  }
+
+  List<Widget> _assistantResultView(BuildContext context) {
+    final result = _assistantResult!;
+    final comparison = result['comparison'] is Map
+        ? result['comparison'] as Map
+        : const {};
+    final before = comparison['before_score'];
+    final after = comparison['after_score'];
+    final delta = comparison['score_delta'];
+    final metricChanges = (result['metric_changes'] as List? ?? const [])
+        .whereType<Map>()
+        .toList();
+    final riskChanges = (result['risk_changes'] as List? ?? const [])
+        .whereType<Map>()
+        .toList();
+    final qualitative = result['qualitative'] == true;
+    String fmtScore(Object? value) =>
+        value is num ? value.toStringAsFixed(1) : '无法评分';
+    String fmtDelta(Object? value) => value is num
+        ? '${value >= 0 ? '+' : ''}${value.toStringAsFixed(1)}'
+        : '—';
+    final widgets = <Widget>[
+      Text(
+        '当前分 ${fmtScore(before)} → 修改后分 ${fmtScore(after)}（Δ ${fmtDelta(delta)}）',
+        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+      ),
+    ];
+    if (qualitative) {
+      widgets.add(
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text('该建议当前只能提供定性建议，暂时无法精确计算评分变化。'),
+        ),
+      );
+    }
+    if (metricChanges.isNotEmpty) {
+      widgets.add(const SizedBox(height: 8));
+      widgets.add(
+        Text('关键指标变化', style: Theme.of(context).textTheme.titleSmall),
+      );
+      for (final item in metricChanges.take(6)) {
+        widgets.add(
+          Text(
+            '· ${item['name']}：${item['before']}${item['unit'] ?? ''}'
+            ' → ${item['after']}${item['unit'] ?? ''}',
+          ),
+        );
+      }
+    }
+    if (riskChanges.isNotEmpty) {
+      widgets.add(const SizedBox(height: 8));
+      widgets.add(
+        Text('风险等级变化', style: Theme.of(context).textTheme.titleSmall),
+      );
+      const levelNames = {'low': '低', 'medium': '中', 'high': '高'};
+      for (final item in riskChanges.take(6)) {
+        widgets.add(
+          Text(
+            '· ${item['name']}：${levelNames[item['before']] ?? item['before']}'
+            ' → ${levelNames[item['after']] ?? item['after']}',
+          ),
+        );
+      }
+    }
+    if (metricChanges.isEmpty && riskChanges.isEmpty && !qualitative) {
+      widgets.add(
+        const Padding(
+          padding: EdgeInsets.only(top: 8),
+          child: Text('该改造未引起正式空间指标变化，评分不变。'),
+        ),
+      );
+    }
+    widgets.add(
+      const Padding(
+        padding: EdgeInsets.only(top: 8),
+        child: Text(
+          '仅为沙盒模拟，不代表真实施工结果。',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
+      ),
+    );
+    return widgets;
   }
 
   Widget _structurePlanSection(
