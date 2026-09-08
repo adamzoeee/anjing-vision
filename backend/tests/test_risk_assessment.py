@@ -276,3 +276,158 @@ def test_assessment_file_rejects_non_json_input(tmp_path):
     source.write_text("ply")
     with pytest.raises(ValueError, match="must be a JSON"):
         build_risk_assessment_file(source, tmp_path / "risk_assessment.json")
+
+
+@pytest.mark.parametrize("entrypoint", ["evaluate", "assessment"])
+@pytest.mark.parametrize(
+    "code,updates,missing_field,reason",
+    [
+        ("door_width", {"value": float("nan")}, None, "metric_value_non_finite"),
+        ("door_width", {"value": float("inf")}, None, "metric_value_non_finite"),
+        ("activity_area", {"value": -float("inf")}, None, "metric_value_non_finite"),
+        ("door_width", {"value": True}, None, "metric_numeric_required"),
+        ("entrance_space", {"value": False}, None, "metric_numeric_required"),
+        ("door_width", {"value": "0.9"}, None, "metric_numeric_required"),
+        ("door_width", {"value": -0.1}, None, "metric_value_out_of_range"),
+        ("crowding", {"value": 1.1}, None, "metric_value_out_of_range"),
+        ("crowding", {"value": -0.1}, None, "metric_value_out_of_range"),
+        ("path_continuity", {"value": "true"}, None, "metric_boolean_required"),
+        ("path_obstruction", {"value": "false"}, None, "metric_boolean_required"),
+        ("path_continuity", {"value": 1}, None, "metric_boolean_required"),
+        ("path_obstruction", {"value": 0}, None, "metric_boolean_required"),
+        ("main_activity_area_safety", {"value": "False"}, None, "metric_boolean_required"),
+        ("door_width", {"value": None}, None, "metric_value_missing"),
+        ("door_width", {}, "value", "metric_value_missing"),
+        ("door_width", {}, "status", "invalid_metric_status"),
+        ("door_width", {"status": "safe"}, None, "invalid_metric_status"),
+        ("door_width", {"status": None}, None, "invalid_metric_status"),
+        ("door_width", {"unit": "cm"}, None, "metric_unit_mismatch"),
+        ("door_width", {"category": "layout"}, None, "metric_category_mismatch"),
+        ("door_width", {"confidence": float("nan")}, None, "invalid_metric_confidence"),
+        ("door_width", {"confidence": float("inf")}, None, "invalid_metric_confidence"),
+        ("door_width", {"confidence": True}, None, "invalid_metric_confidence"),
+        ("door_width", {"confidence": "high"}, None, "invalid_metric_confidence"),
+        ("door_width", {"confidence": 1.1}, None, "invalid_metric_confidence"),
+    ],
+)
+def test_external_metric_validation_prevents_false_safe_results(entrypoint, code, updates, missing_field, reason):
+    payload = _payload()
+    for metric in payload["metrics"]:
+        metric["confidence"] = 0.8
+    target = next(item for item in payload["metrics"] if item["metric_code"] == code)
+    target.update(updates)
+    if missing_field:
+        target.pop(missing_field)
+    # Stored coverage is not authoritative after external evidence is validated.
+    payload["coverage"] = {
+        "evaluable_count": 15, "not_evaluable_count": 0, "total_count": 15, "percent": 100.0,
+    }
+    before = json.dumps(payload, sort_keys=True)
+
+    result = evaluate_formal_metrics(payload) if entrypoint == "evaluate" else build_risk_assessment(payload)
+    risks = result if entrypoint == "evaluate" else result["risks"]
+    risk = next(item for item in risks if item["metric_code"] == code)
+    assert risk["assessment_status"] == "not_evaluable"
+    assert risk["measured_value"] is None
+    assert risk["risk_level"] is None
+    assert risk["reason"] == reason
+    assert len([item for item in risks if item["assessment_status"] == "evaluated"]) == 14
+    if entrypoint == "assessment":
+        metric = next(item for item in result["metrics"] if item["metric_code"] == code)
+        assert metric["status"] == "not_evaluable"
+        assert metric["value"] is None
+        assert metric["reason"] == reason
+        assert result["confidence"]["assessment_coverage"] == {
+            "evaluated_count": 14, "not_evaluable_count": 1, "total_count": 15, "percent": 93.3,
+        }
+        assert result["confidence"]["metric_coverage"]["evaluable_count"] == 14
+        assert result["confidence"]["metric_coverage"]["percent"] == 93.3
+        assert result["confidence"]["confidence_sample_count"] == 14
+        assert result["confidence"]["evidence_confidence"] == 0.8
+    assert json.dumps(payload, sort_keys=True) == before
+    json.dumps(result, allow_nan=False)
+
+
+@pytest.mark.parametrize("confidence_field", ["missing", "null"])
+def test_missing_confidence_does_not_invalidate_a_real_measurement(confidence_field):
+    payload = _payload()
+    if confidence_field == "missing":
+        for metric in payload["metrics"]:
+            metric.pop("confidence")
+    assessment = build_risk_assessment(payload)
+    assert assessment["overall"]["score"] == 100.0
+    assert assessment["confidence"]["assessment_coverage"]["evaluated_count"] == 15
+    assert assessment["confidence"]["evidence_confidence"] is None
+
+
+@pytest.mark.parametrize("code", ["door_width", "main_passage_width", "furniture_spacing", "bed_surrounding_space"])
+def test_real_zero_distance_remains_a_high_risk_measurement(code):
+    assessment = build_risk_assessment(_payload({code: 0.0}))
+    risk = next(item for item in assessment["risks"] if item["metric_code"] == code)
+    assert risk["assessment_status"] == "evaluated"
+    assert risk["measured_value"] == 0.0
+    assert risk["risk_level"] == "high"
+
+
+@pytest.mark.parametrize(
+    "code,value,level",
+    [
+        ("path_continuity", True, "low"),
+        ("path_continuity", False, "high"),
+        ("path_obstruction", False, "low"),
+        ("path_obstruction", True, "high"),
+        ("main_activity_area_safety", True, "low"),
+        ("main_activity_area_safety", False, "high"),
+    ],
+)
+def test_true_boolean_observations_keep_their_existing_rule_meaning(code, value, level):
+    assessment = build_risk_assessment(_payload({code: value}))
+    risk = next(item for item in assessment["risks"] if item["metric_code"] == code)
+    assert risk["assessment_status"] == "evaluated"
+    assert risk["measured_value"] is value
+    assert risk["risk_level"] == level
+
+
+def test_truncated_catalog_cannot_shrink_coverage_denominator_and_invent_a_score():
+    core = {"main_passage_width", "door_width", "path_continuity", "furniture_spacing", "bed_surrounding_space"}
+    payload = _payload()
+    payload["metrics"] = [item for item in payload["metrics"] if item["metric_code"] in core]
+    before = json.dumps(payload, sort_keys=True)
+    assessment = build_risk_assessment(payload)
+    assert len(assessment["metrics"]) == 15
+    assert len(assessment["risks"]) == 15
+    assert assessment["confidence"]["assessment_coverage"] == {
+        "evaluated_count": 5, "not_evaluable_count": 10, "total_count": 15, "percent": 33.3,
+    }
+    assert assessment["overall"]["score"] is None
+    assert assessment["overall"]["status"] == "insufficient_data"
+    assert {item["reason"] for item in assessment["not_evaluable"]} == {"metric_missing_from_payload"}
+    assert all(item["risk_level"] is None for item in assessment["not_evaluable"])
+    assert json.dumps(payload, sort_keys=True) == before
+
+
+@pytest.mark.parametrize("payload", [{}, {"metrics": []}, {"metrics": None}])
+def test_absent_metric_catalog_is_unknown_and_never_safe(payload):
+    assessment = build_risk_assessment(payload)
+    assert assessment["overall"]["score"] is None
+    assert assessment["overall"]["status"] == "insufficient_data"
+    assert assessment["confidence"]["assessment_coverage"] == {
+        "evaluated_count": 0, "not_evaluable_count": 15, "total_count": 15, "percent": 0.0,
+    }
+    assert assessment["top_risks"] == []
+    assert all(item["risk_level"] is None for item in assessment["risks"])
+    assert all(item["score"] is None for item in assessment["category_scores"].values())
+    json.dumps(assessment, allow_nan=False)
+
+
+@pytest.mark.parametrize("malformation", ["duplicate", "unknown"])
+def test_unified_assessment_rejects_ambiguous_metric_catalog(malformation):
+    payload = _payload()
+    if malformation == "duplicate":
+        payload["metrics"].append(dict(payload["metrics"][0]))
+    else:
+        payload["metrics"].append(payload["metrics"][0] | {"metric_code": "invented_metric"})
+    before = json.dumps(payload, sort_keys=True)
+    with pytest.raises(ValueError, match="duplicate metric codes|unknown formal metric codes"):
+        build_risk_assessment(payload)
+    assert json.dumps(payload, sort_keys=True) == before

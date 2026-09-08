@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from pipeline.spatial_metrics import (
@@ -232,3 +234,82 @@ def test_entrance_space_requires_explicit_door_and_area():
         "walkable_regions": {"door_connected_area_m2": 4.0},
     })
     assert metric["reason"] == "entrance_door_missing"
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), True, False])
+def test_confidence_normalization_does_not_invent_evidence_for_invalid_numbers(value):
+    assert confidence_value(value) is None
+    assert confidence_value(value, default=0.8) is None
+
+
+@pytest.mark.parametrize(
+    "code,value,reason",
+    [
+        ("door_width", float("nan"), "metric_value_non_finite"),
+        ("door_width", float("inf"), "metric_value_non_finite"),
+        ("entrance_space", -float("inf"), "metric_value_non_finite"),
+        ("door_width", True, "metric_numeric_required"),
+        ("activity_area", False, "metric_numeric_required"),
+        ("door_width", "0.86", "metric_numeric_required"),
+        ("door_width", -0.01, "metric_value_out_of_range"),
+        ("activity_area", -1.0, "metric_value_out_of_range"),
+        ("crowding", 1.01, "metric_value_out_of_range"),
+        ("crowding", -0.01, "metric_value_out_of_range"),
+        ("path_continuity", "true", "metric_boolean_required"),
+        ("path_obstruction", "false", "metric_boolean_required"),
+        ("path_continuity", 1, "metric_boolean_required"),
+        ("path_obstruction", 0, "metric_boolean_required"),
+        ("main_activity_area_safety", "False", "metric_boolean_required"),
+        ("door_width", None, "metric_value_missing"),
+    ],
+)
+def test_catalog_builder_keeps_invalid_measurements_unknown(code, value, reason):
+    metric = build_metric(code, value=value, status="derived", confidence=0.8)
+    assert metric["status"] == "not_evaluable"
+    assert metric["value"] is None
+    assert metric["reason"] == reason
+    json.dumps(metric, allow_nan=False)
+
+
+@pytest.mark.parametrize("status", [None, "", "safe"])
+def test_catalog_builder_does_not_evaluate_an_invalid_status(status):
+    metric = build_metric("door_width", value=0.86, status=status)
+    assert metric["status"] == "not_evaluable"
+    assert metric["value"] is None
+    assert metric["reason"] == "invalid_metric_status"
+
+
+@pytest.mark.parametrize(
+    "confidence", [float("nan"), float("inf"), -float("inf"), True, False, "high", 1.1, -0.1],
+)
+def test_catalog_builder_requires_valid_direct_confidence(confidence):
+    metric = build_metric("door_width", value=0.86, status="measured", confidence=confidence)
+    assert metric["status"] == "not_evaluable"
+    assert metric["value"] is None
+    assert metric["confidence"] is None
+    assert metric["reason"] == "invalid_metric_confidence"
+    json.dumps(metric, allow_nan=False)
+
+
+@pytest.mark.parametrize("code", ["path_continuity", "path_obstruction", "main_activity_area_safety"])
+@pytest.mark.parametrize("value", [True, False])
+def test_catalog_builder_preserves_actual_boolean_measurements(code, value):
+    metric = build_metric(code, value=value, status="derived")
+    assert metric["status"] == "derived"
+    assert metric["value"] is value
+    assert metric["confidence"] is None
+
+
+def test_metric_payload_coverage_counts_only_normalized_evidence_without_mutating_input():
+    metrics = _complete_unavailable_metric_set()
+    metrics[0] = build_metric(metrics[0]["metric_code"], value=0.8, status="derived")
+    metrics[1] = build_metric(metrics[1]["metric_code"], value=0.8, status="derived")
+    metrics[1]["value"] = float("inf")
+    before = json.dumps(metrics, sort_keys=True)
+    payload = build_metric_payload(metrics)
+    assert payload["coverage"] == {
+        "evaluable_count": 1, "not_evaluable_count": 14, "total_count": 15, "percent": 6.7,
+    }
+    assert payload["metrics"][1]["value"] is None
+    assert json.dumps(metrics, sort_keys=True) == before
+    json.dumps(payload, allow_nan=False)
