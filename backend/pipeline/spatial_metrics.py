@@ -7,7 +7,6 @@ reports, and clients.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import math
 from typing import Any
 
 
@@ -44,67 +43,10 @@ def confidence_value(value: Any, *, default: float | None = None) -> float | Non
     if value is None:
         return default
     if isinstance(value, bool):
-        return None
+        return 1.0 if value else 0.0
     if isinstance(value, (int, float)):
-        if not math.isfinite(value):
-            return None
         return round(max(0.0, min(1.0, float(value))), 4)
     return _CONFIDENCE_LEVELS.get(str(value).strip().lower(), default)
-
-
-def normalize_formal_metric(metric: dict) -> dict:
-    """Keep invalid external evidence unknown, without mutating the input.
-
-    JSON booleans must be actual booleans; numeric measurements must be finite.
-    Unit/category mismatches cannot be repaired by guessing a conversion.
-    """
-    code = metric.get("metric_code")
-    if code not in METRIC_DEFINITION_BY_CODE:
-        raise ValueError(f"unknown formal metric code: {code}")
-    definition = METRIC_DEFINITION_BY_CODE[code]
-    value = metric.get("value")
-    confidence = metric.get("confidence")
-    valid_confidence = confidence is None or (
-        isinstance(confidence, (int, float))
-        and not isinstance(confidence, bool)
-        and math.isfinite(confidence)
-        and 0 <= confidence <= 1
-    )
-    reason = None
-    if metric.get("status") not in METRIC_STATUSES:
-        reason = "invalid_metric_status"
-    elif metric.get("unit") != definition["unit"]:
-        reason = "metric_unit_mismatch"
-    elif metric.get("category") != definition["category"]:
-        reason = "metric_category_mismatch"
-    elif not valid_confidence:
-        reason = "invalid_metric_confidence"
-    elif metric["status"] != "not_evaluable":
-        if value is None:
-            reason = "metric_value_missing"
-        elif definition["unit"] == "boolean":
-            if not isinstance(value, bool):
-                reason = "metric_boolean_required"
-        elif isinstance(value, bool) or not isinstance(value, (int, float)):
-            reason = "metric_numeric_required"
-        elif not math.isfinite(value):
-            reason = "metric_value_non_finite"
-        elif value < 0 or (definition["unit"] == "ratio" and value > 1):
-            reason = "metric_value_out_of_range"
-
-    result = {
-        **metric,
-        "name": metric.get("name") or definition["name"],
-        "category": definition["category"],
-        "unit": definition["unit"],
-        "confidence": confidence if valid_confidence else None,
-    }
-    if reason or metric.get("status") == "not_evaluable":
-        result.update(
-            status="not_evaluable", value=None,
-            reason=reason or metric.get("reason") or "metric_not_evaluable",
-        )
-    return result
 
 
 @dataclass(frozen=True)
@@ -182,10 +124,9 @@ def build_metric(
         definition = METRIC_DEFINITION_BY_CODE[metric_code]
     except KeyError as exc:
         raise ValueError(f"unknown formal metric code: {metric_code}") from exc
-    record = normalize_formal_metric(dict(
-        metric_code=metric_code,
-        category=definition["category"],
-        name=definition["name"],
+    record = metric_record(
+        metric_code,
+        definition["name"],
         value=value,
         unit=definition["unit"],
         status=status,
@@ -193,9 +134,8 @@ def build_metric(
         position=position,
         source=source,
         reason=reason,
-    ))
-    category = record.pop("category")
-    return {"category": category, **metric_record(**record)}
+    )
+    return {"category": definition["category"], **record}
 
 
 def unavailable_metric(metric_code: str, reason: str, *, source: dict | str) -> dict:
@@ -216,7 +156,6 @@ def build_metric_payload(metrics: list[dict]) -> dict:
         raise ValueError(f"missing formal metric codes: {', '.join(missing)}")
     if unknown:
         raise ValueError(f"unknown formal metric codes: {', '.join(unknown)}")
-    metrics = [normalize_formal_metric(item) for item in metrics]
     by_category = {
         category: [item for item in metrics if item["category"] == category]
         for category in ("mobility", "layout", "usage_safety")
