@@ -8,6 +8,7 @@ param(
     [string]$BackendRoot = "",
     [string]$FullBundlePath = "",
     [string]$SupplementBundlePath = "",
+    [string]$WindowBundlePath = "",
     [switch]$With45
 )
 
@@ -54,6 +55,12 @@ if ($SupplementBundlePath) {
     Expand-Archive -LiteralPath $SupplementBundlePath -DestinationPath $BackendRoot -Force
 } else {
     Write-Host "[3/5] 未提供最新结果补充包；将保留完整包内的旧结果"
+}
+
+if ($WindowBundlePath) {
+    $WindowBundlePath = (Resolve-Path -LiteralPath $WindowBundlePath).Path
+    Write-Host "       应用第三个包：窗户增量补充包..."
+    Expand-Archive -LiteralPath $WindowBundlePath -DestinationPath $BackendRoot -Force
 }
 
 if ($With45) {
