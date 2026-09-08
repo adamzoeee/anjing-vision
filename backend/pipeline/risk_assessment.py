@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.rules import FORMAL_CATEGORY_WEIGHTS, FORMAL_RULES
+from pipeline.spatial_metrics import (
+    METRIC_DEFINITION_BY_CODE,
+    build_metric_payload,
+    normalize_formal_metric,
+    unavailable_metric,
+)
 
 
 RISK_LEVELS = frozenset({"low", "medium", "high"})
@@ -106,6 +112,7 @@ def evaluate_formal_metrics(metric_payload: dict) -> list[dict]:
     results = []
     severity_order = {"high": 2, "medium": 1}
     for metric in metric_payload.get("metrics", []):
+        metric = normalize_formal_metric(metric)
         code = metric["metric_code"]
         rules = rules_by_metric.get(code, [])
         if not rules:
@@ -290,6 +297,14 @@ KEY_METRIC_CODES = (
 
 def build_risk_assessment(metric_payload: dict) -> dict:
     """Build the single backend-owned formal assessment payload."""
+    metrics = list(metric_payload.get("metrics") or [])
+    present = {item.get("metric_code") for item in metrics}
+    # A truncated/imported artifact must not shrink the official denominator.
+    metrics.extend(
+        unavailable_metric(code, "metric_missing_from_payload", source="spatial_metrics")
+        for code in METRIC_DEFINITION_BY_CODE if code not in present
+    )
+    metric_payload = {**metric_payload, **build_metric_payload(metrics)}
     risks = evaluate_formal_metrics(metric_payload)
     scoring = score_formal_risks(risks)
     confidence = summarize_assessment_confidence(metric_payload, risks)
