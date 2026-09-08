@@ -569,8 +569,32 @@
           });
       })
       .then(function (manifest) {
-        // Pure point cloud: do not depend on or render structural overlays.
-        $('scene-sub').textContent = '纯 RGB 点云 · 结构数据保留在空间结构页面';
+        if (!manifest.window_visual) return false;
+        return fetch(manifest.window_visual, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
+          .then(function (response) { if (!response.ok) throw new Error('窗户展示层加载失败'); return response.json(); })
+          .then(function (layer) {
+            if (layer.purpose !== 'visual-only' || layer.vertices.length !== 4 || layer.uv.length !== 4 ||
+                !layer.texture.startsWith('data:image/png;base64,')) throw new Error('窗户展示层格式错误');
+            return new Promise(function (resolve, reject) {
+              new THREE.TextureLoader().load(layer.texture, function (texture) {
+                var geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute([].concat.apply([], layer.vertices), 3));
+                var uv = [];
+                layer.uv.forEach(function (p) { uv.push(p[0], 1 - p[1]); });
+                geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+                geometry.setIndex([0, 1, 2, 0, 2, 3]);
+                var mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide }));
+                mesh.userData.purpose = 'visual-only';
+                pcdGroup.add(mesh);
+                resolve(true);
+              }, undefined, reject);
+            });
+          });
+      })
+      .then(function (hasWindowVisual) {
+        $('scene-sub').textContent = hasWindowVisual
+          ? 'RGB 点云 + 窗户实拍展示层 · 展示层不参与尺寸和评分'
+          : '纯 RGB 点云 · 结构数据保留在空间结构页面';
         $('stats').textContent = '';
         setProgress(1, '完成');
         setTimeout(function () { $('overlay').style.display = 'none'; }, 250);

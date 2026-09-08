@@ -2,7 +2,7 @@
 
 No plane filling, whole-room filtering, or changes to production selection.
 """
-import json,hashlib,argparse
+import json,hashlib,argparse,base64
 from pathlib import Path
 import cv2
 import numpy as np
@@ -69,6 +69,10 @@ def extract(name,folder,t,ref,mask,report):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--name',default='window_observed_complete_v1')
+    parser.add_argument('--single-curtain', action='store_true',
+                        help='Use one reference for the entire right curtain to avoid overlapping folds')
+    parser.add_argument('--visual-glass', action='store_true',
+                        help='Export a separate real-RGB glass display layer, excluded from the PLY')
     args=parser.parse_args();target=DEST/(args.name+'.ply');assert not target.exists()
     primary=json.loads((DEST/'integration_components_extent.json').read_text())['transform']
     left=json.loads((DEST/'window_local_components_rim_v2_left.json').read_text())
@@ -83,7 +87,9 @@ def main():
         ('curtain_left',ROOT/'data/work/46/window_left_coverage_20260907',left,30,mask_rect((0,200,51,91))),
         ('wall_left_coverage',ROOT/'data/work/46/window_left_coverage_20260907',left,30,mask_rect((0,160,0,51))),
     ]
-    report={'components':{}};ps=[];cs=[];labels=[]
+    if args.single_curtain:
+        selections=[row for row in selections if row[0]!='curtain_right_edge']
+    report={'components':{},'single_curtain':args.single_curtain};ps=[];cs=[];labels=[]
     for label,folder,t,ref,mask in selections:
         p,c=extract(label,folder,t,ref,mask,report['components'])
         if ps:
@@ -109,5 +115,37 @@ def main():
         candidate_sha256=hashlib.sha256(target.read_bytes()).hexdigest(),status='candidate',
         window_bounds=[p.min(0).tolist(),p.max(0).tolist()])
     target.with_suffix('.json').write_text(json.dumps(report,indent=2));print(json.dumps(report),flush=True)
+    if args.visual_glass:
+        from audit_scan46_window_camera import camera
+        maps,images,_=arrays(DEST)
+        world=transform(maps[25],primary)
+        K,rot,origin,error=camera(world)
+        if error>1.5:raise RuntimeError('Display camera reprojection failed')
+        # Include the observed jamb/reveal border in the visual-only opening.
+        # The physical sill and curtain surface remain independent observations.
+        pixels=np.array([[43,20],[165,20],[160,215],[36,205]],float)
+        border=np.vstack([world[22:28,59:145].reshape(-1,3),
+                          world[38:191,46:51].reshape(-1,3)])
+        center=border.mean(0);_,_,vt=np.linalg.svd(border-center,full_matrices=False)
+        normal=vt[-1];plane=np.r_[normal,-normal@center]
+        rays=np.c_[pixels,np.ones(4)]@np.linalg.inv(K).T@rot
+        depth=-(origin@normal+plane[3])/(rays@normal)
+        vertices=origin+rays*depth[:,None]
+        if not np.all((depth>0)&(depth<5)):raise RuntimeError('Display plane depth failed')
+        rgb=np.asarray(images[25],np.uint8)
+        ok,png=cv2.imencode('.png',cv2.cvtColor(rgb,cv2.COLOR_RGB2BGR));assert ok
+        layer=dict(purpose='visual-only',source_frame=150,camera_rms_px=error,
+                   vertices=vertices.tolist(),uv=(pixels/223).tolist(),
+                   texture='data:image/png;base64,'+base64.b64encode(png).decode(),
+                   pointcloud=target.name,excluded_from_measurements=True)
+        target.with_suffix('.visual.json').write_text(json.dumps(layer))
+        # Software-render-only samples verify the same plane and real RGB.
+        mask=np.zeros((224,224),np.uint8);cv2.fillPoly(mask,[pixels.astype(np.int32)],1)
+        yy,xx=np.nonzero(mask);rays=np.c_[xx,yy,np.ones(len(xx))]@np.linalg.inv(K).T@rot
+        depth=-(origin@normal+plane[3])/(rays@normal)
+        display=o.geometry.PointCloud(result)
+        display+=o.geometry.PointCloud(o.utility.Vector3dVector(origin+rays*depth[:,None]))
+        display.colors=o.utility.Vector3dVector(np.vstack([np.asarray(result.colors),rgb[yy,xx]/255.]))
+        o.io.write_point_cloud(str(target.with_name(target.stem+'_display_qa.ply')),display)
 
 if __name__=='__main__':main()

@@ -91,6 +91,10 @@ def preview_manifest(
         "scan_id": scan_id,
         "name": scan.project.name if scan.project else f"扫描 #{scan_id}",
         "ply": f"/api/preview/{scan_id}/scene.ply?v={preview_version}",
+        "window_visual": (
+            f"/api/preview/{scan_id}/window-visual.json?v={preview_version}"
+            if preview_ply.with_suffix('.visual.json').is_file() else None
+        ),
         "pointcloud_repair_surface": bool(
             calibrated_structure_json.is_file() or structure_json.is_file()
         ),
@@ -107,6 +111,22 @@ def preview_manifest(
         "alignment": alignment,
         "status": scan.status,
     }
+
+
+@router.get("/{scan_id}/window-visual.json", response_class=FileResponse)
+def preview_window_visual(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    scan = db.get(Scan, scan_id)
+    if scan is None or scan.project.org_id != org_id:
+        raise HTTPException(404, "扫描任务不存在")
+    path = _selected_preview_ply(_work_dir(scan_id, settings)).with_suffix('.visual.json')
+    if not path.is_file():
+        raise HTTPException(404, "窗户展示层不存在")
+    return FileResponse(path, media_type="application/json", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/{scan_id}/gaussian.ply", response_class=FileResponse)
