@@ -208,10 +208,12 @@ def _bfs(grid, origin, start_xy, goal_xy, goal_box=None):
     return None
 
 
-def _corridor_width(grid, origin, start_xy, goal_xy) -> tuple[float | None, list | None]:
+def _corridor_width(
+    grid, origin, start_xy, goal_xy,
+) -> tuple[float | None, list | None, list[float]]:
     """沿门→床主轴扫描线的最窄自由宽度（与 passage_metrics 同思路）。"""
     if grid.size == 0:
-        return None, None
+        return None, None, []
     def cell_of(xy):
         return int((xy[1] - origin[1]) / CELL), int((xy[0] - origin[0]) / CELL)
     start = np.asarray(cell_of(start_xy), dtype=float)
@@ -219,11 +221,12 @@ def _corridor_width(grid, origin, start_xy, goal_xy) -> tuple[float | None, list
     axis = goal - start
     length = float(np.linalg.norm(axis))
     if length < 1e-9:
-        return None, None
+        return None, None, []
     axis_u = axis / length
     perp = np.array([1.0, 0.0]) if abs(axis_u[1]) > abs(axis_u[0]) else np.array([0.0, 1.0])
     best = None
     best_point = None
+    widths: list[float] = []
     for t in range(int(length) + 1):
         base = np.array([round(start[0] + axis_u[0] * t), round(start[1] + axis_u[1] * t)])
         segments, run = [], []
@@ -246,10 +249,11 @@ def _corridor_width(grid, origin, start_xy, goal_xy) -> tuple[float | None, list
         else:
             seg = min(segments, key=lambda pair: min(abs(pair[0]), abs(pair[1])))
         width = float(seg[1] - seg[0] + 1) * CELL
+        widths.append(width)
         if best is None or width < best:
             best = width
             best_point = [origin[0] + base[1] * CELL, origin[1] + base[0] * CELL, 0.0]
-    return best, best_point
+    return best, best_point, widths
 
 
 def _path_obstacle_squeeze(grid, origin, cell, path, obstacles) -> float | None:
@@ -331,7 +335,7 @@ def compute_metrics(geo: dict) -> list[dict]:
     if door is not None:
         record("door_width", round(float(door["size"][0]), 3),
                position={"opening_id": door.get("instance_id")})
-    # 家具间距 / 床侧净空 / 床周边 / 离墙
+    # 家具间距仅作测量；床侧净空忽略贴墙侧，仅考虑可使用侧的家具障碍。
     gaps = []
     bed = next((b for b in f if b["label"] in {"bed", "床"}), None)
     bed_gaps = []
@@ -362,19 +366,32 @@ def compute_metrics(geo: dict) -> list[dict]:
         gap, item, wall = min(wall_gaps, key=lambda t: t[0])
         record("wall_furniture_clearance", round(gap, 3),
                position={"object_ids": [item["id"]]})
-    if bed is not None:
+    else:
+        record("wall_furniture_clearance", None, status="not_evaluable",
+               reason="wall_geometry_unavailable")
+    if bed is not None and geo["walls"]:
         bed_wall = min(_obb_gap(bed, w) for w in geo["walls"])
         record("bed_wall_distance", round(bed_wall, 3), position={"object_ids": [bed["id"]]})
-    # 拥挤度 = 家具占地 / 房间面积
-    furniture_area = sum(b["size"][0] * b["size"][1] for b in f)
-    record("crowding", round(min(furniture_area / max(room_area, 1e-6), 1.0), 3))
+    else:
+        record("bed_wall_distance", None, status="not_evaluable",
+               reason="wall_or_bed_geometry_unavailable")
+    # 拥挤度 = 家具占地并集 / 房间面积；栅格天然避免重叠重复计数。
+    furniture_grid = np.zeros(build_grid(geo)[0].shape, dtype=bool)
+    _, furniture_origin, furniture_cell = build_grid(geo)
+    for box in f:
+        for row, col in _box_cells(box, furniture_origin, furniture_cell, furniture_grid.shape):
+            furniture_grid[row, col] = True
+    furniture_area = float(furniture_grid.sum()) * furniture_cell * furniture_cell
+    record("crowding", round(min(furniture_area / max(room_area, 1e-6), 1.0), 4),
+           position={"furniture_area_m2": round(furniture_area, 3),
+                     "room_area_m2": round(room_area, 3)})
     # 栅格通路
     grid, origin, cell = build_grid(geo)
     if door is not None and bed is not None:
         door_xy = door_center[:2] if door_center is not None else None
         bed_xy = bed["center"][:2]
         path = _bfs(grid, origin, door_xy, bed_xy, goal_box=bed)
-        width, narrow = _corridor_width(grid, origin, door_xy, bed_xy)
+        width, narrow, width_profile = _corridor_width(grid, origin, door_xy, bed_xy)
         if path is not None:
             record("path_continuity", True)
             plen = 0.0
@@ -389,12 +406,13 @@ def compute_metrics(geo: dict) -> list[dict]:
                     math.dist(p, o["center"][:2]) for p in path) < 0.30
                 for o in geo["obstacles"]) or (squeeze is not None and squeeze < 0.30)
             record("path_obstruction", obstructed)
-            record("main_activity_area_safety", not obstructed)
-            width, narrow = _corridor_width(grid, origin, door_xy, bed_xy)
+            record("main_activity_area_safety", not obstructed and width is not None and width >= 0.30)
             if width is not None:
                 if squeeze is not None:
                     width = min(width, squeeze)
-                record("main_passage_width", round(width, 3), position={"narrowest": narrow})
+                typical = float(np.median(width_profile)) if width_profile else width
+                typical = min(typical, float(door["size"][0]))
+                record("main_passage_width", round(typical, 3), position={"path_id": "door_to_bed"})
                 record("minimum_passage_width", round(width, 3), position={"narrowest": narrow})
         else:
             record("path_continuity", False)
@@ -408,20 +426,18 @@ def compute_metrics(geo: dict) -> list[dict]:
     if door is not None and door_center is not None:
         record("entrance_space",
                round(_door_connected_area(grid, origin, cell, door_center[:2]), 3))
-    # 活动区：房间中央 60% 区域自由面积
-    cx0 = geo["lo"][0] + 0.2 * (geo["hi"][0] - geo["lo"][0])
-    cx1 = geo["lo"][0] + 0.8 * (geo["hi"][0] - geo["lo"][0])
-    cy0 = geo["lo"][1] + 0.2 * (geo["hi"][1] - geo["lo"][1])
-    cy1 = geo["lo"][1] + 0.8 * (geo["hi"][1] - geo["lo"][1])
-    free_activity = 0
-    for r in range(grid.shape[0]):
-        for c in range(grid.shape[1]):
-            if grid[r, c]:
-                continue
-            x, y = origin[0] + c * cell, origin[1] + r * cell
-            if cx0 <= x <= cx1 and cy0 <= y <= cy1:
-                free_activity += 1
-    record("activity_area", round(free_activity * cell * cell, 2))
+    # 活动区使用从入口可达的连续自由地面，与正式报告口径一致。
+    if door is not None and door_center is not None:
+        record("activity_area", round(_door_connected_area(
+            grid, origin, cell, door_center[:2], person_radius=0.0
+        ), 3),
+               position={"region": "entrance_connected_free_floor"})
+    # 任意累计建议都必须得到完整指标契约；家具被移除后，没有证据的指标明确标为不可评估。
+    present = {item["metric_code"] for item in metrics}
+    for code in METRIC_DEFINITION_BY_CODE:
+        if code not in present:
+            record(code, None, status="not_evaluable",
+                   reason="geometry_unavailable_after_simulation")
     return metrics
 
 

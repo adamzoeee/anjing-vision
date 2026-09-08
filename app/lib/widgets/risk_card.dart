@@ -31,9 +31,12 @@ class RiskCard extends StatelessWidget {
       if (risk.advice != null && risk.level != 'low' && risk.level != 'green')
         '建议：${risk.advice}',
     ];
-    final subtitle = risk.assessmentStatus == 'not_evaluable' && risk.metricCode != null
-        ? '当前数据不足，无法可靠评估该项风险${risk.reason == null ? '' : '（${risk.reason}）'}'
-        : (risk.metricCode == null ? (risk.measure?.toString() ?? '') : details.join('\n'));
+    final subtitle =
+        risk.assessmentStatus == 'not_evaluable' && risk.metricCode != null
+        ? '当前空间数据不足，暂无法评估。'
+        : (risk.metricCode == null
+              ? (risk.measure?.toString() ?? '')
+              : details.join('\n'));
     return Card(
       child: ListTile(
         leading: Icon(switch (risk.level) {
@@ -44,8 +47,11 @@ class RiskCard extends StatelessWidget {
         }, color: color),
         title: Text(risk.name),
         subtitle: Text(subtitle),
-        trailing: Text(levelText,
-            style: TextStyle(color: color, fontWeight: FontWeight.bold)),
-      ));
+        trailing: Text(
+          levelText,
+          style: TextStyle(color: color, fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
   }
 }

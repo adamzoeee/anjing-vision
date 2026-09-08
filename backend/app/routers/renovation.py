@@ -137,5 +137,5 @@ def simulate_renovation(
         "qualitative": result["qualitative"],
         "message": message,
         "disclaimer": "仅为内存沙盒模拟：未修改真实房间、点云、结构数据或正式报告；"
-                      "评分由正式风险体系根据重新计算的空间指标得出。",
+                      "建议评分以所选整改成功落实为前提，并按正式风险权重重算。",
     }

@@ -155,7 +155,7 @@ void main() {
     expect(find.text('清理通道杂物'), findsOneWidget);
   });
 
-  testWidgets('无风险和无建议时显示明确空状态', (tester) async {
+  testWidgets('无风险和无建议时显示明确空状态且不显示标注视图', (tester) async {
     adapter.onGet(
       '/api/reports/scans/12',
       (server) => server.reply(200, {
@@ -163,7 +163,7 @@ void main() {
         'score': 96,
         'risks': [],
         'advice': [],
-        'images': [],
+        'images': ['/static/12/legacy-annotation.png'],
         'calibrated': 0,
       }),
     );
@@ -176,12 +176,17 @@ void main() {
     expect(find.text('未检测到风险项'), findsOneWidget);
     expect(find.text('无需改造建议'), findsOneWidget);
     expect(find.textContaining('未完成尺寸标定'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('暂无标注图'),
-      300,
-      scrollable: find.byType(Scrollable).first,
+    expect(find.text('标注视图'), findsNothing);
+    expect(find.text('暂无标注图'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Image &&
+            widget.image is NetworkImage &&
+            (widget.image as NetworkImage).url.contains('legacy-annotation'),
+      ),
+      findsNothing,
     );
-    expect(find.text('暂无标注图'), findsOneWidget);
   });
 
   testWidgets('正式评估显示覆盖率分类分数Top风险和不可评估项', (tester) async {
@@ -246,7 +251,7 @@ void main() {
               {
                 'category': 'mobility',
                 'metric_code': 'main_passage_width',
-                'name': '主要通道净宽',
+                'name': '主通道典型净宽',
                 'value': 0.48,
                 'unit': 'm',
                 'status': 'derived',
@@ -269,15 +274,17 @@ void main() {
     await tester.pumpWidget(reportApp());
     await tester.pumpAndSettle();
     expect(find.text('正式空间风险评估'), findsOneWidget);
+    expect(find.text('2D 结构图（按测量结果绘制）'), findsOneWidget);
+    expect(find.textContaining('2.5D'), findsNothing);
     expect(find.text('评估覆盖率：86.7%'), findsOneWidget);
     expect(find.text('综合置信度：82.0%'), findsOneWidget);
     expect(find.text('通行能力（40.0%）'), findsOneWidget);
     await tester.scrollUntilVisible(
-      find.text('主要通道净宽：0.48 m'),
+      find.text('主通道典型净宽：0.48 m'),
       250,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('主要通道净宽：0.48 m'), findsOneWidget);
+    expect(find.text('主通道典型净宽：0.48 m'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('风险项（1）'),
       300,
@@ -382,13 +389,6 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.textContaining('实际迭代 8000'), findsOneWidget);
-  });
-
-  test('标注图片使用后端资源地址并携带认证请求头', () {
-    api.setToken('image-token');
-    final provider = authenticatedReportImage(api, '/static/12/view_0.png');
-    expect(provider.url, 'https://api.test.invalid/static/12/view_0.png');
-    expect(provider.headers, {'Authorization': 'Bearer image-token'});
   });
 
   testWidgets('标定成功时显示参考尺寸和重建空间尺寸', (tester) async {

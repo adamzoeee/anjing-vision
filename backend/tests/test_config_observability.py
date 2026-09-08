@@ -20,6 +20,14 @@ def _production_settings(**overrides) -> Settings:
     return Settings(**values)
 
 
+def test_production_rejects_demo_login_bypass():
+    with pytest.raises(ValidationError, match="DEMO_LOGIN"):
+        _production_settings(
+            demo_login=True,
+            demo_login_email="demo@example.com",
+        )
+
+
 @pytest.mark.parametrize(
     "secret",
     ["change-me", "change-me-in-production", "short-secret"],
@@ -75,11 +83,15 @@ def test_development_cors_allows_local_origin():
             "/api/health",
             headers={
                 "Origin": "http://localhost:3000",
-                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type",
             },
         )
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert "POST" in response.headers["access-control-allow-methods"]
+    assert "Authorization" in response.headers["access-control-allow-headers"]
+    assert "Content-Type" in response.headers["access-control-allow-headers"]
 
 
 def test_production_cors_only_allows_configured_origin():

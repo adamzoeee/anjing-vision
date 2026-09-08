@@ -29,6 +29,7 @@ def test_formal_metric_catalog_has_all_required_categories_and_codes():
     assert METRIC_DEFINITION_BY_CODE["door_width"] == {
         "category": "mobility", "name": "门净宽", "unit": "m",
     }
+    assert METRIC_DEFINITION_BY_CODE["bedside_clearance"]["name"] == "床边活动空间"
     assert METRIC_DEFINITION_BY_CODE["bed_surrounding_space"]["unit"] == "m"
 
 
@@ -93,7 +94,7 @@ def test_catalog_builder_supplies_category_name_and_unit():
         source={"artifact": "passage_analysis.json", "field": "primary_route.minimum_clear_width_m"},
     )
     assert record["category"] == "mobility"
-    assert record["name"] == "最小通道净宽"
+    assert record["name"] == "沿途最窄净宽"
     assert record["unit"] == "m"
 
 
@@ -158,6 +159,7 @@ def test_passage_width_metrics_use_structured_route_and_narrowest_position():
         "primary_route": {
             "id": "door_to_bed", "path_exists": True,
             "minimum_clear_width_m": 0.72,
+            "representative_clear_width_m": 0.91,
             "narrowest_point_xy": [1.2, 0.8],
         },
     }
@@ -168,11 +170,16 @@ def test_passage_width_metrics_use_structured_route_and_narrowest_position():
         ],
     }
     metrics = {item["metric_code"]: item for item in extract_passage_width_metrics(passage, foundation)}
-    assert metrics["main_passage_width"]["value"] == 0.72
+    assert metrics["main_passage_width"]["value"] == 0.91
     assert metrics["minimum_passage_width"]["value"] == 0.64
     assert metrics["main_passage_width"]["position"] == {
         "path_id": "door_to_bed", "point_xy": [1.2, 0.8],
     }
+
+
+def test_passage_width_names_distinguish_typical_and_bottleneck():
+    assert METRIC_DEFINITION_BY_CODE["main_passage_width"]["name"] == "主通道典型净宽"
+    assert METRIC_DEFINITION_BY_CODE["minimum_passage_width"]["name"] == "沿途最窄净宽"
 
 
 def test_missing_passage_width_is_not_evaluable_not_safe():

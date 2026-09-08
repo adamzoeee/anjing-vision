@@ -87,20 +87,24 @@ def test_bedside_clearance_requires_bed_and_relationship_evidence():
     assert metric["reason"] == "bedside_clearance_unavailable"
 
 
-def test_activity_area_requires_explicit_anchor():
+def test_activity_area_uses_entrance_reachable_free_region():
     metric = extract_activity_area_metric({
-        "room": {"area_m2": 12.0},
-        "furniture": [{"id": "bed_001", "type": "bed", "length_m": 2, "width_m": 1.5}],
+        "primary_route": {"from": "door_01"},
+        "walkable_regions": {"door_connected_area_m2": 3.86, "confidence": "high"},
     })
-    assert metric["status"] == "not_evaluable"
-    assert metric["reason"] == "explicit_activity_anchor_missing"
+    assert metric["value"] == 3.86
+    assert metric["position"]["object_id"] == "door_01"
 
-    measured = extract_activity_area_metric({"furniture": [{
-        "id": "activity_01", "type": "activity_area", "length_m": 2.0,
-        "width_m": 1.5, "confidence": "medium", "position_xyz": [2, 2, 0],
-    }]})
-    assert measured["value"] == 3.0
-    assert measured["position"]["object_id"] == "activity_01"
+
+def test_activity_area_prefers_full_reachable_free_floor_over_entrance_metric():
+    metric = extract_activity_area_metric({
+        "primary_route": {"from": "door_01"},
+        "walkable_regions": {
+            "door_connected_area_m2": 2.16,
+            "door_connected_free_area_m2": 3.86,
+        },
+    })
+    assert metric["value"] == 3.86
 
 
 def test_crowding_uses_room_and_verified_furniture_footprints():
@@ -112,6 +116,19 @@ def test_crowding_uses_room_and_verified_furniture_footprints():
         ],
     })
     assert metric["value"] == 0.3
+    assert metric["position"]["furniture_area_m2"] == 3.6
+    assert metric["position"]["room_area_m2"] == 12.0
+
+
+def test_crowding_uses_footprint_union_without_overlap_double_counting():
+    metric = extract_crowding_metric({
+        "room": {"area_m2": 16.0, "floor_polygon": [[0, 0], [4, 0], [4, 4], [0, 4]]},
+        "furniture": [
+            {"position_xyz": [1.5, 1.5, 0], "length_m": 2.0, "width_m": 2.0},
+            {"position_xyz": [2.0, 1.5, 0], "length_m": 2.0, "width_m": 2.0},
+        ],
+    })
+    assert 0.30 < metric["value"] < 0.36
 
 
 def test_invalid_crowding_evidence_is_not_evaluable():
