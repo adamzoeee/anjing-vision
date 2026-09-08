@@ -24,10 +24,6 @@ def _formal_rule(
 
 
 FORMAL_RULES = [
-    _formal_rule("main_passage_width_high", "main_passage_width", "mobility", 0.80, "below", "high",
-                 "优先移开主要通道最窄处两侧家具，使净宽达到0.80米以上。"),
-    _formal_rule("main_passage_width_medium", "main_passage_width", "mobility", 0.90, "below", "medium",
-                 "调整主要通道家具布局，建议把连续净宽提升到0.90米以上。"),
     _formal_rule("minimum_passage_width_high", "minimum_passage_width", "mobility", 0.70, "below", "high",
                  "立即清理全屋最窄通行点，避免老人或助行器被卡住。"),
     _formal_rule("minimum_passage_width_medium", "minimum_passage_width", "mobility", 0.85, "below", "medium",
@@ -46,14 +42,6 @@ FORMAL_RULES = [
                  "恢复连续通路，消除路线中断并确认全程可达。"),
     _formal_rule("path_obstruction_high", "path_obstruction", "mobility", True, "equals", "high",
                  "移除路径上的固定或临时障碍，并重新确认通路连续。"),
-    _formal_rule("furniture_spacing_high", "furniture_spacing", "layout", 0.30, "below", "high",
-                 "拉开相邻家具，优先处理最小净距不足0.30米的位置。"),
-    _formal_rule("furniture_spacing_medium", "furniture_spacing", "layout", 0.60, "below", "medium",
-                 "调整相邻家具间距，减少侧身通过和碰撞风险。"),
-    _formal_rule("wall_furniture_clearance_medium", "wall_furniture_clearance", "layout", 0.05, "below", "medium",
-                 "检查贴墙家具是否形成难清洁或易夹碰的狭小缝隙。"),
-    _formal_rule("bed_wall_distance_medium", "bed_wall_distance", "layout", 0.10, "below", "medium",
-                 "根据照护方式评估床贴墙侧，并确保另一侧保留可靠照护空间。"),
     _formal_rule("bedside_clearance_high", "bedside_clearance", "layout", 0.40, "below", "high",
                  "移开床侧最近家具，为上下床和照护操作腾出空间。"),
     _formal_rule("bedside_clearance_medium", "bedside_clearance", "layout", 0.60, "below", "medium",
@@ -66,10 +54,6 @@ FORMAL_RULES = [
                  "降低家具占地比例，优先移除低频使用或阻挡通路的物品。"),
     _formal_rule("crowding_medium", "crowding", "layout", 0.45, "above", "medium",
                  "优化家具布局，避免活动空间被连续占用。"),
-    _formal_rule("bed_surrounding_space_high", "bed_surrounding_space", "usage_safety", 0.40, "below", "high",
-                 "立即移开床周边最近障碍，保证起身和照护路线。"),
-    _formal_rule("bed_surrounding_space_medium", "bed_surrounding_space", "usage_safety", 0.60, "below", "medium",
-                 "扩大床周边最小净空，并保持夜间路线无临时物品。"),
     _formal_rule("main_activity_area_safety_high", "main_activity_area_safety", "usage_safety", False, "equals", "high",
                  "修复入口到主要活动区的中断或障碍，再开放该区域使用。"),
 ]

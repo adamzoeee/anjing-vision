@@ -6,6 +6,11 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'models.dart';
 
 class ApiClient {
+  static const _webApiBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://localhost:8000',
+  );
+
   final Dio dio;
   String? _token;
   ApiClient({String? baseUrl, Dio? dio})
@@ -16,7 +21,7 @@ class ApiClient {
               // web 端无模拟器概念，直连本机；移动端默认模拟器宿主机地址
               baseUrl:
                   baseUrl ??
-                  (kIsWeb ? 'http://localhost:8000' : 'http://10.0.2.2:8000'),
+                  (kIsWeb ? _webApiBaseUrl : 'http://10.0.2.2:8000'),
               connectTimeout: const Duration(seconds: 15),
               receiveTimeout: const Duration(seconds: 60),
             ),
@@ -66,9 +71,10 @@ class ApiClient {
   Future<({String token, AuthUser user})> login({
     required String email,
     required String password,
+    bool demoMode = const bool.fromEnvironment('DEMO_LOGIN'),
   }) async {
     final r = await dio.post(
-      '/api/auth/login',
+      demoMode ? '/api/auth/demo-login' : '/api/auth/login',
       data: {'email': email, 'password': password},
     );
     _token = r.data['token'];

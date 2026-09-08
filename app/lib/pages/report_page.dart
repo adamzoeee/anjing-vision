@@ -6,12 +6,6 @@ import '../widgets/risk_card.dart';
 import '../widgets/score_gauge.dart';
 import 'preview_launcher.dart';
 
-NetworkImage authenticatedReportImage(ApiClient api, String path) =>
-    NetworkImage(
-      '${api.dio.options.baseUrl}$path',
-      headers: api.authorizationHeaders,
-    );
-
 class ReportPage extends StatefulWidget {
   final Scan scan;
   const ReportPage({super.key, required this.scan});
@@ -57,9 +51,9 @@ class _ReportPageState extends State<ReportPage> {
 
   Future<void> _loadSuggestions() async {
     try {
-      final data = await context
-          .read<ApiClient>()
-          .assistantSuggestions(widget.scan.id);
+      final data = await context.read<ApiClient>().assistantSuggestions(
+        widget.scan.id,
+      );
       if (!mounted) return;
       setState(() {
         _suggestions = (data['suggestions'] as List? ?? const [])
@@ -75,7 +69,10 @@ class _ReportPageState extends State<ReportPage> {
     }
   }
 
-  Future<void> _runSimulation({String? prompt, List<int>? suggestionIds}) async {
+  Future<void> _runSimulation({
+    String? prompt,
+    List<int>? suggestionIds,
+  }) async {
     if (_assistantBusy) return;
     setState(() => _assistantBusy = true);
     try {
@@ -157,16 +154,18 @@ class _ReportPageState extends State<ReportPage> {
                     ..._furnitureDetailSection(context, r),
                     const SizedBox(height: 16),
                     Text(
-                      '尺寸信息',
+                      '参考尺寸',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                     ..._measurementTiles(r),
-                    const SizedBox(height: 16),
-                    Text(
-                      '重建质量',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    ..._qualityTiles(r),
+                    if (_qualityTiles(r).isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        '重建质量',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      ..._qualityTiles(r),
+                    ],
                     const SizedBox(height: 16),
                     Text(
                       '风险项（${_visibleRisks(r).length}）',
@@ -254,27 +253,6 @@ class _ReportPageState extends State<ReportPage> {
                               label: const Text('打开 3D 预览'),
                             ),
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      '标注视图',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    if (r.images.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(8),
-                        child: Text('暂无标注图'),
-                      )
-                    else
-                      ...r.images.map(
-                        (img) => Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Image(
-                            image: authenticatedReportImage(api, img),
-                            errorBuilder: (_, _, _) =>
-                                const Icon(Icons.broken_image, size: 48),
-                          ),
-                        ),
-                      ),
                   ],
                 ),
               ),
@@ -341,8 +319,7 @@ class _ReportPageState extends State<ReportPage> {
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton.icon(
-                  onPressed:
-                      _assistantBusy || _selectedSuggestionIds.isEmpty
+                  onPressed: _assistantBusy || _selectedSuggestionIds.isEmpty
                       ? null
                       : () => _runSimulation(
                           suggestionIds: _selectedSuggestionIds.toList()
@@ -356,10 +333,7 @@ class _ReportPageState extends State<ReportPage> {
               ),
             ],
             const SizedBox(height: 16),
-            Text(
-              '（二）自由改造评估',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
+            Text('（二）自由改造评估', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
             TextField(
               controller: _assistantController,
@@ -485,10 +459,7 @@ class _ReportPageState extends State<ReportPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          '2.5D 结构图（按测量结果绘制）',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
+        Text('2D 结构图（按测量结果绘制）', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
@@ -513,7 +484,7 @@ class _ReportPageState extends State<ReportPage> {
 
   Widget _passagePlanSection(BuildContext context, ApiClient api, int scanId) {
     final url =
-        '${api.dio.options.baseUrl}/api/preview/$scanId/passage_plan.png?v=20260822';
+        '${api.dio.options.baseUrl}/api/preview/$scanId/passage_plan.png?v=20260908-risk-v2';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -684,7 +655,6 @@ class _ReportPageState extends State<ReportPage> {
           '拥挤程度',
         ],
       ),
-      ('使用安全', '占比 30%', ['床周围空间', '主要活动区域']),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -729,16 +699,32 @@ class _ReportPageState extends State<ReportPage> {
   Widget _formalMetricFrameworkSection(BuildContext context, Report report) {
     final raw = report.riskAssessment['key_metrics'] as List? ?? const [];
     final metrics = raw.whereType<Map>().toList();
-    const categoryNames = {
-      'mobility': '通行能力',
-      'layout': '空间布局',
-      'usage_safety': '使用安全',
+    const categoryNames = {'mobility': '通行能力', 'layout': '空间布局'};
+    const visibleCodes = {
+      'main_passage_width',
+      'minimum_passage_width',
+      'door_width',
+      'entrance_space',
+      'bedside_clearance',
+      'activity_area',
+      'crowding',
     };
     String valueText(Map metric) {
       if (metric['status'] == 'not_evaluable') {
-        return '不可评估：${metric['reason'] ?? '数据不足'}';
+        return '当前空间数据不足，暂无法评估。';
       }
       final value = metric['value'];
+      if (metric['metric_code'] == 'crowding' && value is num) {
+        final position = metric['position'] is Map
+            ? metric['position'] as Map
+            : const {};
+        final furniture = position['furniture_area_m2'];
+        final room = position['room_area_m2'];
+        final details = furniture is num && room is num
+            ? '（家具占地 ${furniture.toStringAsFixed(2)}㎡ / 房间有效面积 ${room.toStringAsFixed(2)}㎡）'
+            : '';
+        return '${(value * 100).toStringAsFixed(1)}%$details';
+      }
       final formatted = value is num
           ? value.toStringAsFixed(2)
           : value.toString();
@@ -753,7 +739,11 @@ class _ReportPageState extends State<ReportPage> {
         const SizedBox(height: 8),
         ...categoryNames.entries.map((entry) {
           final items = metrics
-              .where((metric) => metric['category'] == entry.key)
+              .where(
+                (metric) =>
+                    metric['category'] == entry.key &&
+                    visibleCodes.contains(metric['metric_code']),
+              )
               .toList();
           if (items.isEmpty) return const SizedBox.shrink();
           return Card(
@@ -929,6 +919,8 @@ class _ReportPageState extends State<ReportPage> {
       'chandelier': '吊灯',
       'carpet': '地毯',
       'curtain': '窗帘',
+      'storage_rack': '小收纳架',
+      'clothes_rack': '衣物架',
     };
     const nums = ['一', '二', '三', '四', '五', '六'];
     final counted = <String, int>{};
@@ -939,7 +931,8 @@ class _ReportPageState extends State<ReportPage> {
       String fmt(Object? value) =>
           value is num ? value.toStringAsFixed(2) : (value?.toString() ?? '—');
       final type =
-          item['type']?.toString() ?? item['label']?.toString() ?? '物品';
+          (item['type']?.toString() ?? item['label']?.toString() ?? '物品')
+              .replaceAll(RegExp(r'_+$'), '');
       final index = counted[type] ?? 0;
       counted[type] = index + 1;
       final name =
@@ -1185,9 +1178,7 @@ class _ReportPageState extends State<ReportPage> {
     final quality = report.measures['reconstruction_quality'] as Map?;
     final training = quality?['training'] as Map?;
     if (training == null || training.isEmpty) {
-      return const [
-        Padding(padding: EdgeInsets.all(8), child: Text('暂无重建质量指标')),
-      ];
+      return const [];
     }
     String metric(String key, {int digits = 2}) {
       final value = training[key];

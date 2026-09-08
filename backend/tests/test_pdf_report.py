@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from pipeline import pdf_report
 from pipeline.pdf_report import (
     _formal_metric_rows,
     _formal_not_evaluable_rows,
@@ -137,6 +138,58 @@ def test_build_pdf_report_consumes_formal_assessment_as_source_of_truth(tmp_path
     assert Path(pdf_path).stat().st_size > 500
 
 
+
+def test_score_card_keeps_cover_summary_compact():
+    styles = pdf_report._style()
+    card = pdf_report._build_score_card(
+        score=80.0,
+        completeness=100.0,
+        scale_text="米制（已标定）",
+        calibration_method="reference",
+        styles=styles,
+    )
+    width, height = card.wrap(168 * pdf_report.mm, 60 * pdf_report.mm)
+    assert width <= 168 * pdf_report.mm
+    assert height <= 38 * pdf_report.mm
+
+
+def test_pdf_status_codes_are_presented_as_readable_chinese():
+    assert pdf_report._humanize_status("completed") == "已完成"
+    assert pdf_report._humanize_status("applied") == "已应用"
+    assert pdf_report._humanize_status("metric_references") == "米制（已标定）"
+    assert (
+        pdf_report._humanize_calibration_method(
+            "trusted_bed_anchor_with_reference_consistency_audit"
+        )
+        == "参考物一致性校验"
+    )
+
+
+def test_pdf_measurement_rows_match_report_page_content():
+    rows = pdf_report._report_measurement_rows({
+        "room": {"length_m": 3.27, "width_m": 2.89, "height_m": 2.71},
+        "openings": [{"type": "door", "width_m": 0.85, "height_m": 2.10}],
+        "passage": {"status": "ok", "passage_width_m": 0.48, "path_length_m": 1.36},
+        "scale": {"status": "metric_references", "scale": 1.0},
+    })
+    assert ["房间尺寸", "长 3.27m × 宽 2.89m × 高 2.71m"] in rows
+    assert ["门洞净尺寸", "宽 0.85m × 高 2.10m"] in rows
+    assert ["通道与可行走", "最窄通道 0.48m · 门→床路径 1.36m"] in rows
+    assert ["真实尺寸标定", "成功（比例系数 1.000）"] in rows
+
+
+def test_pdf_only_lists_report_page_visible_risks():
+    risks = [
+        {"risk_level": "high", "risk_name": "高风险"},
+        {"risk_level": "medium", "risk_name": "中风险"},
+        {"risk_level": "low", "risk_name": "低风险"},
+    ]
+    assert [item["risk_name"] for item in pdf_report._visible_risks(risks)] == [
+        "高风险",
+        "中风险",
+    ]
+
+
 def test_formal_summary_rows_preserve_official_weights_and_coverage():
     rows = _formal_summary_rows({
         "category_scores": {
@@ -162,5 +215,5 @@ def test_formal_metric_rows_keep_backend_values_and_missing_evidence():
     }
     rows = _formal_metric_rows(assessment)
     assert rows[1] == ["门净宽", "0.85m", "已评估"]
-    assert rows[2] == ["活动空间", "—", "无法评估：activity_anchor_missing"]
-    assert _formal_not_evaluable_rows(assessment) == [["活动空间风险", "activity_anchor_missing"]]
+    assert rows[2] == ["活动空间", "—", "当前空间数据不足，暂无法评估。"]
+    assert _formal_not_evaluable_rows(assessment) == [["活动空间风险", "当前空间数据不足，暂无法评估。"]]
