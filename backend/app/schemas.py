@@ -35,6 +35,11 @@ class LoginIn(BaseModel):
         return str(value).lower()
 
 
+class DemoLoginIn(BaseModel):
+    email: str = Field(default="", max_length=120)
+    password: str = Field(default="", max_length=64)
+
+
 class UserOut(BaseModel):
     id: int
     name: str

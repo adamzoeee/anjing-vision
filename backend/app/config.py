@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-change-me-please-use-env-32bytes"
     token_expire_minutes: int = Field(default=60 * 24 * 7, ge=5, le=60 * 24 * 30)
     cors_origins: list[str] = Field(default_factory=lambda: list(_DEVELOPMENT_ORIGINS))
+    demo_login: bool = False
+    demo_login_email: str | None = None
 
     storage_backend: Literal["local", "minio"] = "local"
     minio_endpoint: str = "localhost:9000"
@@ -145,8 +147,12 @@ class Settings(BaseSettings):
             raise ValueError("MAX_PAGE_SIZE 不能小于 DEFAULT_PAGE_SIZE")
         if self.apriltag_enabled and self.apriltag_family != "tagStandard41h12":
             raise ValueError("当前米制标定仅支持 tagStandard41h12")
+        if self.demo_login and not self.demo_login_email:
+            raise ValueError("DEMO_LOGIN=true 时必须配置 DEMO_LOGIN_EMAIL")
 
         if self.environment == EnvironmentMode.production:
+            if self.demo_login:
+                raise ValueError("生产环境禁止开启 DEMO_LOGIN")
             if len(self.secret_key.encode("utf-8")) < 32 or self.secret_key.lower() in _WEAK_SECRETS:
                 raise ValueError("生产环境 SECRET_KEY 必须是至少 32 字节的随机密钥")
             if not self.cors_origins:

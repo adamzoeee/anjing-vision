@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from pipeline.spatial_metrics import build_metric, confidence_value, unavailable_metric
 
 
@@ -127,26 +129,49 @@ def extract_bedside_clearance_metric(passage: dict, foundation: dict) -> dict:
     )
 
 
-def extract_activity_area_metric(foundation: dict) -> dict:
-    """Measure only an explicitly labelled activity anchor, never room centre."""
-    source = {"artifact": "spatial_foundation.json", "field": "furniture[*]"}
-    anchor = next((
-        item for item in foundation.get("furniture", [])
-        if item.get("type") in {"activity_area", "activity_anchor"} and item.get("id")
-    ), None)
-    if anchor is None:
-        return unavailable_metric("activity_area", "explicit_activity_anchor_missing", source=source)
-    area = anchor.get("area_m2")
-    if area is None and anchor.get("length_m") is not None and anchor.get("width_m") is not None:
-        area = float(anchor["length_m"]) * float(anchor["width_m"])
-    if area is None or float(area) <= 0:
-        return unavailable_metric("activity_area", "activity_anchor_geometry_unavailable", source=source)
+def extract_activity_area_metric(passage: dict) -> dict:
+    """Use the continuous free-floor component reachable from the entrance."""
+    source = {"artifact": "passage_analysis.json", "field": "walkable_regions.door_connected_area_m2"}
+    route = passage.get("primary_route") or {}
+    walkable = passage.get("walkable_regions") or {}
+    area = walkable.get("door_connected_free_area_m2")
+    if area is None:
+        area = walkable.get("door_connected_area_m2")
+    if area is None or not route.get("from"):
+        return unavailable_metric("activity_area", "reachable_free_area_unavailable", source=source)
     return build_metric(
         "activity_area", value=round(float(area), 3), status="derived",
-        confidence=confidence_value(anchor.get("confidence")),
-        position={"object_id": anchor.get("id"), "center_xyz": anchor.get("position_xyz")},
+        confidence=confidence_value(walkable.get("confidence")),
+        position={"object_id": route.get("from"), "region": "entrance_connected_free_floor"},
         source=source,
     )
+
+
+def _furniture_union_area(furniture: list[dict], room_area: float) -> float:
+    """Rasterize rotated footprints at 1cm and count the union once."""
+    valid = [item for item in furniture if item.get("length_m") is not None and item.get("width_m") is not None]
+    if not valid:
+        return 0.0
+    positioned = [item for item in valid if item.get("position_xyz") or item.get("center")]
+    if len(positioned) != len(valid):
+        return sum(float(item["length_m"]) * float(item["width_m"]) for item in valid)
+    corners = [point for item in positioned for point in _footprint_corners(item)]
+    lo = np.min(np.asarray(corners), axis=0)
+    hi = np.max(np.asarray(corners), axis=0)
+    cell = max(0.01, math.sqrt(max(room_area, 1e-6) / 1_000_000))
+    xs = np.arange(lo[0] + cell / 2, hi[0], cell)
+    ys = np.arange(lo[1] + cell / 2, hi[1], cell)
+    xx, yy = np.meshgrid(xs, ys)
+    occupied = np.zeros(xx.shape, dtype=bool)
+    for item in positioned:
+        center = item.get("position_xyz") or item.get("center")
+        dx, dy = xx - float(center[0]), yy - float(center[1])
+        yaw = math.radians(float(item.get("rotation_z_deg") or 0.0))
+        local_x = dx * math.cos(yaw) + dy * math.sin(yaw)
+        local_y = -dx * math.sin(yaw) + dy * math.cos(yaw)
+        occupied |= ((np.abs(local_x) <= float(item["length_m"]) / 2)
+                     & (np.abs(local_y) <= float(item["width_m"]) / 2))
+    return float(occupied.sum()) * cell * cell
 
 
 def extract_crowding_metric(foundation: dict) -> dict:
@@ -155,19 +180,17 @@ def extract_crowding_metric(foundation: dict) -> dict:
     room_area = (foundation.get("room") or {}).get("area_m2")
     if room_area is None or float(room_area) <= 0:
         return unavailable_metric("crowding", "verified_room_area_unavailable", source=source)
-    footprints = [
-        float(item["length_m"]) * float(item["width_m"])
-        for item in foundation.get("furniture", [])
-        if item.get("length_m") is not None and item.get("width_m") is not None
-    ]
-    if not footprints:
+    furniture = foundation.get("furniture", [])
+    if not any(item.get("length_m") is not None and item.get("width_m") is not None for item in furniture):
         return unavailable_metric("crowding", "verified_furniture_footprints_unavailable", source=source)
-    ratio = sum(footprints) / float(room_area)
+    furniture_area = _furniture_union_area(furniture, float(room_area))
+    ratio = furniture_area / float(room_area)
     if ratio > 1.0:
         return unavailable_metric("crowding", "furniture_footprint_area_exceeds_room_area", source=source)
     return build_metric(
         "crowding", value=round(ratio, 4), status="derived", confidence=None,
-        position={"room": True}, source=source,
+        position={"room": True, "furniture_area_m2": round(furniture_area, 3),
+                  "room_area_m2": round(float(room_area), 3)}, source=source,
     )
 
 
@@ -211,7 +234,7 @@ def extract_bed_surrounding_space_metric(passage: dict, foundation: dict) -> dic
 
 
 def extract_main_activity_area_safety_metric(activity_metric: dict, paths: list[dict]) -> dict:
-    """Summarize explicit activity-area reachability without applying risk thresholds."""
+    """Combine reachable free area with the entrance-to-bed route state."""
     source = {
         "artifacts": ["spatial_metrics", "normalized_paths"],
         "fields": ["activity_area", "entrance_to_activity"],
@@ -222,14 +245,22 @@ def extract_main_activity_area_safety_metric(activity_metric: dict, paths: list[
             activity_metric.get("reason") or "activity_area_unavailable",
             source=source,
         )
-    path = next((item for item in paths if item.get("path_id") == "entrance_to_activity"), None)
+    path = next((item for item in paths if item.get("path_id") == "entrance_to_activity"
+                 and item.get("status") != "not_evaluable"), None)
+    if path is None:
+        path = next((item for item in paths if item.get("path_id") != "entrance_to_activity"), None)
     if path is None or path.get("status") == "not_evaluable":
         return unavailable_metric(
             "main_activity_area_safety",
             (path or {}).get("reason") or "activity_route_unavailable",
             source=source,
         )
-    safe_evidence = bool(path.get("continuous")) and not bool(path.get("obstructed"))
+    bottleneck = (path.get("bottleneck") or {}).get("width_m")
+    safe_evidence = (
+        bool(path.get("continuous"))
+        and not bool(path.get("obstructed"))
+        and (bottleneck is None or float(bottleneck) >= 0.30)
+    )
     confidence_candidates = [
         value for value in (activity_metric.get("confidence"), path.get("confidence"))
         if value is not None
@@ -239,7 +270,7 @@ def extract_main_activity_area_safety_metric(activity_metric: dict, paths: list[
         confidence=min(confidence_candidates) if confidence_candidates else None,
         position={
             "object_id": activity_metric.get("position", {}).get("object_id"),
-            "path_id": "entrance_to_activity",
+            "path_id": path.get("path_id"),
         },
         source=source,
     )

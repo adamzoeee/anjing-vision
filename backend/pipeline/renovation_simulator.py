@@ -1,7 +1,7 @@
 """改造模拟：读取真实家具几何 → 内存副本执行修改 → 重算空间指标 → 正式评分体系。
 
-不再使用“把指标抬到安全阈值”的假模拟。所有指标由 renovation_geometry
-从盒子几何重新计算，评分由 pipeline.risk_assessment 正式规则给出。
+自由改造指令依据沙盒几何的实际变化评分；勾选正式整改建议时，预估分按
+“该建议已成功落实”后的风险等级变化重算。两种路径都使用同一套正式分类权重。
 """
 from __future__ import annotations
 
@@ -15,29 +15,64 @@ from pipeline.renovation_geometry import (
     apply_ops, build_grid, compute_metrics, load_geometry, nearest_box,
     payload_from_geometry, _corridor_width,
 )
-from pipeline.risk_assessment import build_risk_assessment
+from pipeline.risk_assessment import (
+    build_risk_assessment, collect_specific_advice, rank_top_risks,
+    score_formal_risks,
+)
 from pipeline.spatial_metrics import METRIC_DEFINITION_BY_CODE
 
 # 建议(风险 metric_code) → 具体几何操作
 _SUGGESTION_OPS = {
     "door_width": "widen_door",
-    "main_passage_width": "clear_corridor",
     "minimum_passage_width": "clear_corridor",
     "entrance_space": "clear_entrance",
-    "furniture_spacing": "separate_closest",
     "bedside_clearance": "clear_bedside",
-    "bed_surrounding_space": "clear_bedside",
     "path_obstruction": "remove_path_boxes",
     "path_continuity": "remove_path_boxes",
     "activity_area": "clear_activity",
     "main_activity_area_safety": "clear_activity",
     "crowding": "remove_largest",
     "wall_furniture_clearance": "pull_off_wall",
-    "bed_wall_distance": "pull_bed_off_wall",
     # path_length 无法用简单几何操作精确对应 → 定性
 }
 
 _QUALITATIVE = {"path_length"}
+
+
+def _project_completed_suggestions(assessment: dict, applied: list[dict]) -> dict:
+    """Project successfully executed suggestion targets to low risk.
+
+    The assistant presents an outcome estimate: an operation-bearing suggestion means
+    the user chose to complete that remediation.  Scoring is then recomputed through
+    the same formal category weights as the report, so high-risk remediation naturally
+    contributes twice the raw risk-level improvement of medium-risk remediation.
+    """
+    projected = deepcopy(assessment)
+    completed_codes = {
+        item["metric_code"] for item in applied
+        if item.get("ops", 0) > 0 and not item.get("qualitative")
+    }
+    for risk in projected.get("risks", []):
+        if risk.get("metric_code") not in completed_codes:
+            continue
+        if risk.get("assessment_status") != "evaluated":
+            continue
+        risk["risk_level"] = "low"
+        risk["risk_code"] = f"{risk['metric_code']}_low"
+        risk["reason"] = "simulated_remediation_completed"
+        risk["advice"] = "整改完成后复核现场尺寸并保持当前状态。"
+
+    scoring = score_formal_risks(projected.get("risks", []))
+    projected["overall"] = {
+        **(projected.get("overall") or {}),
+        "status": scoring["status"],
+        "score": scoring["score"],
+        "missing_core_metrics": scoring["missing_core_metrics"],
+    }
+    projected["category_scores"] = scoring["category_scores"]
+    projected["top_risks"] = rank_top_risks(projected.get("risks", []))
+    projected["advice"] = collect_specific_advice(projected.get("risks", []))
+    return projected
 
 
 def _find_box(geo: dict, target: str):
@@ -90,7 +125,10 @@ def _away_op(geo: dict, box: dict, away_from, distance: float) -> dict:
     norm = float(np.linalg.norm(away)) or 1.0
     direction = away / norm
     if _wall_blocked(geo, box, direction):
-        return {"op": "remove", "box": box}
+        # 不能因为目标方向贴墙就把真实家具删除；改为向相反方向移动并夹在房间内。
+        return {"op": "move", "box": box,
+                "dx": float(-direction[0] * distance),
+                "dy": float(-direction[1] * distance), "clamp": True}
     return {"op": "move_away", "box": box, "away_from": list(away_from),
             "distance": distance, "clamp": True}
 
@@ -110,7 +148,7 @@ def _suggestion_op(geo: dict, metric_code: str) -> list[dict] | None:
             return None
         start, goal = axis
         grid, origin, cell = build_grid(geo)
-        _, narrow = _corridor_width(grid, origin, start, goal)
+        _, narrow, _ = _corridor_width(grid, origin, start, goal)
         if narrow is None:
             return None
         box = _nearest_non_bed(geo, narrow[:2])
@@ -153,7 +191,7 @@ def _suggestion_op(geo: dict, metric_code: str) -> list[dict] | None:
         box = nearest_box(geo, (cx, cy), exclude_kind="wall")
         if box is None:
             return None
-        return [{"op": "remove", "box": box}]
+        return [_away_op(geo, box, (cx, cy), 0.50)]
     if metric_code == "crowding":
         cands = [b for b in geo["furniture"] if b is not bed]
         if not cands:
@@ -233,8 +271,8 @@ def simulate(metric_payload: dict, intent: dict, structure: dict,
     """在内存副本上执行意图，重算指标与正式评分；无几何对应时诚实标记定性。
 
     当前分：优先使用正式指标载荷（与报告页一致）的分数；
-    修改后分：正式当前分 + 几何重算得出的分数变化（Δ 完全来自真实几何，
-    不含任何“抬到安全阈值”的假模拟）。
+    修改后分：自由改造按几何重算变化；勾选建议按建议成功落实后的目标
+    风险等级重算。高风险到低风险的改善自然高于中风险到低风险。
     """
     geo = load_geometry(structure, measurements)
     geometry_before_payload = payload_from_geometry(geo)
@@ -267,20 +305,23 @@ def simulate(metric_payload: dict, intent: dict, structure: dict,
     action = intent["action"]
     ops: list[dict] = []
     qualitative = False
+    simulated_geo = None
     if action == "APPLY_SUGGESTIONS":
         # 由建议对应的风险 metric_code 找几何操作
         ids = intent["suggestion_ids"]
         if ids == ["all"]:
             ids = [i + 1 for i in range(len(suggestion_source.get("top_risks", [])))]
         applied = []
+        working_geo = geo
         for index in ids:
             if index < 1 or index > len(suggestion_source.get("top_risks", [])):
                 raise ValueError(f"建议{index}不存在")
             risk = suggestion_source["top_risks"][index - 1]
             code = risk["metric_code"]
-            sub_ops = _suggestion_op(geo, code)
+            sub_ops = _suggestion_op(working_geo, code)
             if sub_ops:
                 ops.extend(sub_ops)
+                working_geo = apply_ops(working_geo, sub_ops)
                 applied.append({"id": index, "name": risk["risk_name"],
                                 "metric_code": code, "ops": len(sub_ops)})
             else:
@@ -288,6 +329,8 @@ def simulate(metric_payload: dict, intent: dict, structure: dict,
                                 "metric_code": code, "qualitative": True})
         if not ops:
             qualitative = True
+        else:
+            simulated_geo = working_geo
         intent["applied_suggestions"] = applied
     elif action == "MOVE":
         box = _find_box(geo, intent["target"])
@@ -333,10 +376,17 @@ def simulate(metric_payload: dict, intent: dict, structure: dict,
             "message": "该建议当前只能提供定性建议，暂时无法精确计算评分变化。",
         }
 
-    simulated_geo = apply_ops(geo, ops)
+    simulated_geo = simulated_geo or apply_ops(geo, ops)
     after_payload = payload_from_geometry(simulated_geo)
-    after = build_risk_assessment(after_payload)
-    comparison = finalize_comparison(geometry_before, after)
+    geometry_after = build_risk_assessment(after_payload)
+    if action == "APPLY_SUGGESTIONS" and official_assessment is not None:
+        after = _project_completed_suggestions(
+            official_assessment, intent.get("applied_suggestions", []),
+        )
+        comparison = compare_assessments(official_assessment, after)
+    else:
+        after = geometry_after
+        comparison = finalize_comparison(geometry_before, after)
 
     # 关键指标变化
     before_metrics = {m["metric_code"]: m for m in geometry_before_payload.get("metrics", [])}
@@ -350,8 +400,9 @@ def simulate(metric_payload: dict, intent: dict, structure: dict,
             changes.append({"metric_code": code, "name": a["name"], "unit": a["unit"],
                             "before": a.get("value"), "after": b.get("value")})
     # 风险变化
-    risk_before = {r["metric_code"]: r.get("risk_level") for r in geometry_before.get("risks", [])}
     risk_changes = []
+    risk_baseline = official_assessment or geometry_before
+    risk_before = {r["metric_code"]: r.get("risk_level") for r in risk_baseline.get("risks", [])}
     for r in after.get("risks", []):
         old = risk_before.get(r["metric_code"])
         if old is not None and r.get("risk_level") != old:

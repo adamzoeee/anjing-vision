@@ -14,8 +14,8 @@ RISK_LEVELS = frozenset({"low", "medium", "high"})
 ASSESSMENT_STATUSES = frozenset({"evaluated", "not_evaluable"})
 RISK_LEVEL_SCORES = {"low": 100.0, "medium": 60.0, "high": 20.0}
 CORE_REQUIRED_METRICS = frozenset({
-    "main_passage_width", "door_width", "path_continuity",
-    "furniture_spacing", "bed_surrounding_space",
+    "minimum_passage_width", "door_width", "path_continuity",
+    "bedside_clearance", "activity_area",
 })
 MINIMUM_OFFICIAL_COVERAGE = 0.60
 
@@ -109,7 +109,8 @@ def evaluate_formal_metrics(metric_payload: dict) -> list[dict]:
         code = metric["metric_code"]
         rules = rules_by_metric.get(code, [])
         if not rules:
-            raise ValueError(f"formal metric has no risk rule: {code}")
+            # 兼容保留的测量信息不进入正式风险，避免同一几何问题重复扣分。
+            continue
         object_ids, path_id = _related_ids(metric.get("position"))
         common = {
             "risk_type": metric["category"],
@@ -283,8 +284,7 @@ def collect_specific_advice(risks: list[dict]) -> list[str]:
 
 KEY_METRIC_CODES = (
     "main_passage_width", "minimum_passage_width", "door_width",
-    "entrance_space", "bedside_clearance", "crowding",
-    "bed_surrounding_space",
+    "entrance_space", "bedside_clearance", "activity_area", "crowding",
 )
 
 

@@ -61,12 +61,12 @@ def test_assessment_input_contains_all_formal_metrics_and_paths():
     assert activity_path["status"] == "not_evaluable"
 
 
-def test_assessment_input_keeps_missing_activity_evidence_in_coverage():
+def test_assessment_input_derives_activity_from_entrance_reachable_area():
     payload = build_spatial_assessment_inputs(*_structured_inputs())
     by_code = {item["metric_code"]: item for item in payload["metrics"]}
-    assert by_code["activity_area"]["reason"] == "explicit_activity_anchor_missing"
-    assert by_code["main_activity_area_safety"]["status"] == "not_evaluable"
-    assert payload["coverage"]["not_evaluable_count"] >= 2
+    assert by_code["activity_area"]["value"] == 4.0
+    assert by_code["main_activity_area_safety"]["value"] is True
+    assert payload["coverage"]["not_evaluable_count"] == 0
 
 
 def test_file_builder_reads_only_json_and_preserves_input_hashes(tmp_path):
@@ -118,4 +118,4 @@ def test_formal_assessment_file_chain_produces_single_backend_payload(tmp_path):
     assessment = json.loads(outputs["risk_assessment"].read_text(encoding="utf-8"))
     assert assessment["official"] is True
     assert len(assessment["metrics"]) == 15
-    assert len(assessment["risks"]) == 15
+    assert len(assessment["risks"]) == 10

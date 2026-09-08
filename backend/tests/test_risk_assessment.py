@@ -83,6 +83,16 @@ def _payload(overrides=None):
     return {"metrics": metrics}
 
 
+def test_information_only_metrics_do_not_create_duplicate_formal_risks():
+    codes = {item["metric_code"] for item in build_risk_assessment(_payload())["risks"]}
+    assert "furniture_spacing" not in codes
+    assert "wall_furniture_clearance" not in codes
+    assert "bed_wall_distance" not in codes
+    assert "bed_surrounding_space" not in codes
+    assert "main_passage_width" not in codes
+    assert "minimum_passage_width" in codes
+
+
 def test_formal_evaluator_uses_highest_triggered_severity():
     risks = evaluate_formal_metrics(_payload({"door_width": 0.75}))
     door = next(item for item in risks if item["metric_code"] == "door_width")
@@ -93,11 +103,11 @@ def test_formal_evaluator_uses_highest_triggered_severity():
 
 def test_formal_evaluator_uses_low_medium_high_only():
     risks = evaluate_formal_metrics(_payload({
-        "door_width": 0.85, "main_passage_width": 1.2,
+        "door_width": 0.85, "minimum_passage_width": 1.2,
     }))
     assert {item["risk_level"] for item in risks} <= {"low", "medium", "high"}
     assert next(item for item in risks if item["metric_code"] == "door_width")["risk_level"] == "medium"
-    assert next(item for item in risks if item["metric_code"] == "main_passage_width")["risk_level"] == "low"
+    assert next(item for item in risks if item["metric_code"] == "minimum_passage_width")["risk_level"] == "low"
 
 
 def test_formal_evaluator_never_turns_unknown_into_low_risk():
@@ -132,9 +142,9 @@ def test_official_score_is_100_when_every_metric_is_low_risk():
 
 def test_official_score_applies_category_weights():
     risks = evaluate_formal_metrics(_payload({
-        "main_passage_width": 0.7,
-        "furniture_spacing": 0.2,
-        "bed_surrounding_space": 0.3,
+        "minimum_passage_width": 0.6,
+        "bedside_clearance": 0.3,
+        "main_activity_area_safety": False,
     }))
     result = score_formal_risks(risks)
     expected = round(sum(
@@ -162,12 +172,12 @@ def test_noncore_unknown_is_excluded_without_becoming_safe():
     payload = _payload()
     payload["metrics"] = [
         unavailable_metric(item["metric_code"], "missing", source="fixture")
-        if item["metric_code"] == "activity_area" else item
+        if item["metric_code"] == "path_length" else item
         for item in payload["metrics"]
     ]
     result = score_formal_risks(evaluate_formal_metrics(payload))
     assert result["status"] == "evaluated"
-    assert result["category_scores"]["layout"]["not_evaluable_count"] == 1
+    assert result["category_scores"]["mobility"]["not_evaluable_count"] == 1
 
 
 def test_confidence_summary_separates_coverage_from_evidence_confidence():
@@ -179,7 +189,7 @@ def test_confidence_summary_separates_coverage_from_evidence_confidence():
     ]
     risks = evaluate_formal_metrics(payload)
     summary = summarize_assessment_confidence(payload, risks)
-    assert summary["assessment_coverage"]["evaluated_count"] == 14
+    assert summary["assessment_coverage"]["evaluated_count"] == 9
     assert summary["assessment_coverage"]["not_evaluable_count"] == 1
     assert summary["evidence_confidence"] == 0.8
     assert summary["coverage_adjusted_confidence"] < 0.8
@@ -197,8 +207,8 @@ def test_missing_numeric_confidence_remains_null():
 def test_top_risks_rank_high_before_medium_and_exclude_low_unknown():
     payload = _payload({
         "door_width": 0.75,
-        "main_passage_width": 0.85,
-        "furniture_spacing": 0.2,
+        "minimum_passage_width": 0.6,
+        "bedside_clearance": 0.3,
     })
     payload["metrics"] = [
         unavailable_metric(item["metric_code"], "missing", source="fixture")
@@ -207,20 +217,20 @@ def test_top_risks_rank_high_before_medium_and_exclude_low_unknown():
     ]
     top = rank_top_risks(evaluate_formal_metrics(payload), limit=3)
     assert len(top) == 3
-    assert [item["risk_level"] for item in top] == ["high", "high", "medium"]
+    assert [item["risk_level"] for item in top] == ["high", "high", "high"]
     assert all(item["assessment_status"] == "evaluated" for item in top)
 
 
 def test_actionable_risks_have_specific_deduplicated_advice():
     risks = evaluate_formal_metrics(_payload({
         "door_width": 0.75,
-        "main_passage_width": 0.85,
+        "minimum_passage_width": 0.75,
     }))
     advice = collect_specific_advice(risks)
     assert len(advice) == 2
     assert len(set(advice)) == len(advice)
     assert any("门" in item for item in advice)
-    assert any("通道" in item for item in advice)
+    assert any("通行" in item for item in advice)
 
 
 def test_top_risk_limit_is_validated():

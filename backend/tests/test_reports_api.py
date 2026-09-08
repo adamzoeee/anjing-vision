@@ -151,6 +151,76 @@ def test_report_annotation_image_is_served_with_organization_auth(client, tmp_pa
     ).status_code == 404
 
 
+def test_report_pdf_accepts_query_token_for_browser_new_tab(client):
+    import json
+    from app.config import get_settings
+
+    headers = _auth(client, email="pdf-browser@x.com")
+    _pid, scan_id, _report_id = _make_report(client, headers)
+    pdf_path = (
+        Path(get_settings().data_dir)
+        / "work"
+        / str(scan_id)
+        / "report"
+        / "report.pdf"
+    )
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    pdf_path.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    post = pdf_path.parent.parent / "postprocess"
+    post.mkdir(parents=True, exist_ok=True)
+    (post / "risk_assessment.json").write_text(json.dumps({
+        "official": True,
+        "overall": {"status": "evaluated", "score": 80.0},
+        "risks": [],
+        "advice": [],
+    }), encoding="utf-8")
+    (post / "measurements.json").write_text("{}", encoding="utf-8")
+    token = headers["Authorization"].removeprefix("Bearer ")
+
+    response = client.get(f"/static/{scan_id}/pdf?token={token}")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.content.startswith(b"%PDF-1.4")
+    assert client.get(f"/static/{scan_id}/pdf?token=invalid").status_code == 401
+
+
+def test_report_pdf_refreshes_from_current_formal_assessment(client, monkeypatch):
+    import json
+    from app.config import get_settings
+
+    headers = _auth(client, email="pdf-current-score@x.com")
+    _pid, scan_id, _report_id = _make_report(client, headers)
+    work = Path(get_settings().data_dir) / "work" / str(scan_id)
+    post = work / "postprocess"
+    report_dir = work / "report"
+    post.mkdir(parents=True, exist_ok=True)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    (post / "risk_assessment.json").write_text(json.dumps({
+        "official": True,
+        "overall": {"status": "evaluated", "score": 80.0},
+        "risks": [],
+        "advice": [],
+    }), encoding="utf-8")
+    (post / "measurements.json").write_text("{}", encoding="utf-8")
+    (report_dir / "report.pdf").write_bytes(b"old-pdf")
+    captured = {}
+
+    def fake_build_pdf_report(**kwargs):
+        captured["score"] = kwargs["risk_assessment"]["overall"]["score"]
+        Path(kwargs["out_path"]).write_bytes(b"%PDF-current")
+        return str(kwargs["out_path"])
+
+    monkeypatch.setattr("pipeline.pdf_report.build_pdf_report", fake_build_pdf_report)
+    token = headers["Authorization"].removeprefix("Bearer ")
+    response = client.get(f"/static/{scan_id}/pdf?token={token}")
+
+    assert response.status_code == 200
+    assert response.content == b"%PDF-current"
+    assert response.headers["content-disposition"].startswith("inline;")
+    assert captured["score"] == 80.0
+
+
 def test_preview_serves_gaussian_model_and_camera_poses_with_auth(client):
     from app.config import get_settings
     from app.db import SessionLocal

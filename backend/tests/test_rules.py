@@ -19,7 +19,13 @@ def test_formal_rules_are_versioned_centralized_and_traceable():
 def test_every_formal_metric_has_a_rule():
     from pipeline.spatial_metrics import METRIC_DEFINITION_BY_CODE
 
-    assert {rule["metric_code"] for rule in FORMAL_RULES} == set(METRIC_DEFINITION_BY_CODE)
+    informational = {
+        "main_passage_width", "furniture_spacing",
+        "wall_furniture_clearance", "bed_wall_distance", "bed_surrounding_space",
+    }
+    assert {rule["metric_code"] for rule in FORMAL_RULES} == (
+        set(METRIC_DEFINITION_BY_CODE) - informational
+    )
 
 
 def test_official_category_weights_are_exactly_40_30_30():

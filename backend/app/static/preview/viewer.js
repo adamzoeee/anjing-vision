@@ -19,7 +19,7 @@
 
   var scene, camera, renderer, controls, worldGroup;
   var pcdGroup, boxesGroup, repairGroup;
-  var layerState = { pcd: true, repair: true, walls: true, doors: true, windows: true, objects: true, labels: true };
+  var layerState = { pcd: true, repair: false, walls: false, doors: false, windows: false, objects: false, labels: false };
   var boxGroups = { walls: null, doors: null, windows: null, objects: null };
   var labelGroup = null;
   var pointMaterial = null;
@@ -145,19 +145,19 @@
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.autoRotate = true;
+    controls.autoRotate = false;
     controls.autoRotateSpeed = 0.9;
     controls.target.set(0, 0, 0);
 
-    var grid = new THREE.GridHelper(20, 40, 0x2f3b52, 0x222b3a);
-    worldGroup.add(grid);
-    var axes = new THREE.AxesHelper(1.2);
-    worldGroup.add(axes);
+    // Real-scene mode contains RGB points only; structure mode is independent.
 
     pcdGroup = new THREE.Group();
     repairGroup = new THREE.Group();
     boxesGroup = new THREE.Group();
     labelGroup = new THREE.Group();
+    repairGroup.visible = false;
+    boxesGroup.visible = false;
+    labelGroup.visible = false;
     // 补底层先加入场景并位于真实观测点后方。它只负责遮住黑色背景，
     // 不写回 PLY、不参与尺寸/结构/风险计算。
     worldGroup.add(repairGroup);
@@ -289,8 +289,6 @@
     var dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
     var stride = meta.stride;
     var total = meta.vertexCount;
-    var positions = new Float32Array(CHUNK * 3);
-    var colors = new Float32Array(CHUNK * 3);
     var added = 0;
 
     function readProp(prop, base) {
@@ -312,8 +310,9 @@
       var start = added;
       var end = Math.min(added + CHUNK, total);
       var count = end - start;
-      var posArr = count === CHUNK ? positions : new Float32Array(count * 3);
-      var colArr = count === CHUNK ? colors : new Float32Array(count * 3);
+      // BufferAttribute retains the array: each chunk must own its storage.
+      var posArr = new Float32Array(count * 3);
+      var colArr = new Float32Array(count * 3);
       // uchar 颜色是 0..255，需要 /255；float/double 颜色已经是 0..1
       var colorScale = function (prop) {
         return (prop && prop.type !== 'float' && prop.type !== 'double') ? 1 / 255 : 1;
@@ -500,6 +499,12 @@
 
   /* ---------------- UI ---------------- */
   function bindUI(alignment) {
+    ['walls', 'doors', 'windows', 'objects', 'labels'].forEach(function (key) {
+      var checkbox = $('ck-' + key);
+      checkbox.checked = false;
+      checkbox.closest('.row').style.display = 'none';
+    });
+    $('ck-rotate').checked = false;
     pointMaterial = new THREE.PointsMaterial({
       // 保持原始点云的细粒度显示。圆形贴图会把相邻点视觉上糊成斑块，
       // 尤其会夸大多视角边缘处的轻微误差。
@@ -564,27 +569,12 @@
           });
       })
       .then(function (manifest) {
-        if (!manifest.layout) return;
-        setProgress(0.9, '加载空间结构识别结果');
-        return fetch(manifest.layout, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
-          .then(function (response) {
-            if (!response.ok) throw new Error('结构结果加载失败 HTTP ' + response.status);
-            return response.json();
-          })
-          .then(function (layout) {
-            addBoxes(layout);
-            setProgress(0.98, '完成');
-            var counts = layout.counts || {};
-            $('scene-sub').textContent = '点云已加载 · 墙 ' + (counts.walls || 0) + ' · 门 ' + (counts.doors || 0) +
-              ' · 窗 ' + (counts.windows || 0) + ' · 家具 ' + (counts.objects || 0);
-            $('stats').textContent = JSON.stringify(manifest.alignment ? {
-              points: manifest.alignment.points_preview,
-              scale: manifest.alignment.scale,
-              unit: manifest.alignment.coordinate_unit
-            } : {}, null, 0);
-            setTimeout(function () { $('overlay').style.display = 'none'; }, 250);
-            resetView();
-          });
+        // Pure point cloud: do not depend on or render structural overlays.
+        $('scene-sub').textContent = '纯 RGB 点云 · 结构数据保留在空间结构页面';
+        $('stats').textContent = '';
+        setProgress(1, '完成');
+        setTimeout(function () { $('overlay').style.display = 'none'; }, 250);
+        resetView();
       })
       .catch(function (error) { fail(error && error.message ? error.message : String(error)); });
   }

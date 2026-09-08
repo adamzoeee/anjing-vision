@@ -1,24 +1,50 @@
 # 安龄智境（Anjing Vision）
 
-用普通手机拍摄一段房间视频，自动完成**稠密 3D 重建**与**空间结构识别**——墙、门、窗、家具以 3D 框形式叠加在可自由旋转的高密度点云预览上。长度测量、风险识别与评分在后续阶段接入。
+安龄智境（Anjing Vision）是一套面向居家适老化安全评估的 AI 空间分析系统。用户只需使用普通手机拍摄房间视频，系统即可完成稠密 3D 场景重建与空间结构识别，并进一步生成房间参考尺寸、2D 空间结构图、门到床等关键通行路径分析、通道净宽与可达空间指标，在此基础上进行正式风险评估、分类评分、改造建议和 PDF 报告生成。系统同时提供 AI 安全改造助手，可在不修改真实扫描、点云和结构数据的前提下，对选定改造建议或用户输入的家具移动、物品新增等方案进行沙盒模拟，并比较改造前后的空间指标与风险评分变化。
+
+系统以 SLAM3R 完成视频稠密三维重建，以 SpatialLM 完成墙、门、窗和家具等空间结构理解，并由后端统一完成空间指标计算、通行分析、风险规则评估和评分，Flutter/Web 前端负责报告、2D 结构图、3D 场景及改造模拟结果展示。
 
 重建核心为 [SLAM3R](https://github.com/pku-vcl-3dv/SLAM3R)（CVPR 2025 Highlight）：逐帧回归稠密 3D 点云、无需显式相机位姿估计，比传统 SfM+训练式高斯溅射快一个数量级；空间理解核心为 [SpatialLM1.1-Qwen-0.5B](https://huggingface.co/manycore-research/SpatialLM1.1-Qwen-0.5B)（NeurIPS 2025），直接从点云输出墙/门/窗/家具的结构化 3D 框。全部基于开源 Python 生态，**Windows + NVIDIA GPU 本地部署**。
 
 ## 特性
 
-- **视频直接重建**：上传普通手机视频（1~3 分钟，任意移动），SLAM3R 输出稠密彩色点云
-- **自动后处理**：统计离群点去噪 → 地板/墙面方向自动对齐（z-up + Manhattan 贴轴）→ 层高恢复米制尺度
-- **SpatialLM 结构识别**：墙、门、窗 3D 框 + 家具实例框（59 类家具，含朝向）
+**重建与结构理解**
+
+- **手机视频 → 稠密 3D 场景**：上传普通手机拍摄的房间视频（1~3 分钟，任意移动），SLAM3R 输出稠密彩色点云
+- **SpatialLM 房间结构识别**：识别墙、门、窗与家具实例（59 类家具，含朝向），输出结构化 3D 框
+- **自动后处理**：统计离群点去噪 → 地板/墙面方向自动对齐（z-up + Manhattan 贴轴）→ 米制尺度恢复
+
+**测量与空间分析**
+
+- **参考尺寸标定**：以用户输入的已知物体真实尺寸（门高、床长、书桌宽等，或 A4 纸 / 门高先验）把重建恢复为真实比例，输出房间与家具参考尺寸
+- **空间指标计算**：通道净宽、门净宽、家具间距、床周净空、拥挤度、入口可用空间等结构化指标，作为风险评估的输入
+- **2D 结构图**：按测量结果绘制的 2D 结构平面图，标注墙、门、床、桌等结构与家具
+- **门→床通行分析**：识别门到床主要通行路径，计算沿途通道净宽与可达区域，输出通行图
+
+**风险评估与报告**
+
+- **正式风险评估与综合评分**：按正式规则逐项评估风险（通道、路径、家具、床周等），并按通行能力 40% / 空间布局 30% / 使用安全 30% 综合评分
+- **风险项与改造建议**：报告逐项风险等级、触发阈值与对应适老化改造建议
+- **PDF 评估报告**：一键导出正式评估报告
+
+**AI 安全改造助手（沙盒 What-if 模拟）**
+
+- **建议模拟**：勾选报告中的改造建议（如"扩大床侧净空"），在内存沙盒中模拟执行并重算空间指标与评分
+- **自由改造评估**：输入"把床向左移动 30 厘米""在床边放一个 60×40×50 厘米的箱子"等自然语言设想，助手按真实几何重算，给出「当前分 → 修改后分」、关键指标变化与风险等级变化
+- **数据零改动**：模拟只发生在内存副本中，不修改真实扫描、点云、结构数据或正式报告；无几何对应、无法精确量化的方案只给出定性提示，不虚构评分变化
+
+**产品形态**
+
 - **高密度 3D 预览**：自研 three.js 查看器，百万级点云渐进式连续加载，自由旋转/缩放/平移，结构框叠加开关、自动旋转、截图
-- **独立环境隔离**：SLAM3R 与 SpatialLM 各自独立 conda 环境，后端通过 subprocess 调用
+- **跨平台 App 与 Web**：Flutter 实现 iOS + Android 双端；Web 端直接展示报告、2D 结构图、3D 场景与改造模拟结果
 - **多机构隔离**：机构/成员注册登录（JWT），数据按机构隔离
-- **跨平台 App**：Flutter 实现 iOS + Android 双端
+- **独立环境隔离**：SLAM3R 与 SpatialLM 各自独立 conda 环境，后端通过 subprocess 调用
 
 ## 技术栈
 
 | 层 | 选型 | 说明 |
 |----|------|------|
-| 采集端 | Flutter 3.x（Dart） | 视频录制引导、上传、进度轮询、3D 预览 |
+| 采集/展示端 | Flutter 3.x（Dart）/ Web | 视频录制引导、上传、进度轮询、报告与改造模拟、2D 图与 3D 预览 |
 | 后端 | Python 3.12 + FastAPI | REST API、JWT 认证、多机构数据隔离 |
 | 稠密重建 | SLAM3R（独立 `slam3r` conda 环境） | 视频 → 逐帧 I2P → L2W 全局注册 → 稠密点云 PLY |
 | 空间理解 | SpatialLM1.1-Qwen-0.5B（独立 `spatiallm` conda 环境） | 点云 → 墙/门/窗/家具结构化 3D 框 |
@@ -156,7 +182,7 @@ cd backend
 
 参考耗时（2.5 分钟 1080p 视频，RTX 5080 Laptop）：抽帧 ~13s → SLAM3R 重建 ~10~20 分钟 → 后处理 ~1 分钟 → SpatialLM ~1~2 分钟。
 
-输出 `out\report.json`，其中 `measures.spatial_understanding` 为结构识别结果；预览地址为 `http://localhost:8000/preview/{scan_id}`（登录后打开，或在 URL 带 `?scan={id}&token={jwt}`）。
+输出 `out\report.json`（含结构识别结果与各阶段产物路径）；预览地址为 `http://localhost:8000/preview/{scan_id}`（登录后打开，或在 URL 带 `?scan={id}&token={jwt}`）。
 
 ### 6. Flutter App（可选）
 
@@ -177,17 +203,21 @@ flutter run   # Android 模拟器默认连 http://10.0.2.2:8000
 
 验收：墙、床、桌、门、柜等主要结构肉眼清楚可辨（允许少量孔洞/噪点/局部模糊）；结构框与点云对齐叠加。
 
-## 接口说明（后续接入现有项目）
+## 接口说明
 
 | 接口 | 说明 |
 |------|------|
 | `POST /api/scans/{scan_id}/upload` | 上传视频，自动进入管道 |
 | `GET /api/scans/{scan_id}` | 状态/进度轮询（status: uploading→extracting→reconstructing→cleaning→understanding→done） |
-| `GET /api/reports/scans/{scan_id}` | 报告：`measures.spatial_understanding` 含全部 3D 框 |
+| `GET /api/reports/scans/{scan_id}` | 评估报告：官方评分、风险项、参考尺寸、结构信息与 PDF 链接 |
+| `GET /api/preview/{scan_id}/structure_plan.png` | 2D 结构图（按测量结果绘制） |
+| `GET /api/preview/{scan_id}/passage_plan.png` | 通行图（门→床路径与通道净宽标注） |
 | `GET /api/preview/{scan_id}/manifest.json` | 预览清单（点云/结构文件 URL、对齐与缩放元数据） |
 | `GET /api/preview/{scan_id}/scene.ply` | 高密度预览点云（binary PLY） |
 | `GET /api/preview/{scan_id}/layout.json` | 结构框 JSON：`{walls,doors,windows,objects,counts}`，米制 z-up |
 | `GET /preview/{scan_id}` | 3D 查看器页面 |
+| `GET /api/assistant/scans/{scan_id}/suggestions` | AI 安全改造助手：当前评分与可模拟的改造建议列表 |
+| `POST /api/assistant/scans/{scan_id}/simulate` | AI 安全改造助手：沙盒模拟（勾选建议或自由改造指令），返回改造前后评分、指标与风险变化 |
 
 结构框 JSON 中每个框为 `{center:[x,y,z], size:[sx,sy,sz], rotation_z_deg, kind/category}`（米）。管道产物目录：`data/work/{scan_id}/`（`frames/`、`slam3r/scene/scene_recon.ply`、`postprocess/`）。
 
@@ -214,9 +244,9 @@ flutter run   # Android 模拟器默认连 http://10.0.2.2:8000
 ## 已知限制
 
 - 管道需要 NVIDIA GPU（SLAM3R 前馈重建、SpatialLM 推理均依赖 CUDA）
-- SLAM3R 输出方向任意、尺度未定：本管道自动做 z-up/墙面贴轴对齐并以默认层高 2.6m 恢复米制尺度（`SLAM3R_TARGET_HEIGHT_M` 可调）；精确米制标定在后续阶段接入
+- SLAM3R 输出方向任意、尺度未定：本管道先做 z-up/墙面贴轴对齐与默认层高先验缩放（`SLAM3R_TARGET_HEIGHT_M` 可调），正式测量结果以用户输入的参考尺寸标定为准；标定与测量仍在持续优化
 - SpatialLM 输入要求 z-up + 墙面贴 x/y 轴 + 米制：后处理已满足该约定
-- 长度测量、风险识别、评分暂缓（报告 `measures.deferred` 已标注），后续在 pipeline_runner 扩展
+- AI 安全改造助手只模拟有几何对应的改造（移动现有家具、新增/移除物品、勾选建议），且严格基于现有结构化空间数据与正式评分体系；拆墙、定制家具等无法精确映射到现有指标体系的方案仅提供定性提示，不虚构评分变化
 - 重建质量受拍摄条件影响：光线充足、慢速移动、避免反光面效果最佳
 
 ## 许可证

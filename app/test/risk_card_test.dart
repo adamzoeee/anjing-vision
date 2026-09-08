@@ -17,7 +17,11 @@ void main() {
       'advice': '评估扩宽门洞。',
       'assessment_status': 'evaluated',
     });
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: RiskCard(risk: risk))));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: RiskCard(risk: risk)),
+      ),
+    );
     expect(find.text('门净宽风险'), findsOneWidget);
     expect(find.text('高风险'), findsOneWidget);
     expect(find.textContaining('测量值：0.75 m'), findsOneWidget);
@@ -35,9 +39,17 @@ void main() {
       'assessment_status': 'not_evaluable',
       'reason': 'explicit_activity_anchor_missing',
     });
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: RiskCard(risk: risk))));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: RiskCard(risk: risk)),
+      ),
+    );
     expect(find.text('无法评估'), findsOneWidget);
-    expect(find.textContaining('explicit_activity_anchor_missing'), findsOneWidget);
+    expect(find.text('当前空间数据不足，暂无法评估。'), findsOneWidget);
+    expect(
+      find.textContaining('explicit_activity_anchor_missing'),
+      findsNothing,
+    );
     expect(find.byIcon(Icons.help_outline), findsOneWidget);
     expect(find.byIcon(Icons.check_circle), findsNothing);
   });

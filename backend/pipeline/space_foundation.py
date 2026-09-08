@@ -331,6 +331,7 @@ def analyze_structure_passages(
     person_path_found = False
     path_xy: list[list[float]] = []
     min_width = None
+    representative_width = None
     narrowest_xy = None
     path_length = None
 
@@ -389,6 +390,10 @@ def analyze_structure_passages(
             if widths:
                 narrow_index = int(np.argmin(widths))
                 min_width = min(widths[narrow_index], float(door.get("width_m") or widths[narrow_index]))
+                representative_width = min(
+                    float(np.median(widths)),
+                    float(door.get("width_m") or np.median(widths)),
+                )
                 row, col = evaluated[narrow_index]
                 narrowest_xy = [
                     round(float(minimum[0] + (col + 0.5) * cell), 4),
@@ -401,6 +406,8 @@ def analyze_structure_passages(
     # 与仅能通过一个几何中心点的 free 区域严格区分。
     person_start = _nearest_free(start, person_free, max_radius=15) if start is not None else None
     door_connected = _connected_component(person_free, person_start)
+    raw_start = _nearest_free(start, free, max_radius=15) if start is not None else None
+    door_connected_free = _connected_component(free, raw_start)
 
     attached_pairs = {
         frozenset((str(item.get("instance_id")), str(item.get("attached_to"))))
@@ -455,6 +462,9 @@ def analyze_structure_passages(
             "path_blocked": not bool(path_cells),
             "path_length_m": round(float(path_length), 3) if path_length is not None else None,
             "minimum_clear_width_m": round(float(min_width), 3) if min_width is not None else None,
+            "representative_clear_width_m": (
+                round(float(representative_width), 3) if representative_width is not None else None
+            ),
             "can_person_pass": bool(path_cells and person_path_found),
             "geometric_passage_class": _geometric_passage_class(
                 min_width, person_width_m, sideways_width_m,
@@ -468,6 +478,9 @@ def analyze_structure_passages(
         },
         "walkable_regions": {
             "door_connected_area_m2": round(float(door_connected.sum()) * cell * cell, 3),
+            "door_connected_free_area_m2": round(
+                float(door_connected_free.sum()) * cell * cell, 3
+            ),
             "minimum_required_clearance_m": person_radius_m,
             "basis": "2d_structure_occupancy_eroded_by_person_radius",
         },
@@ -586,19 +599,21 @@ def render_passage_analysis(
         # 展示图沿用分析结果的入口内侧种子。
         seed = _cell_of(door_xy + inward * 0.18, minimum, cell, occupied.shape)
     clearance_grid = distance_transform_edt(~occupied) * cell
-    person_free = (~occupied) & (clearance_grid >= person_width / 2)
-    seed = _nearest_free(seed, person_free, 15) if seed is not None else None
-    connected = _connected_component(person_free, seed)
-    overlay = np.ma.masked_where(~connected, connected.astype(float))
+    raw_seed = _nearest_free(seed, ~occupied, 15) if seed is not None else None
+    reachable = _connected_component(~occupied, raw_seed)
+    extent = [minimum[0], minimum[0] + occupied.shape[1] * cell,
+              minimum[1], minimum[1] + occupied.shape[0] * cell]
+    classes = np.zeros(occupied.shape, dtype=np.uint8)
+    classes[reachable & (clearance_grid < sideways_width / 2)] = 1
+    classes[reachable & (clearance_grid >= sideways_width / 2)
+            & (clearance_grid < person_width / 2)] = 2
+    classes[reachable & (clearance_grid >= person_width / 2)] = 3
+    overlay = np.ma.masked_where(classes == 0, classes)
     ax.imshow(
-        overlay,
-        origin="lower",
-        extent=[minimum[0], minimum[0] + occupied.shape[1] * cell,
-                minimum[1], minimum[1] + occupied.shape[0] * cell],
-        cmap=matplotlib.colors.ListedColormap(["#72d68c"]),
-        alpha=0.34,
-        interpolation="nearest",
-        zorder=1,
+        overlay, origin="lower", extent=extent,
+        cmap=matplotlib.colors.ListedColormap(["#ef5350", "#fbc02d", "#43a047"]),
+        norm=matplotlib.colors.BoundaryNorm([0.5, 1.5, 2.5, 3.5], 3),
+        alpha=0.38, interpolation="nearest", zorder=1,
     )
 
     display_names = _display_names(objects)
@@ -629,7 +644,7 @@ def render_passage_analysis(
     narrow = route.get("narrowest_point_xy")
     if narrow and route.get("minimum_clear_width_m") is not None:
         ax.scatter([narrow[0]], [narrow[1]], s=55, color="#7b2cbf", zorder=8)
-        ax.annotate(f"最小净宽 {route['minimum_clear_width_m']:.2f}m", xy=narrow,
+        ax.annotate(f"沿途最窄净宽 {route['minimum_clear_width_m']:.2f}m", xy=narrow,
                     xytext=(10, -18), textcoords="offset points", fontsize=8.5, color="#5a189a")
 
     length = route.get("path_length_m")
@@ -640,7 +655,7 @@ def render_passage_analysis(
     }
     pass_text = passage_labels.get(route.get("geometric_passage_class"), "未知")
     summary = (
-        f"主要通道：门→床\n路径长度：{length:.2f}m\n沿途最小净宽：{width:.2f}m\n"
+        f"主要通道：门→床\n路径长度：{length:.2f}m\n沿途最窄净宽：{width:.2f}m\n"
         f"几何分级：{pass_text}（直行≥{person_width:.2f}m，侧身≥{sideways_width:.2f}m）"
         if length is not None and width is not None
         else "主要通道：当前结构中不可达或数据不足"
@@ -662,7 +677,7 @@ def render_passage_analysis(
         )
         ax.text(0.985, 0.985, details, transform=ax.transAxes, ha="right", va="top",
                 fontsize=8.5, bbox={"boxstyle": "round,pad=0.45", "fc": "white", "ec": "#68778d", "alpha": 0.92})
-    ax.text(0.015, 0.02, "绿色=按0.45m直行轮廓可达区域；分级仅描述几何通行，不包含风险评分或安全等级",
+    ax.text(0.015, 0.02, "绿色：正常通行（≥0.45m）  黄色：侧身通行（0.30～0.45m）  红色：不可通行（<0.30m）",
             transform=ax.transAxes, fontsize=8.5, color="#6b7280")
     ax.set_xlim(minimum[0] - 0.45, maximum[0] + 0.45)
     ax.set_ylim(minimum[1] - 0.45, maximum[1] + 0.45)

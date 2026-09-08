@@ -94,6 +94,24 @@ void main() {
       expect(result.user.role, 'member');
     });
 
+    test('演示登录把任意文本发送到独立演示接口', () async {
+      adapter.onPost(
+        '/api/auth/demo-login',
+        (server) =>
+            server.reply(200, {'token': 'demo-token', 'user': userJson}),
+        data: {'email': '111111', 'password': '随便输入'},
+      );
+
+      final result = await client.login(
+        email: '111111',
+        password: '随便输入',
+        demoMode: true,
+      );
+
+      expect(result.token, 'demo-token');
+      expect(result.user.email, 'li@example.com');
+    });
+
     test('登录后保存 Token 并用于后续 Authorization 请求头', () async {
       adapter.onPost(
         '/api/auth/login',

@@ -30,7 +30,7 @@ def build_spatial_assessment_inputs(
 ) -> dict:
     """Build the complete second-stage assessment input without raw-data access."""
     paths = normalize_paths(passage, foundation)
-    activity_area = extract_activity_area_metric(foundation)
+    activity_area = extract_activity_area_metric(passage)
     metrics = [
         *extract_passage_width_metrics(passage, foundation),
         extract_door_width_metric(measurements, passage),

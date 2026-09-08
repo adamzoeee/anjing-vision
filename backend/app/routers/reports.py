@@ -7,11 +7,57 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..db import get_db
-from ..deps import get_org_scope
+from ..deps import get_org_scope, get_org_scope_for_browser_asset
 from ..models import Scan
 
 router = APIRouter()
 assets_router = APIRouter()
+
+
+@assets_router.get("/{scan_id}/pdf", response_class=FileResponse)
+def get_report_pdf(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope_for_browser_asset),
+    settings: Settings = Depends(get_settings),
+):
+    """Serve the generated PDF report to the scan's organization."""
+    scan = db.get(Scan, scan_id)
+    if scan is None or scan.project.org_id != org_id or scan.report is None:
+        raise HTTPException(404, "PDF 报告不存在")
+    pdf_root = (Path(settings.data_dir) / "work" / str(scan_id) / "report").resolve()
+    pdf_path = pdf_root / "report.pdf"
+    work = Path(settings.data_dir) / "work" / str(scan_id)
+    post = work / "postprocess"
+    risk_path = post / "risk_assessment.json"
+    measurements_path = post / "measurements.json"
+    if not risk_path.is_file():
+        raise HTTPException(404, "PDF 报告缺少正式评估数据")
+    from pipeline.pdf_report import build_pdf_report
+
+    risk_assessment = json.loads(risk_path.read_text(encoding="utf-8"))
+    measures = dict(scan.report.measures or {})
+    if measurements_path.is_file():
+        measures["measurements"] = json.loads(measurements_path.read_text(encoding="utf-8"))
+    build_pdf_report(
+        title=f"扫描 {scan_id}",
+        score=scan.report.score,
+        risks=list(scan.report.risks or []),
+        measures=measures,
+        advice=list(scan.report.advice or []),
+        images=[],
+        out_path=pdf_path,
+        risk_assessment=risk_assessment,
+        structure_plan_path=post / "structure_plan.png",
+        passage_plan_path=post / "passage_analysis.png",
+    )
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename=f"anjing_report_{scan_id}.pdf",
+        content_disposition_type="inline",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @assets_router.get("/{scan_id}/{filename}", response_class=FileResponse)
@@ -72,28 +118,6 @@ def get_preview_model(
     if not model_path.is_relative_to(preview_root) or not model_path.is_file():
         raise HTTPException(404, "预览模型不存在")
     return FileResponse(model_path)
-
-
-@assets_router.get("/{scan_id}/pdf", response_class=FileResponse)
-def get_report_pdf(
-    scan_id: int,
-    db: Session = Depends(get_db),
-    org_id: int = Depends(get_org_scope),
-    settings: Settings = Depends(get_settings),
-):
-    """Serve the generated PDF report to the scan's organization."""
-    scan = db.get(Scan, scan_id)
-    if scan is None or scan.project.org_id != org_id or scan.report is None:
-        raise HTTPException(404, "PDF 报告不存在")
-    pdf_root = (Path(settings.data_dir) / "work" / str(scan_id) / "report").resolve()
-    pdf_path = pdf_root / "report.pdf"
-    if not pdf_path.is_file():
-        raise HTTPException(404, "PDF 报告尚未生成")
-    return FileResponse(
-        pdf_path,
-        media_type="application/pdf",
-        filename=f"anjing_report_{scan_id}.pdf",
-    )
 
 
 @router.get("/scans/{scan_id}")
