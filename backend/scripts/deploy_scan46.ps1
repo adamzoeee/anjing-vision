@@ -23,6 +23,11 @@ if (-not $BackendRoot) {
     $BackendRoot = Split-Path -Parent $PSScriptRoot
 }
 $BackendRoot = (Resolve-Path -LiteralPath $BackendRoot).Path
+$pythonExe = Join-Path $BackendRoot ".venv\Scripts\python.exe"
+if (-not (Test-Path -LiteralPath $pythonExe)) {
+    $portablePython = Join-Path $BackendRoot ".venv\python.exe"
+    $pythonExe = if (Test-Path -LiteralPath $portablePython) { $portablePython } else { "python" }
+}
 $tmp = Join-Path $env:TEMP ("anjing-scan46-deploy-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
@@ -74,6 +79,15 @@ if ($ResearchBundlePath) {
     if (-not (Test-Path -LiteralPath $researchManifest)) {
         throw "第四个包缺少 scan46_research_bundle_manifest.json，无法确认数据来源"
     }
+    Write-Host "       构建并验收来源追踪式窗框点云纠错..."
+    $repairScript = Join-Path $BackendRoot "scripts\build_scan46_source_traced_repair.py"
+    if (-not (Test-Path -LiteralPath $repairScript)) {
+        throw "缺少来源追踪式修复脚本: $repairScript"
+    }
+    & $pythonExe $repairScript --accept
+    if ($LASTEXITCODE -ne 0) {
+        throw "来源追踪式点云纠错未通过验收，正式预览未切换"
+    }
 }
 
 if ($With45) {
@@ -91,10 +105,6 @@ Write-Host "[5/5] 创建扫描46数据库快照（原数据库如存在会先备
 $sqlPath = Join-Path $bundleRoot "scan46_db_import.sql"
 if (-not (Test-Path -LiteralPath $sqlPath)) {
     throw "完整数据包缺少 scan46_db_import.sql"
-}
-$pythonExe = Join-Path $BackendRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path -LiteralPath $pythonExe)) {
-    $pythonExe = "python"
 }
 $databasePath = Join-Path $BackendRoot "anjing-local.db"
 $newDatabasePath = Join-Path $BackendRoot "anjing-local.scan46-import.db"
