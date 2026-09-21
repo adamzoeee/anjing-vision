@@ -2,13 +2,16 @@
 # 在已 clone 的仓库根目录执行：
 # powershell -ExecutionPolicy Bypass -File backend\scripts\deploy_scan46.ps1 `
 #   -FullBundlePath "scan46_完整数据包.zip" `
-#   -SupplementBundlePath "scan46_最新结果补充包.zip"
+#   -SupplementBundlePath "scan46_最新结果补充包.zip" `
+#   -WindowBundlePath "scan46_窗户增量补充包.zip" `
+#   -ResearchBundlePath "scan46_训练与补拍增量包.zip"
 # 脚本会还原扫描45/46、覆盖当前最终结果并创建扫描46数据库快照。
 param(
     [string]$BackendRoot = "",
     [string]$FullBundlePath = "",
     [string]$SupplementBundlePath = "",
     [string]$WindowBundlePath = "",
+    [string]$ResearchBundlePath = "",
     [switch]$With45
 )
 
@@ -61,6 +64,16 @@ if ($WindowBundlePath) {
     $WindowBundlePath = (Resolve-Path -LiteralPath $WindowBundlePath).Path
     Write-Host "       应用第三个包：窗户增量补充包..."
     Expand-Archive -LiteralPath $WindowBundlePath -DestinationPath $BackendRoot -Force
+}
+
+if ($ResearchBundlePath) {
+    $ResearchBundlePath = (Resolve-Path -LiteralPath $ResearchBundlePath).Path
+    Write-Host "       应用第四个包：训练与补拍增量包..."
+    Expand-Archive -LiteralPath $ResearchBundlePath -DestinationPath $BackendRoot -Force
+    $researchManifest = Join-Path $BackendRoot "scan46_research_bundle_manifest.json"
+    if (-not (Test-Path -LiteralPath $researchManifest)) {
+        throw "第四个包缺少 scan46_research_bundle_manifest.json，无法确认数据来源"
+    }
 }
 
 if ($With45) {
