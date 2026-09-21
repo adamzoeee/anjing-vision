@@ -32,3 +32,8 @@ powershell -ExecutionPolicy Bypass -File backend\scripts\deploy_scan46.ps1 -Full
 - 第二个包提供风险评估、通行图和PDF；第三个包只更新窗户点云及展示层。
 
 无需重新运行 SLAM3R 或补训即可查看本版本。补充包用于复现已确认的展示结果，不包含全部历史实验和中间重建数组。
+
+如需在另一台机器继续修改窗边点云，再追加桌面生成的
+`scan46_训练与补拍研究增量包_20260921.zip`，并向部署脚本传入
+`-ResearchBundlePath`。第四包包含前三包没有的补拍视频、局部重建数组、诊断结果和源机当前研究选择；详见
+[`scan46-window-black-handoff.md`](scan46-window-black-handoff.md)。
