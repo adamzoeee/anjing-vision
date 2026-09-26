@@ -118,7 +118,7 @@ def _scheme_payload(scan_id: int, measurements: dict, structure: dict, edits: li
         "category_scores": result["category_scores"],
         **diff,
         "scope": result["scope"],
-        "disclaimer": "仅为内存沙盒模拟：未修改真实房间、点云、结构数据或正式报告；"
+        "disclaimer": "沙盒模拟 · 非实测：未修改真实房间、点云、结构数据或正式报告；"
                       "分数由正式评估链路在改后布局上重算。",
     }
 
@@ -290,6 +290,9 @@ def delete_scheme(scan_id: int, scheme_id: int, db: Session = Depends(get_db),
     return {"deleted": scheme_id}
 
 
+MAX_PLAN_BYTES = 10 * 1024 * 1024
+
+
 @router.post("/scans/{scan_id}/schemes/{scheme_id}/export.pdf")
 async def export_scheme_pdf(
     scan_id: int,
@@ -303,20 +306,30 @@ async def export_scheme_pdf(
     scheme = _get_scheme(db, scan_id, scheme_id)
     measurements, structure = _require_measurements(work), _load_structure(work)
     payload = _scheme_payload(scan_id, measurements, structure, scheme.edits or [])
-    png = await plan.read()
+    if plan.size is not None and plan.size > MAX_PLAN_BYTES:
+        raise HTTPException(413, "plan 图片过大（上限 10 MB）")
+    png = await plan.read(MAX_PLAN_BYTES + 1)
+    if len(png) > MAX_PLAN_BYTES:
+        raise HTTPException(413, "plan 图片过大（上限 10 MB）")
     if not png.startswith(b"\x89PNG"):
         raise HTTPException(422, "plan 必须是 PNG 图片")
     out_dir = work / "schemes"
     out_dir.mkdir(parents=True, exist_ok=True)
     output = out_dir / f"scheme_{scheme_id}.pdf"
-    build_scheme_appendix_pdf(
-        scan_name=(scan.project.name if scan.project else f"扫描 {scan_id}"),
-        scheme_name=scheme.name,
-        created_at=(scheme.created_at.isoformat() if scheme.created_at else ""),
-        plan_png=png,
-        before_score=(payload.get("comparison") or {}).get("before_score"),
-        after_score=(payload.get("comparison") or {}).get("after_score"),
-        metric_changes=payload["metric_changes"], risk_changes=payload["risk_changes"],
-        provenance=scheme.based_on or {}, disclaimer=payload["disclaimer"], output=output,
-    )
+    try:
+        build_scheme_appendix_pdf(
+            scan_name=(scan.project.name if scan.project else f"扫描 {scan_id}"),
+            scheme_name=scheme.name,
+            created_at=(scheme.created_at.isoformat() if scheme.created_at else ""),
+            plan_png=png,
+            before_score=(payload.get("comparison") or {}).get("before_score"),
+            after_score=(payload.get("comparison") or {}).get("after_score"),
+            metric_changes=payload["metric_changes"], risk_changes=payload["risk_changes"],
+            provenance=scheme.based_on or {}, disclaimer=payload["disclaimer"], output=output,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # 魔术字节正确但内容损坏的 PNG：报告库解码失败，返回 422 而不是 500。
+        raise HTTPException(422, "plan 不是有效的 PNG 图片") from exc
     return FileResponse(output, media_type="application/pdf", filename=f"{scheme.name}.pdf")
