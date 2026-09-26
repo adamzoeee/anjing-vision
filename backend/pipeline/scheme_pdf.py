@@ -14,7 +14,17 @@ from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Tabl
 
 pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
 
-DEFAULT_DISCLAIMER = "沙盒模拟 · 非实测：本页分数由正式评估链路在假设布局上重算，不代表现场实测结论。"
+#: 导出产物必须携带的「非实测」声明标签（PNG 页脚 / PDF / 分享文案同源）。
+DISCLAIMER_LABEL = "沙盒模拟 · 非实测"
+DEFAULT_DISCLAIMER = f"{DISCLAIMER_LABEL}：本页分数由正式评估链路在假设布局上重算，不代表现场实测结论。"
+
+
+def ensure_disclaimer_label(disclaimer: str | None) -> str:
+    """防御性保证：任何来源的声明文案都必须含「非实测」字样。"""
+    text = (disclaimer or DEFAULT_DISCLAIMER).strip()
+    if "非实测" in text:
+        return text
+    return f"{DISCLAIMER_LABEL} · {text}" if text else DISCLAIMER_LABEL
 
 
 def _fmt(value) -> str:
@@ -41,18 +51,16 @@ def _table(rows: list[list[str]], style: ParagraphStyle) -> Table:
     return table
 
 
-def build_scheme_appendix_pdf(*, scan_name: str, scheme_name: str, created_at: str,
+def scheme_appendix_flowables(*, scan_name: str, scheme_name: str, created_at: str,
                               plan_png: bytes, before_score, after_score,
                               metric_changes: list[dict], risk_changes: list[dict],
-                              provenance: dict, disclaimer: str, output: Path) -> Path:
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
+                              provenance: dict, disclaimer: str) -> list:
+    """构造附录内容流；build_scheme_appendix_pdf 与测试断言共用这一份。"""
     styles = getSampleStyleSheet()
     body = ParagraphStyle("body", parent=styles["Normal"], fontName="STSong-Light",
                           fontSize=10, leading=15)
     title = ParagraphStyle("title", parent=body, fontSize=17, leading=24, spaceAfter=6)
-
-    flow = [
+    return [
         Paragraph("改造方案附录（沙盒模拟）", title),
         Paragraph(f"项目：{scan_name}　方案：{scheme_name}", body),
         Paragraph(f"生成时间：{created_at}", body),
@@ -70,8 +78,22 @@ def build_scheme_appendix_pdf(*, scan_name: str, scheme_name: str, created_at: s
         _table([["风险项", "改造前", "改造后"]] +
                [[r["name"], r.get("before") or "-", r.get("after") or "-"] for r in risk_changes], body),
         Spacer(1, 6 * mm),
-        Paragraph(disclaimer or DEFAULT_DISCLAIMER, body),
+        Paragraph(ensure_disclaimer_label(disclaimer), body),
         Paragraph(f"输入指纹：{provenance}", body),
     ]
+
+
+def build_scheme_appendix_pdf(*, scan_name: str, scheme_name: str, created_at: str,
+                              plan_png: bytes, before_score, after_score,
+                              metric_changes: list[dict], risk_changes: list[dict],
+                              provenance: dict, disclaimer: str, output: Path) -> Path:
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    flow = scheme_appendix_flowables(
+        scan_name=scan_name, scheme_name=scheme_name, created_at=created_at,
+        plan_png=plan_png, before_score=before_score, after_score=after_score,
+        metric_changes=metric_changes, risk_changes=risk_changes,
+        provenance=provenance, disclaimer=disclaimer,
+    )
     SimpleDocTemplate(str(output), pagesize=A4, title=f"{scan_name} · {scheme_name}").build(flow)
     return output

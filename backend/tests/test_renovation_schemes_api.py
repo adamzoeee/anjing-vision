@@ -1,8 +1,12 @@
 """方案 CRUD：机构隔离、校验与可复现性。"""
+import io
 import json
 from pathlib import Path
 
+import PIL.Image
+
 from app.config import get_settings
+from app.routers.renovation import MAX_PLAN_BYTES
 
 
 def _auth(client, org="养老院A", email="scheme@x.com"):
@@ -84,3 +88,47 @@ def test_scheme_patch_delete_isolated_by_org(client, scheme_inputs):
                         json={"name": "越权改名"}, headers=h2).status_code == 404
     assert client.delete(f"/api/assistant/scans/{sid}/schemes/{scheme_id}",
                          headers=h2).status_code == 404
+
+
+def _png_bytes() -> bytes:
+    buffer = io.BytesIO()
+    PIL.Image.new("RGB", (32, 32), (255, 255, 255)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _export_scheme(client, headers, sid, scheme_id, payload):
+    return client.post(
+        f"/api/assistant/scans/{sid}/schemes/{scheme_id}/export.pdf",
+        files={"plan": ("plan.png", payload, "image/png")}, headers=headers,
+    )
+
+
+def test_scheme_export_pdf_returns_pdf(client, scheme_inputs):
+    m, s = scheme_inputs
+    h = _auth(client, email="export@x.com")
+    sid = _scan_with_artifacts(client, h, m, s)
+    scheme_id = client.post(f"/api/assistant/scans/{sid}/schemes",
+                            json={"name": "方案A", "edits": []}, headers=h).json()["id"]
+    r = _export_scheme(client, h, sid, scheme_id, _png_bytes())
+    assert r.status_code == 200, r.text
+    assert r.content.startswith(b"%PDF")
+    assert r.headers["content-type"] == "application/pdf"
+
+
+def test_scheme_export_pdf_rejects_bad_or_oversized_plan(client, scheme_inputs):
+    m, s = scheme_inputs
+    h = _auth(client, email="export-bad@x.com")
+    sid = _scan_with_artifacts(client, h, m, s)
+    scheme_id = client.post(f"/api/assistant/scans/{sid}/schemes",
+                            json={"name": "方案A", "edits": []}, headers=h).json()["id"]
+    # 非 PNG 签名 → 422
+    assert _export_scheme(client, h, sid, scheme_id, b"not a png").status_code == 422
+    # 魔术字节正确但内容损坏 → 422 而不是 500
+    corrupt = _export_scheme(client, h, sid, scheme_id, b"\x89PNG\r\n\x1a\n" + b"broken")
+    assert corrupt.status_code == 422, corrupt.text
+    # 超过 10MB 上限 → 413
+    oversized = _export_scheme(client, h, sid, scheme_id, b"\x89PNG" + b"0" * MAX_PLAN_BYTES)
+    assert oversized.status_code == 413, oversized.text
+    # 跨机构导出仍 404
+    h2 = _auth(client, org="养老院B", email="export-other@x.com")
+    assert _export_scheme(client, h2, sid, scheme_id, _png_bytes()).status_code == 404

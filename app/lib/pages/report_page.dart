@@ -91,6 +91,9 @@ class _ReportPageState extends State<ReportPage> {
       if (!mounted) return;
       setState(() {
         _assistantResult = result;
+        // 新结果必须重新保存方案，避免用旧方案 ID 配新布局导出。
+        _schemeId = null;
+        _schemeName = null;
         _assistantShortfall = null;
       });
     } catch (error) {
@@ -136,11 +139,15 @@ class _ReportPageState extends State<ReportPage> {
         if (!mounted) return;
         setState(() {
           _assistantResult = payload;
+          _schemeId = null;
+          _schemeName = null;
           _assistantShortfall = null;
         });
       } else {
         setState(() {
           _assistantResult = null;
+          _schemeId = null;
+          _schemeName = null;
           _assistantShortfall = first['shortfall']?.toString() ??
               '该建议当前无法精确计算评分变化。';
         });
@@ -211,14 +218,16 @@ class _ReportPageState extends State<ReportPage> {
       changedIds: ((result['changed_ids'] as List?) ?? const []).map((e) => e.toString()).toSet(),
       removedIds: ((result['removed_ids'] as List?) ?? const []).map((e) => e.toString()).toSet(),
     );
+    final footer = schemeFooterText(_schemeName);
     final api = context.read<ApiClient>();
     try {
-      final png = await renderSchemePng(scene);
+      // PNG 页脚与分享文案同源，保证导出产物都带「沙盒模拟 · 非实测」。
+      final png = await renderSchemePng(scene, footer: footer);
       final file = await exportSchemePdf(
         dio: api.dio, scanId: widget.scan.id, schemeId: _schemeId!,
         png: png, schemeName: _schemeName ?? '改造方案',
       );
-      await shareFile(file);
+      await shareFile(file, text: footer);
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
