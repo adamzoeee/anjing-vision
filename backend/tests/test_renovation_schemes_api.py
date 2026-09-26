@@ -71,3 +71,16 @@ def test_scheme_is_isolated_by_org(client, scheme_inputs):
     h2 = _auth(client, org="养老院B", email="other@x.com")
     assert client.get(f"/api/assistant/scans/{sid}/schemes/{scheme_id}", headers=h2).status_code == 404
     assert client.get(f"/api/assistant/scans/{sid}/schemes", headers=h2).status_code == 404
+
+
+def test_scheme_patch_delete_isolated_by_org(client, scheme_inputs):
+    m, s = scheme_inputs
+    h = _auth(client)
+    sid = _scan_with_artifacts(client, h, m, s)
+    scheme_id = client.post(f"/api/assistant/scans/{sid}/schemes",
+                            json={"name": "方案A", "edits": []}, headers=h).json()["id"]
+    h2 = _auth(client, org="养老院B", email="other-edit@x.com")
+    assert client.patch(f"/api/assistant/scans/{sid}/schemes/{scheme_id}",
+                        json={"name": "越权改名"}, headers=h2).status_code == 404
+    assert client.delete(f"/api/assistant/scans/{sid}/schemes/{scheme_id}",
+                         headers=h2).status_code == 404

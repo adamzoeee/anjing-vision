@@ -11,13 +11,15 @@ import hashlib
 import json
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from assistant.intent_edits import intent_to_edits
 from assistant.intent_parser import parse_intent
 from pipeline.scheme_assessment import build_scheme, diff_assessments
+from pipeline.scheme_pdf import build_scheme_appendix_pdf
 from pipeline.scheme_solver import CONSTRUCTION_METRICS, _movable_objects, solve_metric
 
 from ..config import Settings, get_settings
@@ -286,3 +288,35 @@ def delete_scheme(scan_id: int, scheme_id: int, db: Session = Depends(get_db),
     db.delete(scheme)
     db.commit()
     return {"deleted": scheme_id}
+
+
+@router.post("/scans/{scan_id}/schemes/{scheme_id}/export.pdf")
+async def export_scheme_pdf(
+    scan_id: int,
+    scheme_id: int,
+    plan: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    scan, work = _scan_and_work(scan_id, db, org_id, settings)
+    scheme = _get_scheme(db, scan_id, scheme_id)
+    measurements, structure = _require_measurements(work), _load_structure(work)
+    payload = _scheme_payload(scan_id, measurements, structure, scheme.edits or [])
+    png = await plan.read()
+    if not png.startswith(b"\x89PNG"):
+        raise HTTPException(422, "plan 必须是 PNG 图片")
+    out_dir = work / "schemes"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output = out_dir / f"scheme_{scheme_id}.pdf"
+    build_scheme_appendix_pdf(
+        scan_name=(scan.project.name if scan.project else f"扫描 {scan_id}"),
+        scheme_name=scheme.name,
+        created_at=(scheme.created_at.isoformat() if scheme.created_at else ""),
+        plan_png=png,
+        before_score=(payload.get("comparison") or {}).get("before_score"),
+        after_score=(payload.get("comparison") or {}).get("after_score"),
+        metric_changes=payload["metric_changes"], risk_changes=payload["risk_changes"],
+        provenance=scheme.based_on or {}, disclaimer=payload["disclaimer"], output=output,
+    )
+    return FileResponse(output, media_type="application/pdf", filename=f"{scheme.name}.pdf")
