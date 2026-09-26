@@ -1,8 +1,10 @@
-"""建议列表：达成预判标签。"""
+"""建议列表与求解接口：达成预判标签 + 沙盒 scope。"""
 import json
 from pathlib import Path
 
 from app.config import get_settings
+
+_MANDATED_SCOPE_KEYS = {"simulation": True, "raw_media_accessed": False, "structured_inputs_only": True}
 
 
 def _auth(client, email="reach@x.com"):
@@ -33,3 +35,18 @@ def test_suggestions_expose_reachability_labels(client, scheme_inputs):
         assert item["reachability"] in {"movable", "construction", "unknown"}
         assert item["reachability_label"]
         assert item["metric_code"]
+    assert {key: body["scope"][key] for key in _MANDATED_SCOPE_KEYS} == _MANDATED_SCOPE_KEYS
+    assert "contains_assumed_objects" in body["scope"]
+
+
+def test_solve_returns_scope_and_results(client, scheme_inputs):
+    m, s = scheme_inputs
+    headers = _auth(client, email="solve@x.com")
+    sid = _scan_with_artifacts(client, headers, m, s)
+    body = client.post(f"/api/assistant/scans/{sid}/solve",
+                       json={"metric_codes": ["door_width"]}, headers=headers).json()
+    assert body["scan_id"] == sid
+    assert {key: body["scope"][key] for key in _MANDATED_SCOPE_KEYS} == _MANDATED_SCOPE_KEYS
+    assert "contains_assumed_objects" in body["scope"]
+    assert [item["metric_code"] for item in body["results"]] == ["door_width"]
+    assert any(e["op"] == "resize_door" for e in body["results"][0]["edits"])

@@ -111,6 +111,7 @@ def list_suggestions(
     return {
         "scan_id": scan_id,
         "score": (assessment.get("overall") or {}).get("score"),
+        "scope": assessment["scope"],
         "suggestions": suggestions,
     }
 
@@ -133,6 +134,7 @@ def solve_suggestions(
         raise HTTPException(422, f"未知的风险指标：{unknown}")
     return {"scan_id": scan_id,
             "baseline_score": (baseline.get("overall") or {}).get("score"),
+            "scope": baseline["scope"],
             "results": [solve_metric(measurements, structure, code) for code in payload.metric_codes]}
 
 
