@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:anjing_app/widgets/scheme_plan_painter.dart';
 import 'package:anjing_app/widgets/scheme_result_card.dart';
 
 Map<String, dynamic> _layout(double deskY) => {
@@ -37,5 +38,70 @@ void main() {
     expect(find.text('沙盒模拟 · 非实测'), findsOneWidget);
     expect(find.textContaining('床边活动空间'), findsOneWidget);
     expect(find.byType(CustomPaint), findsWidgets);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is CustomPaint && widget.painter is SchemePlanPainter,
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('缺少布局数据时显示文字回退而不崩溃', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: SchemeResultCard(payload: {
+            'comparison': {
+              'before_score': 70.0,
+              'after_score': 72.5,
+              'score_delta': 2.5,
+            },
+            'metric_changes': <Map<String, dynamic>>[],
+          }),
+        ),
+      ),
+    ));
+    expect(find.text('70.0 → 72.5'), findsOneWidget);
+    expect(find.textContaining('平面'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is CustomPaint && widget.painter is SchemePlanPainter,
+      ),
+      findsNothing,
+    );
+    expect(find.text('沙盒模拟 · 非实测'), findsOneWidget);
+  });
+
+  testWidgets('缺少 comparison 时显示无法评分', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: SchemeResultCard(payload: {
+            'layout_before': _layout(2.0),
+            'layout_after': _layout(1.0),
+          }),
+        ),
+      ),
+    ));
+    expect(find.text('无法评分'), findsOneWidget);
+  });
+
+  testWidgets('假设放置提示来自布局对象而非 assumed_ids', (tester) async {
+    final after = _layout(1.0);
+    ((after['objects'] as List)[1] as Map)['assumed'] = true;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: SchemeResultCard(payload: {
+            'layout_before': _layout(2.0),
+            'layout_after': after,
+            'changed_ids': ['desk_001'],
+            'assumed_ids': <String>[],
+            'comparison': {'before_score': 80.0, 'after_score': 85.0},
+          }),
+        ),
+      ),
+    ));
+    expect(find.text('含假设放置物体 · 非实测'), findsOneWidget);
   });
 }

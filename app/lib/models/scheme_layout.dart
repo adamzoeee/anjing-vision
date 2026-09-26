@@ -67,7 +67,7 @@ class SchemeBoxScene {
   const SchemeBoxScene({
     required this.id, required this.label, required this.assumed, required this.changed,
     required this.removed, required this.beforeCenter, required this.afterCenter,
-    required this.size, required this.hidden,
+    required this.beforeSize, required this.afterSize, required this.hidden,
   });
 
   final String id;
@@ -77,7 +77,8 @@ class SchemeBoxScene {
   final bool removed;
   final Offset beforeCenter;
   final Offset afterCenter;
-  final Size size;
+  final Size beforeSize;
+  final Size afterSize;
   final bool hidden;
 }
 
@@ -111,6 +112,13 @@ SchemeScene buildSchemeScene({
   Offset project(double x, double y) =>
       Offset(left + (x - after.minX) * scale, top + (after.maxY - y) * scale);
 
+  /// 单个物体在画布上的像素足迹（90°/270° 旋转时交换长宽）。
+  Size pixelSizeOf(SchemeBox box) {
+    final rotated = (box.rotationDeg % 180).abs() == 90;
+    final meters = rotated ? Size(box.sy, box.sx) : Size(box.sx, box.sy);
+    return Size(meters.width * scale, meters.height * scale);
+  }
+
   final beforeById = {for (final box in before.objects) box.id: box};
   final afterById = {for (final box in after.objects) box.id: box};
   final ids = <String>{...beforeById.keys, ...afterById.keys};
@@ -120,8 +128,6 @@ SchemeScene buildSchemeScene({
     final a = afterById[id];
     final removed = removedIds.contains(id) || (b != null && a == null);
     final source = a ?? b!;
-    final rotated = (source.rotationDeg % 180).abs() == 90;
-    final sizeMeters = rotated ? Size(source.sy, source.sx) : Size(source.sx, source.sy);
     boxes.add(SchemeBoxScene(
       id: id,
       label: source.label,
@@ -130,7 +136,8 @@ SchemeScene buildSchemeScene({
       removed: removed,
       beforeCenter: b == null ? project(source.cx, source.cy) : project(b.cx, b.cy),
       afterCenter: a == null ? project(source.cx, source.cy) : project(a.cx, a.cy),
-      size: Size(sizeMeters.width * scale, sizeMeters.height * scale),
+      beforeSize: pixelSizeOf(b ?? source),
+      afterSize: pixelSizeOf(a ?? source),
       hidden: removed,
     ));
   }
