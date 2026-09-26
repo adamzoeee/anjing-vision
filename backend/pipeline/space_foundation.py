@@ -271,9 +271,10 @@ def _prepare_inputs(measurements: dict, structure: dict):
     bounds = (structure.get("room") or {}).get("bounds_xy") or {}
     minimum = np.asarray(bounds.get("min") or [0.0, 0.0], dtype=float)
     maximum = np.asarray(bounds.get("max") or [room.get("length_m", 5), room.get("width_m", 4)], dtype=float)
+    accepted_status = {"verified", "assumed"}  # assumed 只可能来自内存沙盒编辑
     objects = [
         item for item in measurements.get("objects", [])
-        if item.get("measurement_status") == "verified"
+        if item.get("measurement_status") in accepted_status
         and item.get("center")
         and item.get("length_m") is not None
         and item.get("width_m") is not None
@@ -512,6 +513,7 @@ def build_spatial_foundation(measurements: dict, structure: dict, passage: dict)
             "length_m": item.get("length_m"), "width_m": item.get("width_m"),
             "height_m": item.get("height_m"), "rotation_z_deg": item.get("rotation_z_deg", 0.0),
             "measurement_status": item.get("measurement_status"),
+            "assumed": item.get("measurement_status") == "assumed",
             "confidence": item.get("confidence"),
         })
 
