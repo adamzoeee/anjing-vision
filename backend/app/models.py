@@ -67,6 +67,7 @@ class Scan(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    schemes = relationship("RenovationScheme", back_populates="scan", cascade="all, delete-orphan")
 
 
 class Report(Base):
@@ -84,3 +85,17 @@ class Report(Base):
     calibrated = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), default=_now)
     scan = relationship("Scan", back_populates="report")
+
+
+class RenovationScheme(Base):
+    __tablename__ = "renovation_schemes"
+    id = Column(Integer, primary_key=True)
+    scan_id = Column(Integer, ForeignKey("scans.id"), nullable=False, index=True)
+    name = Column(String(120), nullable=False)
+    edits = Column(JSON, default=list, nullable=False, server_default=text("'[]'"))
+    based_on = Column(JSON, default=dict, nullable=False, server_default=text("'{}'"))
+    source = Column(String(20), default="manual")
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+    scan = relationship("Scan", back_populates="schemes")
