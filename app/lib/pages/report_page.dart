@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/models.dart';
+import '../models/scheme_layout.dart';
+import '../services/scheme_export.dart';
 import '../widgets/risk_card.dart';
 import '../widgets/scheme_result_card.dart';
 import '../widgets/score_gauge.dart';
@@ -21,6 +23,8 @@ class _ReportPageState extends State<ReportPage> {
   List<Map<String, dynamic>> _suggestions = [];
   final Set<String> _selectedMetricCodes = {};
   Map<String, dynamic>? _assistantResult;
+  int? _schemeId;
+  String? _schemeName;
   String? _assistantShortfall;
   bool _assistantBusy = false;
 
@@ -155,15 +159,22 @@ class _ReportPageState extends State<ReportPage> {
     final result = _assistantResult;
     if (result == null) return;
     final api = context.read<ApiClient>();
+    final edits = (result['edits'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
     try {
-      await api.dio.post(
-        '/api/schemes',
-        data: {
-          'scan_id': widget.scan.id,
-          'edits': result['edits'] ?? result['applied_edits'] ?? const [],
-        },
+      final now = DateTime.now();
+      final name = '改造方案 ${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} '
+          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+      final created = await api.dio.post(
+        '/api/assistant/scans/${widget.scan.id}/schemes',
+        data: {'name': name, 'edits': edits},
       );
       if (!mounted) return;
+      final id = (created.data as Map)['id'];
+      _schemeId = id is num ? id.toInt() : int.tryParse('$id');
+      _schemeName = (created.data as Map)['name']?.toString() ?? name;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('方案已保存')));
@@ -175,11 +186,45 @@ class _ReportPageState extends State<ReportPage> {
     }
   }
 
-  void _exportScheme() {
-    // 导出在 Task 6 接入（导出为图片/PDF）
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('导出功能开发中')));
+  Future<void> _exportScheme() async {
+    final result = _assistantResult;
+    if (result == null) return;
+    if (_schemeId == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先保存方案再导出')));
+      return;
+    }
+    final beforeMap = result['layout_before'];
+    final afterMap = result['layout_after'];
+    if (beforeMap is! Map || afterMap is! Map) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('缺少平面数据，无法导出')));
+      return;
+    }
+    final scene = buildSchemeScene(
+      before: SchemeLayout.fromJson(beforeMap.cast<String, dynamic>()),
+      after: SchemeLayout.fromJson(afterMap.cast<String, dynamic>()),
+      size: const Size(360, 360),
+      padding: 16,
+      changedIds: ((result['changed_ids'] as List?) ?? const []).map((e) => e.toString()).toSet(),
+      removedIds: ((result['removed_ids'] as List?) ?? const []).map((e) => e.toString()).toSet(),
+    );
+    final api = context.read<ApiClient>();
+    try {
+      final png = await renderSchemePng(scene);
+      final file = await exportSchemePdf(
+        dio: api.dio, scanId: widget.scan.id, schemeId: _schemeId!,
+        png: png, schemeName: _schemeName ?? '改造方案',
+      );
+      await shareFile(file);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('导出失败：$error')));
+    }
   }
 
   @override

@@ -34,7 +34,8 @@ app/*.log
 backend/tmp/
 backend/temp/
 out-demo/
-models/
+/models/
+backend/models/
 __pycache__/
 *.pyc
 app/build/
