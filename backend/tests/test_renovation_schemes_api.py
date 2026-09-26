@@ -174,3 +174,40 @@ def test_scheme_export_cleans_up_temporary_pdf(client, scheme_inputs):
     leftovers = list(schemes_dir.glob("*.pdf")) if schemes_dir.exists() else []
     assert leftovers == [], "导出后不得残留临时 PDF 文件"
 
+
+def test_scheme_export_provenance_includes_stale_flags(client, scheme_inputs, monkeypatch):
+    """导出 PDF 的 provenance 必须带上基于旧数据的标记，而不只是 stale。"""
+    import app.routers.renovation as module
+
+    m, s = scheme_inputs
+    h = _auth(client, email="export-stale@x.com")
+    sid = _scan_with_artifacts(client, h, m, s)
+    scheme_id = client.post(f"/api/assistant/scans/{sid}/schemes",
+                            json={"name": "方案A", "edits": []}, headers=h).json()["id"]
+
+    captured = {}
+
+    def fake_build(**kwargs):
+        captured.update(kwargs)
+        Path(kwargs["output"]).write_bytes(b"%PDF-1.4\n%%EOF\n")
+        return kwargs["output"]
+
+    monkeypatch.setattr(module, "build_scheme_appendix_pdf", fake_build)
+
+    png = io.BytesIO()
+    PIL.Image.new("RGB", (20, 20), (255, 255, 255)).save(png, format="PNG")
+
+    # 改动 postprocess 输入，使保存时的指纹与当前不一致
+    post = Path(get_settings().data_dir) / "work" / str(sid) / "postprocess" / "measurements.json"
+    payload = json.loads(post.read_text(encoding="utf-8"))
+    payload["room"]["length_m"] = payload["room"]["length_m"] + 0.5
+    post.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    r = client.post(f"/api/assistant/scans/{sid}/schemes/{scheme_id}/export.pdf",
+                    files={"plan": ("plan.png", png.getvalue(), "image/png")}, headers=h)
+    assert r.status_code == 200
+
+    provenance = captured["provenance"]
+    assert provenance["stale"] is True
+    assert provenance["based_on_mismatch"] is True
+    assert provenance["mismatched_keys"]

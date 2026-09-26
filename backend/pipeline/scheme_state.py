@@ -90,7 +90,13 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
     for edit in edits or []:
         op = edit.get("op")
         if op == "resize_door":
-            width = float(edit.get("width_m") or 0.90)
+            raw_width = edit.get("width_m")
+            try:
+                width = 0.90 if raw_width is None else float(raw_width)
+            except (TypeError, ValueError):
+                conflicts.append({"type": "invalid_door_width", "op": "resize_door",
+                                  "width_m": raw_width})
+                continue
             if not 0.5 <= width <= 1.5:
                 conflicts.append({"type": "invalid_door_width", "op": "resize_door",
                                   "width_m": width})
