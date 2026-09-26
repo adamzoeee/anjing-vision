@@ -65,7 +65,8 @@ def test_move_changes_metric_and_keeps_inputs_untouched():
     spacing_before = next(x["value"] for x in before["metrics"] if x["metric_code"] == "furniture_spacing")
     spacing_after = next(x["value"] for x in after["metrics"] if x["metric_code"] == "furniture_spacing")
     assert spacing_after != spacing_before
-    assert m["objects"][1]["center"] == [1.2, 2.0, 0.4]  # 原输入未被修改
+    desk = next(x for x in m["objects"] if x.get("instance_id") == "desk_001")
+    assert desk["center"] == [1.2, 2.0, 0.4]  # 原输入未被修改
 
 
 def test_overlap_is_reported_and_rejected():
@@ -102,6 +103,41 @@ def test_rotate_90_swaps_footprint():
     desk = next(x for x in rotated["layout_objects"] if x["id"] == "desk_001")
     assert desk["size"][0] == pytest.approx(0.5)
     assert desk["size"][1] == pytest.approx(1.0)
+
+
+def test_rotate_180_keeps_footprint_and_270_swaps():
+    m, s = _measurements(), _structure()
+    half = build_scheme(m, s, [{"op": "rotate", "target": "desk_001", "quarter_turns": 2}])
+    desk_m = next(x for x in half["measurements"]["objects"] if x["instance_id"] == "desk_001")
+    assert desk_m["length_m"] == pytest.approx(1.0)
+    assert desk_m["width_m"] == pytest.approx(0.5)
+    assert desk_m["rotation_z_deg"] == pytest.approx(180.0)
+    desk = next(x for x in half["layout_objects"] if x["id"] == "desk_001")
+    assert desk["size"][0] == pytest.approx(1.0)
+    assert desk["size"][1] == pytest.approx(0.5)
+
+    three = build_scheme(m, s, [{"op": "rotate", "target": "desk_001", "quarter_turns": 3}])
+    desk_m = next(x for x in three["measurements"]["objects"] if x["instance_id"] == "desk_001")
+    assert desk_m["length_m"] == pytest.approx(0.5)
+    assert desk_m["width_m"] == pytest.approx(1.0)
+    assert desk_m["rotation_z_deg"] == pytest.approx(270.0)
+    desk = next(x for x in three["layout_objects"] if x["id"] == "desk_001")
+    assert desk["size"][0] == pytest.approx(0.5)
+    assert desk["size"][1] == pytest.approx(1.0)
+
+
+def test_move_mirrors_into_structure_when_missing():
+    m = _measurements()
+    s = {"room": {"bounds_xy": {"min": [0.0, 0.0], "max": [4.0, 4.0]}, "height_m": 2.7},
+         "walls": [], "geometric_obstacles": [], "doors": [],
+         "semantic_instances": []}
+    result = build_scheme(m, s, [{"op": "move", "target": "desk_001", "dx": 0.0, "dy": -1.0}])
+    mirrored = next(x for x in result["structure"]["semantic_instances"] if x["instance_id"] == "desk_001")
+    assert mirrored["center"][0] == pytest.approx(1.2)
+    assert mirrored["center"][1] == pytest.approx(1.0)
+    assert mirrored["size"][0] == pytest.approx(1.0)
+    assert mirrored["size"][1] == pytest.approx(0.5)
+    assert mirrored["label"] == "desk"
 
 
 def test_resize_door_changes_door_width_metric():
