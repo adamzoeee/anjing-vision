@@ -13,10 +13,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from assistant.intent_edits import intent_to_edits
 from assistant.intent_parser import parse_intent
-from assistant.response_builder import build_response
-from pipeline.renovation_simulator import simulate
 from pipeline.risk_assessment import build_risk_assessment
+from pipeline.scheme_assessment import build_scheme, diff_assessments
 from pipeline.spatial_assessment_inputs import build_spatial_assessment_inputs
 
 from ..config import Settings, get_settings
@@ -28,8 +28,8 @@ router = APIRouter()
 
 
 class RenovationRequest(BaseModel):
+    edits: list[dict] | None = None
     prompt: str | None = Field(default=None, min_length=1, max_length=300)
-    suggestion_ids: list[int] | None = Field(default=None)
 
 
 class SuggestionRequest(BaseModel):
@@ -63,6 +63,12 @@ def _load_structure(work: Path) -> dict:
 def _load_measurements(work: Path) -> dict | None:
     path = work / "postprocess" / "measurements.json"
     return _read_json(path) if path.is_file() else None
+
+def _require_measurements(work: Path) -> dict:
+    path = work / "postprocess" / "measurements.json"
+    if not path.is_file():
+        raise HTTPException(409, "当前扫描缺少结构化测量数据，无法进行改造模拟")
+    return _read_json(path)
 
 
 def _scan_and_work(scan_id: int, db: Session, org_id: int, settings: Settings):
@@ -112,30 +118,39 @@ def simulate_renovation(
     settings: Settings = Depends(get_settings),
 ):
     _, work = _scan_and_work(scan_id, db, org_id, settings)
-    if payload.suggestion_ids:
-        intent = {"action": "APPLY_SUGGESTIONS", "suggestion_ids": payload.suggestion_ids,
-                  "raw": f"建议{payload.suggestion_ids}"}
+    measurements = _require_measurements(work)
+    structure = _load_structure(work)
+
+    if payload.edits is not None:
+        edits = payload.edits
     elif payload.prompt:
         try:
-            intent = parse_intent(payload.prompt)
+            edits = intent_to_edits(parse_intent(payload.prompt), measurements, structure)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
     else:
-        raise HTTPException(422, "请提供改造指令或勾选建议")
-    structure = _load_structure(work)
-    measurements = _load_measurements(work)
-    metric_payload = _load_metric_payload(work)
-    result = simulate(metric_payload, intent, structure, measurements)
-    message = build_response(intent, result["comparison"], result["metric_changes"],
-                             result["risk_changes"])
+        raise HTTPException(422, "请提供改造指令或编辑列表")
+
+    baseline = build_scheme(measurements, structure, [])
+    result = build_scheme(measurements, structure, edits)
+    diff = diff_assessments(baseline, result)
+    applied = result["applied_edits"]
     return {
         "scan_id": scan_id,
-        "intent": intent,
-        "comparison": result["comparison"],
-        "metric_changes": result["metric_changes"],
-        "risk_changes": result["risk_changes"],
-        "qualitative": result["qualitative"],
-        "message": message,
+        "edits": edits,
+        "applied_edits": applied,
+        "conflicts": result["conflicts"],
+        "assumed_ids": result["assumed_ids"],
+        "layout_before": result["layout_before"],
+        "layout_after": result["layout_after"],
+        "changed_ids": sorted({e["target"] for e in applied if e.get("target")}),
+        "removed_ids": sorted({e["target"] for e in applied if e.get("op") == "remove"}),
+        "metrics": result["metrics"],
+        "risks": result["risks"],
+        "overall": result["overall"],
+        "category_scores": result["category_scores"],
+        **diff,
+        "scope": result["scope"],
         "disclaimer": "仅为内存沙盒模拟：未修改真实房间、点云、结构数据或正式报告；"
-                      "建议评分以所选整改成功落实为前提，并按正式风险权重重算。",
+                      "分数由正式评估链路在改后布局上重算。",
     }
