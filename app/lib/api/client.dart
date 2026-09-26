@@ -164,20 +164,27 @@ class ApiClient {
         (await dio.get('/api/assistant/scans/$scanId/suggestions')).data as Map,
       );
 
-  Future<Map<String, dynamic>> simulateRenovation(
-    int scanId, {
+  Future<Map<String, dynamic>> simulateScheme(
+    int scanId,
+    List<Map<String, dynamic>> edits, {
     String? prompt,
-    List<int>? suggestionIds,
   }) async => Map<String, dynamic>.from(
     (await dio.post(
           '/api/assistant/scans/$scanId/simulate',
-          data: {
-            if (prompt != null && prompt.trim().isNotEmpty)
-              'prompt': prompt.trim(),
-            if (suggestionIds != null && suggestionIds.isNotEmpty)
-              'suggestion_ids': suggestionIds,
-          },
+          data: prompt != null && prompt.trim().isNotEmpty
+              ? {'prompt': prompt.trim()}
+              : {'edits': edits},
         )).data as Map,
+  );
+
+  Future<Map<String, dynamic>> solveSuggestions(
+    int scanId,
+    List<String> metricCodes,
+  ) async => Map<String, dynamic>.from(
+    (await dio.post(
+      '/api/assistant/scans/$scanId/solve',
+      data: {'metric_codes': metricCodes},
+    )).data as Map,
   );
 
   Future<Map<String, dynamic>> compare(
