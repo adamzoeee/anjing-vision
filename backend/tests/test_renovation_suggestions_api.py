@@ -50,3 +50,23 @@ def test_solve_returns_scope_and_results(client, scheme_inputs):
     assert "contains_assumed_objects" in body["scope"]
     assert [item["metric_code"] for item in body["results"]] == ["door_width"]
     assert any(e["op"] == "resize_door" for e in body["results"][0]["edits"])
+
+def test_solve_rejects_not_evaluable_metric(client):
+    m = {
+        "room": {"length_m": 4.0, "width_m": 4.0, "height_m": 2.7,
+                 "measurement_status": "verified", "confidence": "medium"},
+        "openings": [],
+        "objects": [],
+    }
+    s = {
+        "room": {"bounds_xy": {"min": [0.0, 0.0], "max": [4.0, 4.0]}, "height_m": 2.7},
+        "walls": [], "geometric_obstacles": [], "doors": [],
+        "semantic_instances": [],
+    }
+    headers = _auth(client, email="solve-not-evaluable@x.com")
+    sid = _scan_with_artifacts(client, headers, m, s)
+    r = client.post(f"/api/assistant/scans/{sid}/solve",
+                    json={"metric_codes": ["door_width"]}, headers=headers)
+    assert r.status_code == 422
+    assert "不可评估" in r.json()["error"]["message"]
+

@@ -10,9 +10,11 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from urllib.parse import quote
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -97,6 +99,19 @@ def _input_fingerprints(work: Path) -> dict:
     return out
 
 
+def _based_on_status(scheme: RenovationScheme, work: Path) -> dict:
+    """比较方案保存时的输入指纹与当前指纹，客户端据此提示「基于旧数据」。"""
+    current = _input_fingerprints(work)
+    saved = scheme.based_on or {}
+    keys = sorted(set(saved) | set(current))
+    mismatched = [key for key in keys if saved.get(key) != current.get(key)]
+    return {
+        "stale": bool(mismatched),
+        "based_on_mismatch": bool(mismatched),
+        "mismatched_keys": mismatched,
+    }
+
+
 def _scheme_payload(scan_id: int, measurements: dict, structure: dict, edits: list[dict]) -> dict:
     baseline = build_scheme(measurements, structure, [])
     result = build_scheme(measurements, structure, edits)
@@ -166,10 +181,14 @@ def solve_suggestions(
     measurements = _require_measurements(work)
     structure = _load_structure(work)
     baseline = build_scheme(measurements, structure, [])
-    known = {r["metric_code"] for r in baseline.get("risks", [])}
-    unknown = [code for code in payload.metric_codes if code not in known]
+    risk_by_code = {r["metric_code"]: r for r in baseline.get("risks", [])}
+    unknown = [code for code in payload.metric_codes if code not in risk_by_code]
     if unknown:
         raise HTTPException(422, f"未知的风险指标：{unknown}")
+    not_evaluable = [code for code in payload.metric_codes
+                     if risk_by_code[code].get("assessment_status") != "evaluated"]
+    if not_evaluable:
+        raise HTTPException(422, f"以下指标当前不可评估，无法给出达标方案：{not_evaluable}")
     return {"scan_id": scan_id,
             "baseline_score": (baseline.get("overall") or {}).get("score"),
             "scope": baseline["scope"],
@@ -236,6 +255,7 @@ def list_schemes(scan_id: int, db: Session = Depends(get_db), org_id: int = Depe
             "score": (result.get("overall") or {}).get("score"),
             "baseline_score": baseline_score,
             "conflicts": result["conflicts"],
+            **_based_on_status(scheme, work),
         })
     return {"scan_id": scan_id, "baseline_score": baseline_score, "schemes": items}
 
@@ -265,6 +285,7 @@ def get_scheme(scan_id: int, scheme_id: int, db: Session = Depends(get_db),
     measurements, structure = _require_measurements(work), _load_structure(work)
     payload = _scheme_payload(scan_id, measurements, structure, scheme.edits or [])
     return {**payload, "score": (payload["overall"] or {}).get("score"),
+            **_based_on_status(scheme, work),
             "plan": {"id": scheme.id, "name": scheme.name, "edits": scheme.edits,
                      "source": scheme.source, "based_on": scheme.based_on}}
 
@@ -315,7 +336,8 @@ async def export_scheme_pdf(
         raise HTTPException(422, "plan 必须是 PNG 图片")
     out_dir = work / "schemes"
     out_dir.mkdir(parents=True, exist_ok=True)
-    output = out_dir / f"scheme_{scheme_id}.pdf"
+    output = out_dir / f"scheme_{scheme_id}_{uuid4().hex}.pdf"
+    status = _based_on_status(scheme, work)
     try:
         build_scheme_appendix_pdf(
             scan_name=(scan.project.name if scan.project else f"扫描 {scan_id}"),
@@ -325,11 +347,24 @@ async def export_scheme_pdf(
             before_score=(payload.get("comparison") or {}).get("before_score"),
             after_score=(payload.get("comparison") or {}).get("after_score"),
             metric_changes=payload["metric_changes"], risk_changes=payload["risk_changes"],
-            provenance=scheme.based_on or {}, disclaimer=payload["disclaimer"], output=output,
+            provenance={**(scheme.based_on or {}), "stale": status["stale"]},
+            disclaimer=payload["disclaimer"], output=output,
         )
     except HTTPException:
         raise
     except Exception as exc:
         # 魔术字节正确但内容损坏的 PNG：报告库解码失败，返回 422 而不是 500。
+        if output.exists():
+            output.unlink()
         raise HTTPException(422, "plan 不是有效的 PNG 图片") from exc
-    return FileResponse(output, media_type="application/pdf", filename=f"{scheme.name}.pdf")
+    pdf_bytes = output.read_bytes()
+    output.unlink()
+    ascii_name = scheme.name.encode("ascii", "ignore").decode().strip() or "scheme"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": (
+            f'attachment; filename="{ascii_name}.pdf"; '
+            f"filename*=UTF-8''{quote(scheme.name + '.pdf')}"
+        )},
+    )

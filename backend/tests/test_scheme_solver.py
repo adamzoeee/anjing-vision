@@ -126,3 +126,23 @@ def test_solver_partial_result_is_best_improvement(scheme_inputs):
     assert result["score"]["after"] > worst_score
     assert result["edits"] == best[2]
     assert result["after"]["level"] == best[1]
+
+def test_solver_never_reports_solved_for_not_evaluable_metric():
+    """目标指标不可评估时必须诚实返回 solved:false 且不虚构分数提升。"""
+    m = {
+        "room": {"length_m": 4.0, "width_m": 4.0, "height_m": 2.7,
+                 "measurement_status": "verified", "confidence": "medium"},
+        "openings": [],
+        "objects": [],
+    }
+    s = {
+        "room": {"bounds_xy": {"min": [0.0, 0.0], "max": [4.0, 4.0]}, "height_m": 2.7},
+        "walls": [], "geometric_obstacles": [], "doors": [],
+        "semantic_instances": [],
+    }
+    result = solve_metric(m, s, "door_width")
+    assert result["solved"] is False
+    assert result["shortfall"] == "该指标当前不可评估，无法给出达标方案。"
+    assert result["edits"] == []
+    assert result["score"]["after"] == result["score"]["before"], "不可评估时不得声称分数改善"
+

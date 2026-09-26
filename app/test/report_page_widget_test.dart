@@ -601,4 +601,218 @@ void main() {
     await tester.pump();
     expect(assessButton().onPressed, isNotNull);
   });
+
+  testWidgets('建议列表展示可达性标签', (tester) async {
+    adapter.onGet(
+      '/api/reports/scans/12',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 80,
+        'risks': [],
+        'advice': [],
+        'images': [],
+        'calibrated': 1,
+      }),
+    );
+    adapter.onGet(
+      '/api/assistant/scans/12/suggestions',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 80,
+        'scope': {},
+        'suggestions': [
+          {
+            'id': 1,
+            'name': '门宽不足',
+            'level': 'high',
+            'advice': '建议拓宽门洞',
+            'metric_code': 'door_width',
+            'reachability': 'construction',
+            'reachability_label': '需施工（改门洞/换门）',
+          },
+          {
+            'id': 2,
+            'name': '床边空间不足',
+            'level': 'medium',
+            'advice': '移开床头柜',
+            'metric_code': 'bedside_clearance',
+            'reachability': 'movable',
+            'reachability_label': '可达成（移动家具）',
+          },
+        ],
+      }),
+    );
+
+    await tester.pumpWidget(reportApp());
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('生成方案'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.textContaining('需施工（改门洞/换门）'), findsOneWidget);
+    expect(find.textContaining('可达成（移动家具）'), findsOneWidget);
+  });
+
+  testWidgets('生成方案合并多个达标建议的编辑并显示需施工提示', (tester) async {
+    final captured = <Map<String, dynamic>>[];
+    dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        final data = options.data;
+        if (data is Map && options.path.contains('/simulate')) {
+          captured.add(Map<String, dynamic>.from(data));
+        }
+        handler.next(options);
+      },
+    ));
+
+    adapter.onGet(
+      '/api/reports/scans/12',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 80,
+        'risks': [],
+        'advice': [],
+        'images': [],
+        'calibrated': 1,
+      }),
+    );
+    adapter.onGet(
+      '/api/assistant/scans/12/suggestions',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 80,
+        'scope': {},
+        'suggestions': [
+          {
+            'id': 1,
+            'name': '门宽不足',
+            'level': 'high',
+            'advice': '建议拓宽门洞',
+            'metric_code': 'door_width',
+            'reachability': 'construction',
+            'reachability_label': '需施工（改门洞/换门）',
+          },
+          {
+            'id': 2,
+            'name': '床边空间不足',
+            'level': 'medium',
+            'advice': '移开床头柜',
+            'metric_code': 'bedside_clearance',
+            'reachability': 'movable',
+            'reachability_label': '可达成（移动家具）',
+          },
+        ],
+      }),
+    );
+
+    const solveCodes = ['bedside_clearance', 'door_width'];
+    adapter.onPost(
+      '/api/assistant/scans/12/solve',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'baseline_score': 80.0,
+        'scope': {},
+        'results': [
+          {
+            'metric_code': 'bedside_clearance',
+            'risk_name': '床边空间不足风险',
+            'solved': true,
+            'edits': [
+              {'op': 'move', 'target': 'desk_001', 'dx': 0.0, 'dy': -1.0},
+            ],
+            'requires_construction': false,
+            'shortfall': null,
+          },
+          {
+            'metric_code': 'door_width',
+            'risk_name': '门宽不足风险',
+            'solved': true,
+            'edits': [
+              {'op': 'resize_door', 'width_m': 0.90},
+            ],
+            'requires_construction': true,
+            'shortfall': null,
+          },
+        ],
+      }),
+      data: {'metric_codes': solveCodes},
+    );
+
+    final mergedEdits = [
+      {'op': 'move', 'target': 'desk_001', 'dx': 0.0, 'dy': -1.0},
+      {'op': 'resize_door', 'width_m': 0.90},
+    ];
+    Map<String, dynamic> layout() => {
+          'room': {
+            'bounds_xy': {
+              'min': [0.0, 0.0],
+              'max': [4.0, 4.0],
+            },
+          },
+          'objects': <Map<String, dynamic>>[],
+          'doors': <Map<String, dynamic>>[],
+          'windows': <Map<String, dynamic>>[],
+        };
+    adapter.onPost(
+      '/api/assistant/scans/12/simulate',
+      (server) => server.reply(200, {
+        'edits': mergedEdits,
+        'layout_before': layout(),
+        'layout_after': layout(),
+        'changed_ids': ['desk_001'],
+        'removed_ids': <String>[],
+        'assumed_ids': <String>[],
+        'conflicts': <Map<String, dynamic>>[],
+        'comparison': {
+          'before_score': 80.0,
+          'after_score': 85.0,
+          'score_delta': 5.0,
+        },
+        'metric_changes': [
+          {'name': '床边活动空间', 'unit': 'm', 'before': 0.3, 'after': 0.55},
+        ],
+        'risk_changes': <Map<String, dynamic>>[],
+      }),
+      data: {'edits': mergedEdits},
+    );
+
+    await tester.pumpWidget(reportApp());
+    await tester.pumpAndSettle();
+
+    await tester.scrollUntilVisible(
+      find.textContaining('门宽不足'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.textContaining('门宽不足'));
+    await tester.pump();
+
+    await tester.scrollUntilVisible(
+      find.textContaining('床边空间不足'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.textContaining('床边空间不足'));
+    await tester.pump();
+
+    await tester.scrollUntilVisible(
+      find.text('生成方案'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('生成方案'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('生成方案失败'), findsNothing);
+    expect(find.text('需施工：改门洞/换门'), findsOneWidget);
+    final simulateBodies = captured.toList();
+    expect(simulateBodies, isNotEmpty);
+    final edits = simulateBodies.last['edits'] as List;
+    expect(edits, hasLength(2));
+    expect((edits[0] as Map)['op'], 'move');
+    expect((edits[1] as Map)['op'], 'resize_door');
+  });
+
 }

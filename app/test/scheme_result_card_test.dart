@@ -104,4 +104,49 @@ void main() {
     ));
     expect(find.text('含假设放置物体 · 非实测'), findsOneWidget);
   });
+
+  testWidgets('显示需施工提示当 requiresConstruction 为真', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: SchemeResultCard(
+            payload: _payload(),
+            requiresConstruction: true,
+          ),
+        ),
+      ),
+    ));
+    expect(find.text('需施工：改门洞/换门'), findsOneWidget);
+  });
+
+  testWidgets('渲染风险等级变化 before → after', (tester) async {
+    final payload = _payload()
+      ..['risk_changes'] = [
+        {'name': '门宽风险', 'before': 'medium', 'after': 'low'},
+      ];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(child: SchemeResultCard(payload: payload)),
+      ),
+    ));
+    expect(find.textContaining('门宽风险'), findsOneWidget);
+    expect(find.textContaining('中 → 低'), findsOneWidget);
+  });
+
+  testWidgets('非重叠冲突按类型显示正确文案', (tester) async {
+    final payload = _payload()
+      ..['conflicts'] = [
+        {'type': 'out_of_room', 'target': 'desk_001', 'op': 'move'},
+        {'type': 'overlap', 'target': 'desk_001', 'other': 'bed_001'},
+        {'type': 'invalid_door_width', 'width_m': 5.0},
+      ];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(child: SchemeResultCard(payload: payload)),
+      ),
+    ));
+    expect(find.text('目标位置超出房间边界，已拒绝'), findsOneWidget);
+    expect(find.text('该位置与 bed_001 重叠，已拒绝'), findsOneWidget);
+    expect(find.text('门洞宽度超出合理范围（0.5–1.5m），已拒绝'), findsOneWidget);
+  });
 }

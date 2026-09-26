@@ -162,5 +162,37 @@ void main() {
     expect(box.afterSize.width, closeTo(1.0 * 90, 0.01));
     expect(box.afterSize.height, closeTo(0.8 * 90, 0.01));
   });
-}
 
+  test('解析门洞并暴露改造前后宽度', () {
+    final before = SchemeLayout.fromJson(_layout());
+    final afterJson = _layout();
+    ((afterJson['doors'] as List).first as Map)['size'] = [0.90, 0.12, 2.1];
+    final after = SchemeLayout.fromJson(afterJson);
+    final scene = buildSchemeScene(
+      before: before, after: after, size: const Size(400, 400),
+      padding: 20, changedIds: const {}, removedIds: const {},
+    );
+    expect(scene.doors, hasLength(1));
+    expect(scene.doors.single.changed, isTrue);
+    expect(scene.doors.single.beforeWidthPx, closeTo(0.85 * 90, 0.01));
+    expect(scene.doors.single.afterWidthPx, closeTo(0.90 * 90, 0.01));
+    expect(scene.doors.single.widthMeters, closeTo(0.90, 1e-9));
+  });
+
+  test('解析窗洞并保持独立于门洞', () {
+    final json = _layout();
+    (json['windows'] as List).add(
+      {'id': 'window_01', 'center': [2.0, 4.0, 1.2], 'size': [1.2, 0.10, 1.5], 'rotation_z_deg': 0.0},
+    );
+    final layout = SchemeLayout.fromJson(json);
+    expect(layout.windows, hasLength(1));
+    final scene = buildSchemeScene(
+      before: layout, after: layout, size: const Size(400, 400),
+      padding: 20, changedIds: const {}, removedIds: const {},
+    );
+    expect(scene.windows, hasLength(1));
+    expect(scene.windows.single.kind, 'window');
+    expect(scene.windows.single.changed, isFalse);
+  });
+
+}

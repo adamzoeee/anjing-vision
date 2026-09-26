@@ -27,6 +27,7 @@ class _ReportPageState extends State<ReportPage> {
   String? _schemeName;
   String? _assistantShortfall;
   bool _assistantBusy = false;
+  bool _requiresConstruction = false;
 
   @override
   void dispose() {
@@ -95,6 +96,7 @@ class _ReportPageState extends State<ReportPage> {
         _schemeId = null;
         _schemeName = null;
         _assistantShortfall = null;
+        _requiresConstruction = false;
       });
     } catch (error) {
       if (!mounted) return;
@@ -126,32 +128,53 @@ class _ReportPageState extends State<ReportPage> {
         ).showSnackBar(const SnackBar(content: Text('未返回解决方案')));
         return;
       }
-      final first = results.first;
-      if (first['solved'] == true) {
-        final edits = (first['edits'] as List? ?? const [])
-            .whereType<Map>()
-            .map((item) => Map<String, dynamic>.from(item))
-            .toList();
-        final payload = await context.read<ApiClient>().simulateScheme(
-          widget.scan.id,
-          edits,
-        );
-        if (!mounted) return;
-        setState(() {
-          _assistantResult = payload;
-          _schemeId = null;
-          _schemeName = null;
-          _assistantShortfall = null;
-        });
-      } else {
+
+      final solvedResults = results
+          .where((item) => item['solved'] == true)
+          .toList();
+      final unsolved = results
+          .where((item) => item['solved'] != true)
+          .toList();
+      final shortfall = unsolved
+          .map((item) => item['shortfall']?.toString())
+          .where((text) => text != null && text.isNotEmpty)
+          .toList();
+
+      if (solvedResults.isEmpty) {
         setState(() {
           _assistantResult = null;
           _schemeId = null;
           _schemeName = null;
-          _assistantShortfall = first['shortfall']?.toString() ??
-              '该建议当前无法精确计算评分变化。';
+          _requiresConstruction = false;
+          _assistantShortfall = shortfall.isNotEmpty
+              ? shortfall.join('；')
+              : '该建议当前无法精确计算评分变化。';
         });
+        return;
       }
+
+      // 合并所有达标建议的编辑，一次性进入官方模拟链路；顺序沿用用户勾选后的排序。
+      final mergedEdits = <Map<String, dynamic>>[];
+      for (final item in solvedResults) {
+        final edits = (item['edits'] as List? ?? const [])
+            .whereType<Map>()
+            .map((edit) => Map<String, dynamic>.from(edit))
+            .toList();
+        mergedEdits.addAll(edits);
+      }
+      final payload = await context.read<ApiClient>().simulateScheme(
+        widget.scan.id,
+        mergedEdits,
+      );
+      if (!mounted) return;
+      setState(() {
+        _assistantResult = payload;
+        _schemeId = null;
+        _schemeName = null;
+        _requiresConstruction = solvedResults
+            .any((item) => item['requires_construction'] == true);
+        _assistantShortfall = shortfall.isNotEmpty ? shortfall.join('；') : null;
+      });
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -456,7 +479,12 @@ class _ReportPageState extends State<ReportPage> {
                     '建议${suggestion['id']} · ${suggestion['name']}'
                     '${levelText.isEmpty ? '' : '（$levelText）'}',
                   ),
-                  subtitle: Text(suggestion['advice']?.toString() ?? ''),
+                  subtitle: Text(
+                    [
+                      suggestion['advice']?.toString(),
+                      suggestion['reachability_label']?.toString(),
+                    ].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
+                  ),
                 );
               }),
               Align(
@@ -519,6 +547,7 @@ class _ReportPageState extends State<ReportPage> {
   List<Widget> _assistantResultView(BuildContext context) => [
         SchemeResultCard(
           payload: _assistantResult!,
+          requiresConstruction: _requiresConstruction,
           onSave: _saveScheme,
           onEdit: null, // 阶段二接入全屏编辑器
           onExport: _exportScheme,

@@ -6,8 +6,6 @@
 from __future__ import annotations
 
 import math
-from copy import deepcopy
-
 import numpy as np
 
 from pipeline.renovation_compare import compare_assessments
@@ -15,10 +13,7 @@ from pipeline.renovation_geometry import (
     apply_ops, build_grid, compute_metrics, load_geometry, nearest_box,
     payload_from_geometry, _corridor_width,
 )
-from pipeline.risk_assessment import (
-    build_risk_assessment, collect_specific_advice, rank_top_risks,
-    score_formal_risks,
-)
+from pipeline.risk_assessment import build_risk_assessment
 from pipeline.spatial_metrics import METRIC_DEFINITION_BY_CODE
 
 # 建议(风险 metric_code) → 具体几何操作
@@ -37,42 +32,6 @@ _SUGGESTION_OPS = {
 }
 
 _QUALITATIVE = {"path_length"}
-
-
-def _project_completed_suggestions(assessment: dict, applied: list[dict]) -> dict:
-    """Project successfully executed suggestion targets to low risk.
-
-    The assistant presents an outcome estimate: an operation-bearing suggestion means
-    the user chose to complete that remediation.  Scoring is then recomputed through
-    the same formal category weights as the report, so high-risk remediation naturally
-    contributes twice the raw risk-level improvement of medium-risk remediation.
-    """
-    projected = deepcopy(assessment)
-    completed_codes = {
-        item["metric_code"] for item in applied
-        if item.get("ops", 0) > 0 and not item.get("qualitative")
-    }
-    for risk in projected.get("risks", []):
-        if risk.get("metric_code") not in completed_codes:
-            continue
-        if risk.get("assessment_status") != "evaluated":
-            continue
-        risk["risk_level"] = "low"
-        risk["risk_code"] = f"{risk['metric_code']}_low"
-        risk["reason"] = "simulated_remediation_completed"
-        risk["advice"] = "整改完成后复核现场尺寸并保持当前状态。"
-
-    scoring = score_formal_risks(projected.get("risks", []))
-    projected["overall"] = {
-        **(projected.get("overall") or {}),
-        "status": scoring["status"],
-        "score": scoring["score"],
-        "missing_core_metrics": scoring["missing_core_metrics"],
-    }
-    projected["category_scores"] = scoring["category_scores"]
-    projected["top_risks"] = rank_top_risks(projected.get("risks", []))
-    projected["advice"] = collect_specific_advice(projected.get("risks", []))
-    return projected
 
 
 def _find_box(geo: dict, target: str):
@@ -378,15 +337,8 @@ def simulate(metric_payload: dict, intent: dict, structure: dict,
 
     simulated_geo = simulated_geo or apply_ops(geo, ops)
     after_payload = payload_from_geometry(simulated_geo)
-    geometry_after = build_risk_assessment(after_payload)
-    if action == "APPLY_SUGGESTIONS" and official_assessment is not None:
-        after = _project_completed_suggestions(
-            official_assessment, intent.get("applied_suggestions", []),
-        )
-        comparison = compare_assessments(official_assessment, after)
-    else:
-        after = geometry_after
-        comparison = finalize_comparison(geometry_before, after)
+    after = build_risk_assessment(after_payload)
+    comparison = finalize_comparison(geometry_before, after)
 
     # 关键指标变化
     before_metrics = {m["metric_code"]: m for m in geometry_before_payload.get("metrics", [])}

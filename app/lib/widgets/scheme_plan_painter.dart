@@ -52,13 +52,46 @@ void paintSchemePlan(Canvas canvas, SchemeScene scene, {Color accent = kSchemeAc
   for (final box in scene.boxes.where((b) => b.changed && !b.hidden)) {
     final from = box.beforeCenter;
     final to = box.afterCenter;
-    if ((from - to).distance < 1) continue;
+    final moved = (from - to).distance;
+    if (moved < 1) continue;
     canvas.drawLine(from, to, Paint()..color = accent..strokeWidth = 2);
     _arrowHead(canvas, from, to, accent);
-    final meters = (from.dy - to.dy) / scene.metersToPixels;
-    _text(canvas, '↓${meters.abs().toStringAsFixed(2)}m',
+    final meters = moved / scene.metersToPixels;
+    final dx = to.dx - from.dx;
+    final dy = to.dy - from.dy;
+    final hint = dx.abs() >= dy.abs() ? '↔' : (dy < 0 ? '↑' : '↓');
+    _text(canvas, '$hint${meters.toStringAsFixed(2)}m',
         Offset(math.max(from.dx, to.dx) + 6, (from.dy + to.dy) / 2), accent);
   }
+
+  // 门/窗洞宽：用蓝色开洞条表示，改造前后宽度变化直接可见。
+  for (final door in scene.doors) {
+    _openingBar(canvas, door.center, door.beforeWidthPx, door.afterWidthPx,
+        door.changed, accent);
+    _text(canvas, '门 ${door.widthMeters.toStringAsFixed(2)}m',
+        Offset(door.center.dx - door.afterWidthPx / 2, door.center.dy - 14), accent,
+        fontSize: labelSize);
+  }
+  for (final window in scene.windows) {
+    _openingBar(canvas, window.center, window.beforeWidthPx, window.afterWidthPx,
+        window.changed, kSchemeGhost);
+    _text(canvas, '窗 ${window.widthMeters.toStringAsFixed(2)}m',
+        Offset(window.center.dx - window.afterWidthPx / 2, window.center.dy - 14), kSchemeInk,
+        fontSize: labelSize);
+  }
+}
+
+/// 在房间轮廓上绘制一条洞宽条：改造前用浅色，改造后用实色覆盖。
+void _openingBar(Canvas canvas, Offset center, double beforeWidth, double afterWidth,
+    bool changed, Color color) {
+  if (changed) {
+    canvas.drawRect(
+        Rect.fromCenter(center: center, width: beforeWidth, height: 10),
+        Paint()..color = color.withValues(alpha: 0.28));
+  }
+  canvas.drawRect(
+      Rect.fromCenter(center: center, width: afterWidth, height: 6),
+      Paint()..color = color);
 }
 
 /// 单个物体在叠影图上的标签：已移除 > 假设放置 > 改动物体用普通名称。
