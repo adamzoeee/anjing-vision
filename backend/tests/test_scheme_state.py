@@ -175,7 +175,7 @@ def test_resize_door_accepts_plausible_width():
     assert value == pytest.approx(0.90, abs=1e-6)
 
 
-@pytest.mark.parametrize("width", [5.0, -1.0, 0.2, 1.8])
+@pytest.mark.parametrize("width", [5.0, -1.0, 0.2, 1.8, 0.0, "abc"])
 def test_resize_door_rejects_out_of_range_width(width):
     m, s = _measurements(), _structure()
     result = build_scheme(m, s, [{"op": "resize_door", "width_m": width}])
@@ -186,3 +186,10 @@ def test_resize_door_rejects_out_of_range_width(width):
     value = next(x["value"] for x in result["metrics"] if x["metric_code"] == "door_width")
     assert value == pytest.approx(0.85, abs=1e-6)
 
+
+def test_resize_door_without_width_defaults_to_point_nine():
+    m, s = _measurements(), _structure()
+    result = build_scheme(m, s, [{"op": "resize_door"}])
+    assert result["conflicts"] == []
+    value = next(x["value"] for x in result["metrics"] if x["metric_code"] == "door_width")
+    assert value == pytest.approx(0.90, abs=1e-6)

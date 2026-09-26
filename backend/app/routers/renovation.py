@@ -347,7 +347,7 @@ async def export_scheme_pdf(
             before_score=(payload.get("comparison") or {}).get("before_score"),
             after_score=(payload.get("comparison") or {}).get("after_score"),
             metric_changes=payload["metric_changes"], risk_changes=payload["risk_changes"],
-            provenance={**(scheme.based_on or {}), "stale": status["stale"]},
+            provenance={**(scheme.based_on or {}), **status},
             disclaimer=payload["disclaimer"], output=output,
         )
     except HTTPException:
