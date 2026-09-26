@@ -172,20 +172,33 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
             item["center"] = moved["center"]
             if sit is not None:
                 sit["center"] = [moved["center"][0], moved["center"][1], sit["center"][2]]
+            else:
+                s.setdefault("semantic_instances", []).append({
+                    "instance_id": object_id(item),
+                    "label": item.get("type") or item.get("label") or "object",
+                    "center": list(moved["center"]),
+                    "size": [float(item.get("length_m") or 0.0),
+                             float(item.get("width_m") or 0.0),
+                             float(item.get("height_m") or 0.0)],
+                    "rotation_z_deg": float(item.get("rotation_z_deg") or 0.0),
+                })
             applied.append(dict(edit))
             continue
 
         if op == "rotate":
-            turns = int(edit.get("quarter_turns") or 1) % 4
-            if turns == 0:
-                continue
             if item is None:
                 conflicts.append({"type": "unmeasured_object", "target": target, "op": "rotate"})
                 continue
+            turns = int(edit.get("quarter_turns") or 1) % 4
+            if turns == 0:
+                continue
+            swap_axes = turns % 2 == 1
+            new_rotation = (float(item.get("rotation_z_deg") or 0.0) + 90.0 * turns) % 360.0
             rotated = {
                 **item,
-                "length_m": item["width_m"], "width_m": item["length_m"],
-                "rotation_z_deg": ((float(item.get("rotation_z_deg") or 0.0) + 90.0 * turns) % 360.0),
+                "length_m": item["width_m"] if swap_axes else item["length_m"],
+                "width_m": item["length_m"] if swap_axes else item["width_m"],
+                "rotation_z_deg": new_rotation,
             }
             corners = _rect_of_measurement(rotated)
             if not _inside_room(corners, bounds):
@@ -198,11 +211,13 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
                 conflicts.append({"type": "overlap", "target": target, "other": object_id(hit),
                                   "op": "rotate"})
                 continue
-            item["rotation_z_deg"] = rotated["rotation_z_deg"]
-            item["length_m"], item["width_m"] = item["width_m"], item["length_m"]
+            item["rotation_z_deg"] = new_rotation
+            if swap_axes:
+                item["length_m"], item["width_m"] = item["width_m"], item["length_m"]
             if sit is not None and sit.get("size"):
-                sit["size"] = [sit["size"][1], sit["size"][0], sit["size"][2]]
-                sit["rotation_z_deg"] = rotated["rotation_z_deg"]
+                if swap_axes:
+                    sit["size"] = [sit["size"][1], sit["size"][0], sit["size"][2]]
+                sit["rotation_z_deg"] = new_rotation
             applied.append(dict(edit))
             continue
 
