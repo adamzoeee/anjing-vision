@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../api/client.dart';
 import '../api/models.dart';
 import '../widgets/risk_card.dart';
+import '../widgets/scheme_result_card.dart';
 import '../widgets/score_gauge.dart';
 import 'preview_launcher.dart';
 
@@ -18,8 +19,9 @@ class _ReportPageState extends State<ReportPage> {
   String? _error;
   final _assistantController = TextEditingController();
   List<Map<String, dynamic>> _suggestions = [];
-  final Set<int> _selectedSuggestionIds = {};
+  final Set<String> _selectedMetricCodes = {};
   Map<String, dynamic>? _assistantResult;
+  String? _assistantShortfall;
   bool _assistantBusy = false;
 
   @override
@@ -60,29 +62,31 @@ class _ReportPageState extends State<ReportPage> {
             .whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
             .toList();
-        _selectedSuggestionIds.removeWhere(
-          (id) => !_suggestions.any((suggestion) => suggestion['id'] == id),
-        );
+        final validCodes = _suggestions
+            .map((suggestion) => suggestion['metric_code']?.toString())
+            .where((code) => code != null && code.isNotEmpty)
+            .toSet();
+        _selectedMetricCodes.removeWhere((code) => !validCodes.contains(code));
       });
     } catch (_) {
       // 建议列表加载失败不阻塞报告页
     }
   }
 
-  Future<void> _runSimulation({
-    String? prompt,
-    List<int>? suggestionIds,
-  }) async {
+  Future<void> _runSimulation({String? prompt}) async {
     if (_assistantBusy) return;
     setState(() => _assistantBusy = true);
     try {
-      final result = await context.read<ApiClient>().simulateRenovation(
+      final result = await context.read<ApiClient>().simulateScheme(
         widget.scan.id,
+        const [],
         prompt: prompt,
-        suggestionIds: suggestionIds,
       );
       if (!mounted) return;
-      setState(() => _assistantResult = result);
+      setState(() {
+        _assistantResult = result;
+        _assistantShortfall = null;
+      });
     } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -91,6 +95,89 @@ class _ReportPageState extends State<ReportPage> {
     } finally {
       if (mounted) setState(() => _assistantBusy = false);
     }
+  }
+
+  Future<void> _generateScheme() async {
+    if (_assistantBusy || _selectedMetricCodes.isEmpty) return;
+    final codes = _selectedMetricCodes.toList()..sort();
+    setState(() => _assistantBusy = true);
+    try {
+      final solved = await context.read<ApiClient>().solveSuggestions(
+        widget.scan.id,
+        codes,
+      );
+      final results = (solved['results'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+      if (!mounted) return;
+      if (results.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('未返回解决方案')));
+        return;
+      }
+      final first = results.first;
+      if (first['solved'] == true) {
+        final edits = (first['edits'] as List? ?? const [])
+            .whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList();
+        final payload = await context.read<ApiClient>().simulateScheme(
+          widget.scan.id,
+          edits,
+        );
+        if (!mounted) return;
+        setState(() {
+          _assistantResult = payload;
+          _assistantShortfall = null;
+        });
+      } else {
+        setState(() {
+          _assistantResult = null;
+          _assistantShortfall = first['shortfall']?.toString() ??
+              '该建议当前无法精确计算评分变化。';
+        });
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('生成方案失败：$error')));
+    } finally {
+      if (mounted) setState(() => _assistantBusy = false);
+    }
+  }
+
+  Future<void> _saveScheme() async {
+    final result = _assistantResult;
+    if (result == null) return;
+    final api = context.read<ApiClient>();
+    try {
+      await api.dio.post(
+        '/api/schemes',
+        data: {
+          'scan_id': widget.scan.id,
+          'edits': result['edits'] ?? result['applied_edits'] ?? const [],
+        },
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('方案已保存')));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('保存失败：$error')));
+    }
+  }
+
+  void _exportScheme() {
+    // 导出在 Task 6 接入（导出为图片/PDF）
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('导出功能开发中')));
   }
 
   @override
@@ -288,9 +375,7 @@ class _ReportPageState extends State<ReportPage> {
               const Text('暂无可用建议（未检测到中高风险项）')
             else ...[
               ..._suggestions.map((suggestion) {
-                final id = suggestion['id'] is int
-                    ? suggestion['id'] as int
-                    : int.tryParse(suggestion['id'].toString()) ?? 0;
+                final code = suggestion['metric_code']?.toString() ?? '';
                 final level = suggestion['level']?.toString() ?? '';
                 final levelText = switch (level) {
                   'high' => '高风险',
@@ -301,14 +386,16 @@ class _ReportPageState extends State<ReportPage> {
                   dense: true,
                   controlAffinity: ListTileControlAffinity.leading,
                   contentPadding: EdgeInsets.zero,
-                  value: _selectedSuggestionIds.contains(id),
-                  onChanged: (checked) => setState(() {
-                    if (checked == true) {
-                      _selectedSuggestionIds.add(id);
-                    } else {
-                      _selectedSuggestionIds.remove(id);
-                    }
-                  }),
+                  value: code.isNotEmpty && _selectedMetricCodes.contains(code),
+                  onChanged: code.isEmpty
+                      ? null
+                      : (checked) => setState(() {
+                          if (checked == true) {
+                            _selectedMetricCodes.add(code);
+                          } else {
+                            _selectedMetricCodes.remove(code);
+                          }
+                        }),
                   title: Text(
                     '建议${suggestion['id']} · ${suggestion['name']}'
                     '${levelText.isEmpty ? '' : '（$levelText）'}',
@@ -319,16 +406,13 @@ class _ReportPageState extends State<ReportPage> {
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton.icon(
-                  onPressed: _assistantBusy || _selectedSuggestionIds.isEmpty
+                  onPressed: _assistantBusy || _selectedMetricCodes.isEmpty
                       ? null
-                      : () => _runSimulation(
-                          suggestionIds: _selectedSuggestionIds.toList()
-                            ..sort(),
-                        ),
+                      : _generateScheme,
                   icon: _assistantBusy
                       ? busyIndicator()
-                      : const Icon(Icons.play_arrow),
-                  label: const Text('模拟执行'),
+                      : const Icon(Icons.auto_awesome),
+                  label: const Text('生成方案'),
                 ),
               ),
             ],
@@ -356,6 +440,13 @@ class _ReportPageState extends State<ReportPage> {
                 label: const Text('开始评估'),
               ),
             ),
+            if (_assistantShortfall != null) ...[
+              const Divider(height: 24),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(_assistantShortfall!),
+              ),
+            ],
             if (_assistantResult != null) ...[
               const Divider(height: 24),
               ..._assistantResultView(context),
@@ -366,88 +457,14 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
-  List<Widget> _assistantResultView(BuildContext context) {
-    final result = _assistantResult!;
-    final comparison = result['comparison'] is Map
-        ? result['comparison'] as Map
-        : const {};
-    final before = comparison['before_score'];
-    final after = comparison['after_score'];
-    final delta = comparison['score_delta'];
-    final metricChanges = (result['metric_changes'] as List? ?? const [])
-        .whereType<Map>()
-        .toList();
-    final riskChanges = (result['risk_changes'] as List? ?? const [])
-        .whereType<Map>()
-        .toList();
-    final qualitative = result['qualitative'] == true;
-    String fmtScore(Object? value) =>
-        value is num ? value.toStringAsFixed(1) : '无法评分';
-    String fmtDelta(Object? value) => value is num
-        ? '${value >= 0 ? '+' : ''}${value.toStringAsFixed(1)}'
-        : '—';
-    final widgets = <Widget>[
-      Text(
-        '当前分 ${fmtScore(before)} → 修改后分 ${fmtScore(after)}（Δ ${fmtDelta(delta)}）',
-        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-      ),
-    ];
-    if (qualitative) {
-      widgets.add(
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text('该建议当前只能提供定性建议，暂时无法精确计算评分变化。'),
+  List<Widget> _assistantResultView(BuildContext context) => [
+        SchemeResultCard(
+          payload: _assistantResult!,
+          onSave: _saveScheme,
+          onEdit: null, // 阶段二接入全屏编辑器
+          onExport: _exportScheme,
         ),
-      );
-    }
-    if (metricChanges.isNotEmpty) {
-      widgets.add(const SizedBox(height: 8));
-      widgets.add(
-        Text('关键指标变化', style: Theme.of(context).textTheme.titleSmall),
-      );
-      for (final item in metricChanges.take(6)) {
-        widgets.add(
-          Text(
-            '· ${item['name']}：${item['before']}${item['unit'] ?? ''}'
-            ' → ${item['after']}${item['unit'] ?? ''}',
-          ),
-        );
-      }
-    }
-    if (riskChanges.isNotEmpty) {
-      widgets.add(const SizedBox(height: 8));
-      widgets.add(
-        Text('风险等级变化', style: Theme.of(context).textTheme.titleSmall),
-      );
-      const levelNames = {'low': '低', 'medium': '中', 'high': '高'};
-      for (final item in riskChanges.take(6)) {
-        widgets.add(
-          Text(
-            '· ${item['name']}：${levelNames[item['before']] ?? item['before']}'
-            ' → ${levelNames[item['after']] ?? item['after']}',
-          ),
-        );
-      }
-    }
-    if (metricChanges.isEmpty && riskChanges.isEmpty && !qualitative) {
-      widgets.add(
-        const Padding(
-          padding: EdgeInsets.only(top: 8),
-          child: Text('该改造未引起正式空间指标变化，评分不变。'),
-        ),
-      );
-    }
-    widgets.add(
-      const Padding(
-        padding: EdgeInsets.only(top: 8),
-        child: Text(
-          '仅为沙盒模拟，不代表真实施工结果。',
-          style: TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-      ),
-    );
-    return widgets;
-  }
+      ];
 
   Widget _structurePlanSection(
     BuildContext context,
