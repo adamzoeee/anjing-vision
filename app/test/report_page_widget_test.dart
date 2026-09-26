@@ -567,4 +567,38 @@ void main() {
     // 有语义空间数据时不回退旧 object_dimensions 逻辑
     expect(find.text('床自动测量'), findsNothing);
   });
+
+  testWidgets('自由改造输入为空时开始评估按钮不可点击', (tester) async {
+    adapter.onGet(
+      '/api/reports/scans/12',
+      (server) => server.reply(200, {
+        'scan_id': 12,
+        'score': 90,
+        'risks': [],
+        'advice': [],
+        'images': [],
+        'calibrated': 1,
+      }),
+    );
+
+    await tester.pumpWidget(reportApp());
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('开始评估'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    FilledButton assessButton() => tester.widget<FilledButton>(
+          find.ancestor(
+            of: find.text('开始评估'),
+            matching: find.byType(FilledButton),
+          ),
+        );
+    expect(assessButton().onPressed, isNull);
+
+    await tester.enterText(find.byType(TextField), '把床向左移动30厘米');
+    await tester.pump();
+    expect(assessButton().onPressed, isNotNull);
+  });
 }

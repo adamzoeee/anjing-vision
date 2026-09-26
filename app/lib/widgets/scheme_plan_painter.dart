@@ -16,22 +16,37 @@ void paintSchemePlan(Canvas canvas, SchemeScene scene, {Color accent = kSchemeAc
   Rect rectOf(Offset center, Size size) =>
       Rect.fromCenter(center: center, width: size.width, height: size.height);
 
+  // 小画布也保持标签可读：字号随房间像素尺寸收缩，下限 9px。
+  final labelSize = (scene.roomRect.width / 30).clamp(9.0, 12.0).toDouble();
+
   for (final box in scene.boxes) {
+    final ghostRect = rectOf(box.beforeCenter, box.beforeSize);
     if (box.changed || box.removed) {
       final ghost = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5
         ..color = kSchemeGhost;
-      canvas.drawPath(_dashed(Path()..addRect(rectOf(box.beforeCenter, box.size))), ghost);
+      // 幽灵框用改前尺寸，改尺寸的物体也能看到真实原始足迹。
+      canvas.drawPath(_dashed(Path()..addRect(ghostRect)), ghost);
+      if (box.removed) {
+        final removedLabel = schemeBoxLabel(box);
+        if (removedLabel != null) {
+          _label(canvas, removedLabel, ghostRect, kSchemeGhost, scene, labelSize);
+        }
+      }
     }
     if (box.hidden) continue;
-    final rect = rectOf(box.afterCenter, box.size);
+    final rect = rectOf(box.afterCenter, box.afterSize);
     canvas.drawRect(rect,
         Paint()..color = box.assumed ? kSchemeAssumed.withValues(alpha: 0.18) : Colors.white);
     canvas.drawRect(rect, Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = box.changed ? 2.5 : 1.5
       ..color = box.assumed ? kSchemeAssumed : (box.changed ? accent : kSchemeInk));
+    final label = schemeBoxLabel(box);
+    if (label != null) {
+      _label(canvas, label, rect, box.assumed ? kSchemeAssumed : accent, scene, labelSize);
+    }
   }
 
   for (final box in scene.boxes.where((b) => b.changed && !b.hidden)) {
@@ -44,6 +59,14 @@ void paintSchemePlan(Canvas canvas, SchemeScene scene, {Color accent = kSchemeAc
     _text(canvas, '↓${meters.abs().toStringAsFixed(2)}m',
         Offset(math.max(from.dx, to.dx) + 6, (from.dy + to.dy) / 2), accent);
   }
+}
+
+/// 单个物体在叠影图上的标签：已移除 > 假设放置 > 改动物体用普通名称。
+String? schemeBoxLabel(SchemeBoxScene box) {
+  if (box.removed) return '${box.label} · 已移除';
+  if (box.assumed) return '${box.label} · 假设放置';
+  if (box.changed) return box.label;
+  return null;
 }
 
 class SchemePlanPainter extends CustomPainter {
@@ -97,10 +120,43 @@ void _arrowHead(Canvas canvas, Offset from, Offset to, Color color) {
   canvas.drawPath(path, Paint()..color = color);
 }
 
-void _text(Canvas canvas, String value, Offset at, Color color) {
+void _text(Canvas canvas, String value, Offset at, Color color,
+    {double fontSize = 11, FontWeight? weight, double? maxWidth}) {
   final painter = TextPainter(
-    text: TextSpan(text: value, style: TextStyle(color: color, fontSize: 11)),
+    text: TextSpan(
+      text: value,
+      style: TextStyle(color: color, fontSize: fontSize, fontWeight: weight),
+    ),
     textDirection: TextDirection.ltr,
-  )..layout();
+    maxLines: 1,
+    ellipsis: '…',
+  )..layout(maxWidth: maxWidth ?? double.infinity);
   painter.paint(canvas, at);
+}
+
+/// 在物体框旁绘制标签：优先放框上方，空间不足时收进框内左上角。
+void _label(Canvas canvas, String value, Rect anchor, Color color,
+    SchemeScene scene, double fontSize) {
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return;
+  const weight = FontWeight.w600;
+  final maxWidth = math.max(scene.roomRect.width, 24.0);
+  final measured = TextPainter(
+    text: TextSpan(text: trimmed, style: TextStyle(fontSize: fontSize, fontWeight: weight)),
+    textDirection: TextDirection.ltr,
+    maxLines: 1,
+    ellipsis: '…',
+  )..layout(maxWidth: maxWidth);
+  final bounds = scene.roomRect;
+  var dx = anchor.left;
+  var dy = anchor.top - measured.height - 2;
+  if (dy < bounds.top + 2) dy = anchor.top + 2;
+  dx = dx
+      .clamp(bounds.left + 2, math.max(bounds.right - measured.width - 2, bounds.left + 2))
+      .toDouble();
+  dy = dy
+      .clamp(bounds.top + 2, math.max(bounds.bottom - measured.height - 2, bounds.top + 2))
+      .toDouble();
+  _text(canvas, trimmed, Offset(dx, dy), color,
+      fontSize: fontSize, weight: weight, maxWidth: maxWidth);
 }
