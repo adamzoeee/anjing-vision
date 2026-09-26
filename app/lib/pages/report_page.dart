@@ -74,13 +74,15 @@ class _ReportPageState extends State<ReportPage> {
   }
 
   Future<void> _runSimulation({String? prompt}) async {
-    if (_assistantBusy) return;
+    final instruction = prompt?.trim() ?? '';
+    // 空输入不发起无意义的基线模拟。
+    if (_assistantBusy || instruction.isEmpty) return;
     setState(() => _assistantBusy = true);
     try {
       final result = await context.read<ApiClient>().simulateScheme(
         widget.scan.id,
         const [],
-        prompt: prompt,
+        prompt: instruction,
       );
       if (!mounted) return;
       setState(() {
@@ -430,14 +432,17 @@ class _ReportPageState extends State<ReportPage> {
             ),
             Align(
               alignment: Alignment.centerRight,
-              child: FilledButton.icon(
-                onPressed: _assistantBusy
-                    ? null
-                    : () => _runSimulation(prompt: _assistantController.text),
-                icon: _assistantBusy
-                    ? busyIndicator()
-                    : const Icon(Icons.auto_fix_high),
-                label: const Text('开始评估'),
+              child: ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _assistantController,
+                builder: (context, value, _) => FilledButton.icon(
+                  onPressed: _assistantBusy || value.text.trim().isEmpty
+                      ? null
+                      : () => _runSimulation(prompt: value.text),
+                  icon: _assistantBusy
+                      ? busyIndicator()
+                      : const Icon(Icons.auto_fix_high),
+                  label: const Text('开始评估'),
+                ),
               ),
             ),
             if (_assistantShortfall != null) ...[
