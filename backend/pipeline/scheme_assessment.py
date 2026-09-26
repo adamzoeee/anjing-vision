@@ -6,9 +6,6 @@ from pipeline.scheme_state import apply_edits
 from pipeline.space_foundation import analyze_structure_passages, build_spatial_foundation
 from pipeline.spatial_assessment_inputs import build_spatial_assessment_inputs
 
-LEVEL_ORDER = {None: -1, "low": 0, "medium": 1, "high": 2}
-
-
 def assess_scheme(measurements: dict, structure: dict) -> dict:
     """只读内存输入，跑正式链路，返回指标/风险/分数。"""
     passage = analyze_structure_passages(measurements, structure)
