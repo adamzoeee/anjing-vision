@@ -7,6 +7,7 @@ backend/.test-data/
 /*_raw.mp4
 /*.mp4
 .reasonix/tasks/
+.superpowers/
 task4_local/
 backend/.env
 backend/.env.*
