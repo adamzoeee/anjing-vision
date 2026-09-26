@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from pipeline.scheme_solver import CONSTRUCTION_METRICS, _movable_objects, solve
 from ..config import Settings, get_settings
 from ..db import get_db
 from ..deps import get_org_scope
-from ..models import Scan
+from ..models import RenovationScheme, Scan
 
 router = APIRouter()
 
@@ -83,6 +84,41 @@ def _scan_and_work(scan_id: int, db: Session, org_id: int, settings: Settings):
         raise HTTPException(404, "扫描任务不存在")
     work = (Path(settings.data_dir) / "work" / str(scan_id)).resolve()
     return scan, work
+
+
+def _input_fingerprints(work: Path) -> dict:
+    out = {}
+    for name in ("measurements.json", "structure_calibrated.json", "structure.json"):
+        path = work / "postprocess" / name
+        if path.is_file():
+            out[name.replace(".json", "_sha256")] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return out
+
+
+def _scheme_payload(scan_id: int, measurements: dict, structure: dict, edits: list[dict]) -> dict:
+    baseline = build_scheme(measurements, structure, [])
+    result = build_scheme(measurements, structure, edits)
+    diff = diff_assessments(baseline, result)
+    applied = result["applied_edits"]
+    return {
+        "scan_id": scan_id,
+        "edits": edits,
+        "applied_edits": applied,
+        "conflicts": result["conflicts"],
+        "assumed_ids": result["assumed_ids"],
+        "layout_before": result["layout_before"],
+        "layout_after": result["layout_after"],
+        "changed_ids": sorted({e["target"] for e in applied if e.get("target")}),
+        "removed_ids": sorted({e["target"] for e in applied if e.get("op") == "remove"}),
+        "metrics": result["metrics"],
+        "risks": result["risks"],
+        "overall": result["overall"],
+        "category_scores": result["category_scores"],
+        **diff,
+        "scope": result["scope"],
+        "disclaimer": "仅为内存沙盒模拟：未修改真实房间、点云、结构数据或正式报告；"
+                      "分数由正式评估链路在改后布局上重算。",
+    }
 
 
 @router.get("/scans/{scan_id}/suggestions")
@@ -160,26 +196,93 @@ def simulate_renovation(
     else:
         raise HTTPException(422, "请提供改造指令或编辑列表")
 
-    baseline = build_scheme(measurements, structure, [])
-    result = build_scheme(measurements, structure, edits)
-    diff = diff_assessments(baseline, result)
-    applied = result["applied_edits"]
-    return {
-        "scan_id": scan_id,
-        "edits": edits,
-        "applied_edits": applied,
-        "conflicts": result["conflicts"],
-        "assumed_ids": result["assumed_ids"],
-        "layout_before": result["layout_before"],
-        "layout_after": result["layout_after"],
-        "changed_ids": sorted({e["target"] for e in applied if e.get("target")}),
-        "removed_ids": sorted({e["target"] for e in applied if e.get("op") == "remove"}),
-        "metrics": result["metrics"],
-        "risks": result["risks"],
-        "overall": result["overall"],
-        "category_scores": result["category_scores"],
-        **diff,
-        "scope": result["scope"],
-        "disclaimer": "仅为内存沙盒模拟：未修改真实房间、点云、结构数据或正式报告；"
-                      "分数由正式评估链路在改后布局上重算。",
-    }
+    return _scheme_payload(scan_id, measurements, structure, edits)
+
+
+class SchemeCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    edits: list[dict] = Field(default_factory=list)
+    source: str = Field(default="manual", max_length=20)
+
+
+class SchemePatchRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
+def _get_scheme(db: Session, scan_id: int, scheme_id: int) -> RenovationScheme:
+    scheme = db.get(RenovationScheme, scheme_id)
+    if scheme is None or scheme.scan_id != scan_id:
+        raise HTTPException(404, "方案不存在")
+    return scheme
+
+
+@router.get("/scans/{scan_id}/schemes")
+def list_schemes(scan_id: int, db: Session = Depends(get_db), org_id: int = Depends(get_org_scope),
+                 settings: Settings = Depends(get_settings)):
+    _, work = _scan_and_work(scan_id, db, org_id, settings)
+    measurements, structure = _require_measurements(work), _load_structure(work)
+    baseline_score = (build_scheme(measurements, structure, []).get("overall") or {}).get("score")
+    schemes = (db.query(RenovationScheme)
+               .filter(RenovationScheme.scan_id == scan_id)
+               .order_by(RenovationScheme.id).all())
+    items = []
+    for scheme in schemes:
+        result = build_scheme(measurements, structure, scheme.edits or [])
+        items.append({
+            "id": scheme.id, "name": scheme.name, "edits": scheme.edits, "source": scheme.source,
+            "created_at": scheme.created_at.isoformat() if scheme.created_at else None,
+            "score": (result.get("overall") or {}).get("score"),
+            "baseline_score": baseline_score,
+            "conflicts": result["conflicts"],
+        })
+    return {"scan_id": scan_id, "baseline_score": baseline_score, "schemes": items}
+
+
+@router.post("/scans/{scan_id}/schemes")
+def create_scheme(scan_id: int, payload: SchemeCreateRequest, db: Session = Depends(get_db),
+                  org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
+    _, work = _scan_and_work(scan_id, db, org_id, settings)
+    measurements, structure = _require_measurements(work), _load_structure(work)
+    validation = build_scheme(measurements, structure, payload.edits)
+    if validation["conflicts"]:
+        raise HTTPException(422, f"方案包含无效编辑：{validation['conflicts'][0]}")
+    scheme = RenovationScheme(scan_id=scan_id, name=payload.name, edits=payload.edits,
+                              source=payload.source, based_on=_input_fingerprints(work))
+    db.add(scheme)
+    db.commit()
+    db.refresh(scheme)
+    return {"id": scheme.id, "name": scheme.name, "edits": scheme.edits,
+            "score": (validation.get("overall") or {}).get("score")}
+
+
+@router.get("/scans/{scan_id}/schemes/{scheme_id}")
+def get_scheme(scan_id: int, scheme_id: int, db: Session = Depends(get_db),
+               org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
+    _, work = _scan_and_work(scan_id, db, org_id, settings)
+    scheme = _get_scheme(db, scan_id, scheme_id)
+    measurements, structure = _require_measurements(work), _load_structure(work)
+    payload = _scheme_payload(scan_id, measurements, structure, scheme.edits or [])
+    return {**payload, "score": (payload["overall"] or {}).get("score"),
+            "plan": {"id": scheme.id, "name": scheme.name, "edits": scheme.edits,
+                     "source": scheme.source, "based_on": scheme.based_on}}
+
+
+@router.patch("/scans/{scan_id}/schemes/{scheme_id}")
+def rename_scheme(scan_id: int, scheme_id: int, payload: SchemePatchRequest, db: Session = Depends(get_db),
+                  org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
+    _scan_and_work(scan_id, db, org_id, settings)
+    scheme = _get_scheme(db, scan_id, scheme_id)
+    scheme.name = payload.name
+    db.commit()
+    db.refresh(scheme)
+    return {"id": scheme.id, "name": scheme.name}
+
+
+@router.delete("/scans/{scan_id}/schemes/{scheme_id}")
+def delete_scheme(scan_id: int, scheme_id: int, db: Session = Depends(get_db),
+                  org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
+    _scan_and_work(scan_id, db, org_id, settings)
+    scheme = _get_scheme(db, scan_id, scheme_id)
+    db.delete(scheme)
+    db.commit()
+    return {"deleted": scheme_id}
