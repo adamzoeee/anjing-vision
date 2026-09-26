@@ -47,14 +47,45 @@ def _metric_value(assessment: dict, metric_code: str) -> float | None:
     return None if item is None else item.get("value")
 
 
+def _risk_entry(assessment: dict, metric_code: str) -> dict | None:
+    return next((x for x in assessment.get("risks", []) if x["metric_code"] == metric_code), None)
+
+
 def _risk_level(assessment: dict, metric_code: str) -> str | None:
-    item = next((x for x in assessment.get("risks", []) if x["metric_code"] == metric_code), None)
+    item = _risk_entry(assessment, metric_code)
     return None if item is None else item.get("risk_level")
 
 
 def _risk_name(assessment: dict, metric_code: str) -> str:
-    item = next((x for x in assessment.get("risks", []) if x["metric_code"] == metric_code), None)
-    return (item or {}).get("risk_name") or metric_code
+    return (_risk_entry(assessment, metric_code) or {}).get("risk_name") or metric_code
+
+
+def _metric_entry(assessment: dict, metric_code: str) -> dict | None:
+    return next((x for x in assessment.get("metrics", []) if x["metric_code"] == metric_code), None)
+
+
+def _evaluability(assessment: dict, metric_code: str) -> str:
+    """Distinguish an evaluated risk from a not-evaluable metric.
+
+    Returns "evaluated" (risk entry is assessable), "no_risk" (metric exists,
+    is evaluated, but has no formal risk entry), or "not_evaluable".
+    """
+    risk = _risk_entry(assessment, metric_code)
+    if risk is not None:
+        return "evaluated" if risk.get("assessment_status") == "evaluated" else "not_evaluable"
+    metric = _metric_entry(assessment, metric_code)
+    if metric is not None and metric.get("status") != "not_evaluable":
+        return "no_risk"
+    return "not_evaluable"
+
+
+def _is_solved(assessment: dict, metric_code: str) -> bool:
+    """A metric is solved only when its resulting risk entry is low risk,
+    or when it is evaluated and carries no risk entry at all."""
+    risk = _risk_entry(assessment, metric_code)
+    if risk is not None:
+        return risk.get("assessment_status") == "evaluated" and risk.get("risk_level") == "low"
+    return _evaluability(assessment, metric_code) == "no_risk"
 
 
 def _displacement(edits: list[dict]) -> float:
@@ -72,6 +103,22 @@ def solve_metric(measurements: dict, structure: dict, metric_code: str,
     before_value, before_level = _metric_value(baseline, metric_code), _risk_level(baseline, metric_code)
     before_score = (baseline.get("overall") or {}).get("score")
 
+    if _evaluability(baseline, metric_code) == "not_evaluable":
+        return {
+            "metric_code": metric_code,
+            "risk_name": _risk_name(baseline, metric_code),
+            "solved": False,
+            "edits": [],
+            "requires_construction": False,
+            "before": {"value": before_value, "level": before_level},
+            "after": {"value": before_value, "level": before_level},
+            "score": {"before": before_score, "after": before_score},
+            "shortfall": "该指标当前不可评估，无法给出达标方案。",
+            "evaluations": 0,
+            "elapsed_ms": int((time.perf_counter() - started) * 1000),
+            "budget_exhausted": False,
+        }
+
     best_solved = None
     best_partial = None
     evaluations = 0
@@ -86,6 +133,8 @@ def solve_metric(measurements: dict, structure: dict, metric_code: str,
         result = build_scheme(measurements, structure, edits)
         if result["conflicts"]:
             continue
+        if _evaluability(result, metric_code) == "not_evaluable":
+            continue
         level = _risk_level(result, metric_code)
         score = (result.get("overall") or {}).get("score")
         candidate = {
@@ -95,7 +144,7 @@ def solve_metric(measurements: dict, structure: dict, metric_code: str,
             "score": score,
             "requires_construction": any(e.get("op") == "resize_door" for e in edits),
         }
-        if level is None or LEVEL_RANK.get(level, 9) == 0:
+        if _is_solved(result, metric_code):
             key = (candidate["requires_construction"], _displacement(edits))
             if best_solved is None or key < best_solved[0]:
                 best_solved = (key, candidate)

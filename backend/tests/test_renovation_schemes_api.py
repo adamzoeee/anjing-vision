@@ -132,3 +132,45 @@ def test_scheme_export_pdf_rejects_bad_or_oversized_plan(client, scheme_inputs):
     # 跨机构导出仍 404
     h2 = _auth(client, org="养老院B", email="export-other@x.com")
     assert _export_scheme(client, h2, sid, scheme_id, _png_bytes()).status_code == 404
+
+def test_scheme_flags_stale_when_inputs_change(client, scheme_inputs):
+    m, s = scheme_inputs
+    h = _auth(client, email="stale@x.com")
+    sid = _scan_with_artifacts(client, h, m, s)
+    scheme_id = client.post(f"/api/assistant/scans/{sid}/schemes",
+                            json={"name": "方案A", "edits": []}, headers=h).json()["id"]
+
+    # 保存后输入指纹应一致 → 不标记过期
+    fresh = client.get(f"/api/assistant/scans/{sid}/schemes/{scheme_id}", headers=h).json()
+    assert fresh["stale"] is False
+    assert fresh["based_on_mismatch"] is False
+    assert fresh["mismatched_keys"] == []
+
+    # 修改 measurements.json 文件内容 → 指纹变化 → 标记过期
+    post = Path(get_settings().data_dir) / "work" / str(sid) / "postprocess"
+    changed = dict(m)
+    changed["room"] = {**m["room"], "width_m": 4.2}
+    (post / "measurements.json").write_text(json.dumps(changed, ensure_ascii=False), encoding="utf-8")
+
+    listed = client.get(f"/api/assistant/scans/{sid}/schemes", headers=h).json()
+    assert listed["schemes"][0]["stale"] is True
+    assert listed["schemes"][0]["based_on_mismatch"] is True
+    assert listed["schemes"][0]["mismatched_keys"]
+
+    detail = client.get(f"/api/assistant/scans/{sid}/schemes/{scheme_id}", headers=h).json()
+    assert detail["stale"] is True
+    assert detail["based_on_mismatch"] is True
+    assert detail["mismatched_keys"]
+
+def test_scheme_export_cleans_up_temporary_pdf(client, scheme_inputs):
+    m, s = scheme_inputs
+    h = _auth(client, email="export-cleanup@x.com")
+    sid = _scan_with_artifacts(client, h, m, s)
+    scheme_id = client.post(f"/api/assistant/scans/{sid}/schemes",
+                            json={"name": "方案A", "edits": []}, headers=h).json()["id"]
+    r = _export_scheme(client, h, sid, scheme_id, _png_bytes())
+    assert r.status_code == 200, r.text
+    schemes_dir = Path(get_settings().data_dir) / "work" / str(sid) / "schemes"
+    leftovers = list(schemes_dir.glob("*.pdf")) if schemes_dir.exists() else []
+    assert leftovers == [], "导出后不得残留临时 PDF 文件"
+

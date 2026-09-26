@@ -41,10 +41,14 @@ class SchemeLayout {
   const SchemeLayout({
     required this.minX, required this.minY, required this.maxX, required this.maxY,
     required this.objects,
+    this.doors = const [],
+    this.windows = const [],
   });
 
   final double minX, minY, maxX, maxY;
   final List<SchemeBox> objects;
+  final List<SchemeBox> doors;
+  final List<SchemeBox> windows;
 
   factory SchemeLayout.fromJson(Map<String, dynamic> json) {
     final room = (json['room'] as Map?)?.cast<String, dynamic>() ?? const {};
@@ -55,10 +59,20 @@ class SchemeLayout {
         .whereType<Map>()
         .map((item) => SchemeBox.fromJson(item.cast<String, dynamic>()))
         .toList();
+    final doors = (json['doors'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => SchemeBox.fromJson(item.cast<String, dynamic>()))
+        .toList();
+    final windows = (json['windows'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => SchemeBox.fromJson(item.cast<String, dynamic>()))
+        .toList();
     return SchemeLayout(
       minX: min.isNotEmpty ? min[0] : 0, minY: min.length > 1 ? min[1] : 0,
       maxX: max.isNotEmpty ? max[0] : 4, maxY: max.length > 1 ? max[1] : 4,
       objects: objects,
+      doors: doors,
+      windows: windows,
     );
   }
 }
@@ -82,11 +96,35 @@ class SchemeBoxScene {
   final bool hidden;
 }
 
+class SchemeOpeningScene {
+  const SchemeOpeningScene({
+    required this.id, required this.kind, required this.changed,
+    required this.center, required this.beforeWidthPx, required this.afterWidthPx,
+    required this.widthMeters,
+  });
+
+  final String id;
+  final String kind;
+  final bool changed;
+  final Offset center;
+  final double beforeWidthPx;
+  final double afterWidthPx;
+  final double widthMeters;
+}
+
 class SchemeScene {
-  const SchemeScene({required this.roomRect, required this.boxes, required this.metersToPixels});
+  const SchemeScene({
+    required this.roomRect,
+    required this.boxes,
+    required this.doors,
+    required this.windows,
+    required this.metersToPixels,
+  });
 
   final Rect roomRect;
   final List<SchemeBoxScene> boxes;
+  final List<SchemeOpeningScene> doors;
+  final List<SchemeOpeningScene> windows;
   final double metersToPixels;
 }
 
@@ -141,6 +179,34 @@ SchemeScene buildSchemeScene({
       hidden: removed,
     ));
   }
+
+  /// 门/窗按各自 size[0] 视为洞宽（米）：改造前后宽度差异在叠影图上可见。
+  List<SchemeOpeningScene> openingsOf(String kind, List<SchemeBox> beforeItems,
+      List<SchemeBox> afterItems) {
+    final beforeMap = {for (final box in beforeItems) box.id: box};
+    final afterMap = {for (final box in afterItems) box.id: box};
+    final keys = <String>{...beforeMap.keys, ...afterMap.keys};
+    return keys.map((id) {
+      final b = beforeMap[id];
+      final a = afterMap[id];
+      final source = a ?? b!;
+      final beforeWidthPx = (b?.sx ?? source.sx) * scale;
+      final afterWidthPx = (a?.sx ?? source.sx) * scale;
+      return SchemeOpeningScene(
+        id: id,
+        kind: kind,
+        changed: beforeWidthPx != afterWidthPx,
+        center: project(source.cx, source.cy),
+        beforeWidthPx: beforeWidthPx,
+        afterWidthPx: afterWidthPx,
+        widthMeters: a?.sx ?? source.sx,
+      );
+    }).toList();
+  }
+
+  final doors = openingsOf('door', before.doors, after.doors);
+  final windows = openingsOf('window', before.windows, after.windows);
+
   return SchemeScene(roomRect: Rect.fromLTWH(left, top, width, height),
-      boxes: boxes, metersToPixels: scale);
+      boxes: boxes, doors: doors, windows: windows, metersToPixels: scale);
 }

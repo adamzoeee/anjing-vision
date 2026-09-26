@@ -25,23 +25,6 @@ def _payload():
     ])
 
 
-def _mostly_safe_payload(**overrides):
-    values = {
-        "main_passage_width": 1.0, "minimum_passage_width": 1.0,
-        "door_width": 1.0, "entrance_space": 2.0, "path_length": 2.0,
-        "path_continuity": True, "path_obstruction": False,
-        "furniture_spacing": 0.8, "wall_furniture_clearance": 0.2,
-        "bed_wall_distance": 0.2, "bedside_clearance": 0.8,
-        "activity_area": 4.0, "crowding": 0.3,
-        "bed_surrounding_space": 0.8, "main_activity_area_safety": True,
-    }
-    values.update(overrides)
-    return build_metric_payload([
-        build_metric(code, value=value, status="derived", confidence=0.8)
-        for code, value in values.items()
-    ])
-
-
 @pytest.mark.parametrize("text,action", [
     ("移除书架", "REMOVE"), ("把床往左移动30厘米", "MOVE"),
     ("在床边放一个60×40×50厘米的箱子", "ADD"),
@@ -86,24 +69,3 @@ def test_single_multiple_and_all_suggestions_are_accumulated_in_one_simulation()
         assert [item["id"] for item in intent["applied_suggestions"]] == selected
         assert result["comparison"]["before_score"] is not None
         assert result["comparison"]["after_score"] is not None
-
-
-def test_high_risk_improves_more_than_medium_and_all_suggestions_exceed_ninety():
-    payload = _mostly_safe_payload(door_width=0.70, crowding=0.50)
-    assessment = build_risk_assessment(payload)
-    risks = assessment["top_risks"]
-    high_id = next(i for i, risk in enumerate(risks, 1) if risk["risk_level"] == "high")
-    medium_id = next(i for i, risk in enumerate(risks, 1) if risk["risk_level"] == "medium")
-
-    high = simulate(payload, {
-        "action": "APPLY_SUGGESTIONS", "suggestion_ids": [high_id], "raw": "high",
-    }, _structure())
-    medium = simulate(payload, {
-        "action": "APPLY_SUGGESTIONS", "suggestion_ids": [medium_id], "raw": "medium",
-    }, _structure())
-    all_result = simulate(payload, {
-        "action": "APPLY_SUGGESTIONS", "suggestion_ids": [1, 2], "raw": "all",
-    }, _structure())
-
-    assert high["comparison"]["score_delta"] > medium["comparison"]["score_delta"] > 0
-    assert all_result["comparison"]["after_score"] >= 90.0

@@ -166,3 +166,23 @@ def test_golden_scan46_matches_official_metrics():
     assert {x["metric_code"]: x["value"] for x in result["metrics"]} == \
            {x["metric_code"]: x["value"] for x in official["metrics"]}
     assert result["overall"]["score"] == official_risks["overall"]["score"]
+
+def test_resize_door_accepts_plausible_width():
+    m, s = _measurements(), _structure()
+    widened = build_scheme(m, s, [{"op": "resize_door", "width_m": 0.90}])
+    assert widened["conflicts"] == []
+    value = next(x["value"] for x in widened["metrics"] if x["metric_code"] == "door_width")
+    assert value == pytest.approx(0.90, abs=1e-6)
+
+
+@pytest.mark.parametrize("width", [5.0, -1.0, 0.2, 1.8])
+def test_resize_door_rejects_out_of_range_width(width):
+    m, s = _measurements(), _structure()
+    result = build_scheme(m, s, [{"op": "resize_door", "width_m": width}])
+    assert result["conflicts"] and result["conflicts"][0]["type"] == "invalid_door_width"
+    assert result["applied_edits"] == []
+    # 越界宽度不得改动原始门洞
+    assert m["openings"][0]["width_m"] == pytest.approx(0.85, abs=1e-6)
+    value = next(x["value"] for x in result["metrics"] if x["metric_code"] == "door_width")
+    assert value == pytest.approx(0.85, abs=1e-6)
+
