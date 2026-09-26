@@ -11,10 +11,10 @@ from pipeline.scheme_assessment import build_scheme
 
 STEP_M = 0.10
 MAX_BUDGET = 300
+REMOVE_PENALTY = 100.0
 AXES = ((1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0))
 CONSTRUCTION_METRICS = {"door_width"}
 LEVEL_RANK = {None: 0, "low": 0, "medium": 1, "high": 2}
-MOVABLE_KINDS = {"furniture", "obstacle"}
 
 
 def _movable_objects(measurements: dict) -> list[dict]:
@@ -23,7 +23,7 @@ def _movable_objects(measurements: dict) -> list[dict]:
 
 def candidate_edits(measurements: dict, structure: dict, metric_code: str,
                     *, max_steps: int = 10) -> list[list[dict]]:
-    """生成候选编辑：平移（4 轴 × 步长）→ 搬出房间 → 放宽门洞。"""
+    """生成候选编辑：平移（4 轴 × 步长）→ 搬出房间；施工指标只放宽门洞。"""
     candidates: list[list[dict]] = []
     if metric_code in CONSTRUCTION_METRICS:
         width = max(float(o.get("width_m") or 0.0) for o in measurements.get("openings", [])
@@ -31,6 +31,7 @@ def candidate_edits(measurements: dict, structure: dict, metric_code: str,
             o.get("type") == "door" for o in measurements.get("openings", [])) else 0.0
         if width and width < 0.90:
             candidates.append([{"op": "resize_door", "width_m": 0.90}])
+        return candidates
     for obj in _movable_objects(measurements):
         oid = str(obj.get("instance_id") or obj.get("id"))
         for distance in (STEP_M * (i + 1) for i in range(max_steps)):
@@ -57,7 +58,10 @@ def _risk_name(assessment: dict, metric_code: str) -> str:
 
 
 def _displacement(edits: list[dict]) -> float:
-    return sum(abs(float(e.get("dx") or 0.0)) + abs(float(e.get("dy") or 0.0)) for e in edits) + len(edits) * STEP_M
+    """改动量：位移米数 + 每条编辑的基础成本；搬出房间按最侵入处理。"""
+    moved = sum(abs(float(e.get("dx") or 0.0)) + abs(float(e.get("dy") or 0.0)) for e in edits)
+    removals = sum(REMOVE_PENALTY for e in edits if e.get("op") == "remove")
+    return moved + removals + len(edits) * STEP_M
 
 
 def solve_metric(measurements: dict, structure: dict, metric_code: str,
@@ -77,10 +81,11 @@ def solve_metric(measurements: dict, structure: dict, metric_code: str,
         if evaluations >= budget:
             budget_exhausted = True
             break
+        # 预算约束的是官方链路调用次数：冲突候选也同样跑了一次 build_scheme。
+        evaluations += 1
         result = build_scheme(measurements, structure, edits)
         if result["conflicts"]:
             continue
-        evaluations += 1
         level = _risk_level(result, metric_code)
         score = (result.get("overall") or {}).get("score")
         candidate = {
@@ -94,7 +99,8 @@ def solve_metric(measurements: dict, structure: dict, metric_code: str,
             key = (candidate["requires_construction"], _displacement(edits))
             if best_solved is None or key < best_solved[0]:
                 best_solved = (key, candidate)
-        partial_key = (-(score or 0), LEVEL_RANK.get(level, 9))
+        # 未达标时保留最优部分改进：分数优先，同分取风险等级更低者。
+        partial_key = (score or 0, -LEVEL_RANK.get(level, 9))
         if best_partial is None or partial_key > best_partial[0]:
             best_partial = (partial_key, candidate)
 
@@ -110,7 +116,7 @@ def solve_metric(measurements: dict, structure: dict, metric_code: str,
             "before": {"value": before_value, "level": before_level},
             "after": {"value": before_value, "level": before_level},
             "score": {"before": before_score, "after": before_score},
-            "shortfall": "当前房间结构下没有可用的家具调整候选方案。",
+            "shortfall": "当前房间条件下没有可用的调整候选方案。",
             "evaluations": evaluations,
             "elapsed_ms": int((time.perf_counter() - started) * 1000),
             "budget_exhausted": budget_exhausted,
@@ -119,9 +125,14 @@ def solve_metric(measurements: dict, structure: dict, metric_code: str,
     shortfall = None
     if not solved:
         unit = next((x.get("unit") for x in baseline.get("metrics", []) if x["metric_code"] == metric_code), "") or ""
-        shortfall = (f"已尝试 {evaluations} 个候选方案仍未达标："
-                     f"目标指标 {chosen['value']}{unit}（{chosen['level'] or 'low'}）。"
-                     "当前房间条件下需要搬出家具或施工改造才能达成。")
+        if chosen["value"] is None:
+            shortfall = (f"已尝试 {evaluations} 个候选方案仍未达标："
+                         "该指标当前不可评估，未找到达标方案。"
+                         "当前房间条件下需要搬出家具或施工改造才能达成。")
+        else:
+            shortfall = (f"已尝试 {evaluations} 个候选方案仍未达标："
+                         f"目标指标 {chosen['value']}{unit}（{chosen['level'] or 'low'}）。"
+                         "当前房间条件下需要搬出家具或施工改造才能达成。")
 
     return {
         "metric_code": metric_code,
