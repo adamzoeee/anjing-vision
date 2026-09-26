@@ -1,8 +1,9 @@
 """AI 安全改造助手 API：只读真实数据，模拟结果仅存在于响应内存。
 
-两个核心入口：
-1) /suggestions —— 现有装修建议列表（编号展示，供勾选模拟）；
-2) /simulate —— 自由改造（移动家具/放置物体）或勾选建议后的真实几何模拟评分。
+三个核心入口：
+1) /suggestions —— 现有装修建议列表（编号展示，含可达成预判）；
+2) /simulate —— 自由改造（移动家具/放置物体）或勾选建议后的真实几何模拟评分；
+3) /solve —— 针对风险指标搜索可达标且改动最小的编辑方案。
 """
 from __future__ import annotations
 
@@ -15,9 +16,8 @@ from sqlalchemy.orm import Session
 
 from assistant.intent_edits import intent_to_edits
 from assistant.intent_parser import parse_intent
-from pipeline.risk_assessment import build_risk_assessment
 from pipeline.scheme_assessment import build_scheme, diff_assessments
-from pipeline.spatial_assessment_inputs import build_spatial_assessment_inputs
+from pipeline.scheme_solver import CONSTRUCTION_METRICS, _movable_objects, solve_metric
 
 from ..config import Settings, get_settings
 from ..db import get_db
@@ -26,10 +26,20 @@ from ..models import Scan
 
 router = APIRouter()
 
+_REACHABILITY_LABEL = {
+    "movable": "可达成（移动家具）",
+    "construction": "需施工（改门洞/换门）",
+    "unknown": "无法达成",
+}
+
 
 class RenovationRequest(BaseModel):
     edits: list[dict] | None = None
     prompt: str | None = Field(default=None, min_length=1, max_length=300)
+
+
+class SolveRequest(BaseModel):
+    metric_codes: list[str] = Field(min_length=1, max_length=5)
 
 
 class SuggestionRequest(BaseModel):
@@ -38,17 +48,6 @@ class SuggestionRequest(BaseModel):
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _load_metric_payload(work: Path) -> dict:
-    post = work / "postprocess"
-    metric_path = post / "spatial_metrics.json"
-    if metric_path.is_file():
-        return _read_json(metric_path)
-    required = [post / "measurements.json", post / "passage_analysis.json", post / "spatial_foundation.json"]
-    if not all(path.is_file() for path in required):
-        raise HTTPException(409, "当前扫描缺少结构化测量数据，无法进行改造模拟")
-    return build_spatial_assessment_inputs(*(_read_json(path) for path in required))
 
 
 def _load_structure(work: Path) -> dict:
@@ -64,11 +63,18 @@ def _load_measurements(work: Path) -> dict | None:
     path = work / "postprocess" / "measurements.json"
     return _read_json(path) if path.is_file() else None
 
+
 def _require_measurements(work: Path) -> dict:
-    path = work / "postprocess" / "measurements.json"
-    if not path.is_file():
+    data = _load_measurements(work)
+    if data is None:
         raise HTTPException(409, "当前扫描缺少结构化测量数据，无法进行改造模拟")
-    return _read_json(path)
+    return data
+
+
+def _reachability(measurements: dict, metric_code: str) -> str:
+    if metric_code in CONSTRUCTION_METRICS:
+        return "construction"
+    return "movable" if _movable_objects(measurements) else "unknown"
 
 
 def _scan_and_work(scan_id: int, db: Session, org_id: int, settings: Settings):
@@ -79,11 +85,6 @@ def _scan_and_work(scan_id: int, db: Session, org_id: int, settings: Settings):
     return scan, work
 
 
-def _build_before(work: Path):
-    metrics = _load_metric_payload(work)
-    return metrics, build_risk_assessment(metrics)
-
-
 @router.get("/scans/{scan_id}/suggestions")
 def list_suggestions(
     scan_id: int,
@@ -92,21 +93,47 @@ def list_suggestions(
     settings: Settings = Depends(get_settings),
 ):
     _, work = _scan_and_work(scan_id, db, org_id, settings)
-    _, assessment = _build_before(work)
+    measurements, structure = _require_measurements(work), _load_structure(work)
+    assessment = build_scheme(measurements, structure, [])
     suggestions = []
     for index, risk in enumerate(assessment.get("top_risks", []), 1):
+        code = risk.get("metric_code")
+        tier = _reachability(measurements, code)
         suggestions.append({
             "id": index,
             "name": risk.get("risk_name"),
             "level": risk.get("risk_level"),
             "advice": risk.get("advice"),
-            "metric_code": risk.get("metric_code"),
+            "metric_code": code,
+            "reachability": tier,
+            "reachability_label": _REACHABILITY_LABEL[tier],
         })
     return {
         "scan_id": scan_id,
         "score": (assessment.get("overall") or {}).get("score"),
         "suggestions": suggestions,
     }
+
+
+@router.post("/scans/{scan_id}/solve")
+def solve_suggestions(
+    scan_id: int,
+    payload: SolveRequest,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    _, work = _scan_and_work(scan_id, db, org_id, settings)
+    measurements = _require_measurements(work)
+    structure = _load_structure(work)
+    baseline = build_scheme(measurements, structure, [])
+    known = {r["metric_code"] for r in baseline.get("risks", [])}
+    unknown = [code for code in payload.metric_codes if code not in known]
+    if unknown:
+        raise HTTPException(422, f"未知的风险指标：{unknown}")
+    return {"scan_id": scan_id,
+            "baseline_score": (baseline.get("overall") or {}).get("score"),
+            "results": [solve_metric(measurements, structure, code) for code in payload.metric_codes]}
 
 
 @router.post("/scans/{scan_id}/simulate")
