@@ -19,6 +19,10 @@ backend/**/*.sqlite
 backend/*.sqlite3
 backend/**/*.sqlite3
 backend/.pytest_cache/
+/.pytest_cache/
+backend/.test-temp/
+/output/
+/tmp/
 /.pytest-*/
 backend/pytest-cache-files-*/
 backend/.pytest-*/
