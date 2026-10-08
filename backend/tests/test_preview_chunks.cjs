@@ -21,3 +21,20 @@ assert.equal(new Set(chunks.map(p=>p.geometry.attributes.position.array)).size,4
 assert.deepEqual(chunks.flatMap(p=>Array.from(p.geometry.attributes.position.array)),Array.from({length:21},(_,i)=>Math.floor(i/3)*10+i%3));
 assert(Math.abs(chunks[0].geometry.attributes.color.array[0]-1/255)<1e-8);
 console.log('PASS: four chunks retain every position and RGB independently');
+(async function () {
+ const pending=[]; chunks.length=0;
+ context.setTimeout=fn=>pending.push(fn);
+ const completion=context.addPointChunks({vertexCount:7,stride:15,properties:[
+  ...['x','y','z'].map((name,i)=>({name,type:'float',offset:i*4})),
+  ...['red','green','blue'].map((name,i)=>({name,type:'uchar',offset:12+i}))]},bytes,()=>{});
+ assert.equal(typeof completion.then,'function');
+ let done=false; completion.then(()=>{done=true;});
+ await Promise.resolve();
+ assert.equal(done,false,'camera framing must wait for all point chunks');
+ assert.equal(chunks.length,1);
+ while(pending.length) pending.shift()();
+ await completion;
+ assert.equal(done,true);
+ assert.equal(chunks.length,4);
+ console.log('PASS: room bounds are framed only after all asynchronous chunks complete');
+})().catch(error=>{console.error(error);process.exitCode=1;});
