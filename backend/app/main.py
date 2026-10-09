@@ -182,6 +182,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return FileResponse(preview_static_dir / "index.html")
 
+    # 大屏工作台（桌面端专用）：静态资源 + SPA 入口。
+    console_static_dir = Path(__file__).resolve().parent / "static" / "console"
+    application.mount(
+        "/console-static",
+        StaticFiles(directory=str(console_static_dir)),
+        name="console-static",
+    )
+
+    @application.get("/console", include_in_schema=False)
+    @application.get("/console/", include_in_schema=False)
+    def console_page():
+        from fastapi.responses import FileResponse
+
+        return FileResponse(console_static_dir / "index.html")
+
     @application.get("/api/health")
     def health():
         return {"ok": True}
