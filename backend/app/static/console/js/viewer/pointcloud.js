@@ -4,6 +4,7 @@
 
 import { getToken } from '../api.js';
 import { typeName, measuredSizeMap, normalizeInstanceId } from '../ui.js';
+import { packUpAxis, resolveFrame, framePoint, percentile } from './frame.mjs';
 
 const PLY_TYPE_SIZES = {
   char: 1, uchar: 1, short: 2, ushort: 2,
@@ -360,7 +361,27 @@ export function createViewer(host, options = {}) {
     controls.update();
   }
 
-  function addPointChunks(meta, data, onProgress) {
+  /* 交付包竖直轴不是 z 时，用地板侧点云给出竖直锚点（up=-Y→地板在最大 y；up=+Y→最小 y）。 */
+  function sampleFloorAnchor(meta, data, upSign) {
+    const py = meta.properties.find((prop) => prop.name === 'y');
+    if (!py) return null;
+    const total = meta.vertexCount;
+    const stride = meta.stride;
+    const step = Math.max(1, Math.floor(total / 20000));
+    const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const readY = (base) => {
+      switch (py.type) {
+        case 'double': return dv.getFloat64(base + py.offset, true);
+        case 'float': return dv.getFloat32(base + py.offset, true);
+        default: return 0;
+      }
+    };
+    const values = [];
+    for (let i = 0; i < total; i += step) values.push(readY(i * stride));
+    return percentile(values, upSign < 0 ? 99.5 : 0.5);
+  }
+
+  function addPointChunks(meta, data, frame, onProgress) {
     const props = meta.properties;
     const find = (name) => props.find((prop) => prop.name === name) || null;
     const px = find('x');
@@ -399,9 +420,22 @@ export function createViewer(host, options = {}) {
       const colArr = new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
         const base = (start + i) * stride;
-        posArr[i * 3] = readProp(px, base);
-        posArr[i * 3 + 1] = readProp(py, base);
-        posArr[i * 3 + 2] = readProp(pz, base);
+        const rx = readProp(px, base);
+        const ry = readProp(py, base);
+        const rz = readProp(pz, base);
+        if (frame && frame.sign < 0) {
+          posArr[i * 3] = rx;
+          posArr[i * 3 + 1] = rz;
+          posArr[i * 3 + 2] = frame.floor - ry;
+        } else if (frame) {
+          posArr[i * 3] = rx;
+          posArr[i * 3 + 1] = -rz;
+          posArr[i * 3 + 2] = ry - frame.floor;
+        } else {
+          posArr[i * 3] = rx;
+          posArr[i * 3 + 1] = ry;
+          posArr[i * 3 + 2] = rz;
+        }
         colArr[i * 3] = (pr ? readProp(pr, base) : 205) * colorScale(pr);
         colArr[i * 3 + 1] = (pg ? readProp(pg, base) : 210) * colorScale(pg);
         colArr[i * 3 + 2] = (pb ? readProp(pb, base) : 220) * colorScale(pb);
@@ -523,12 +557,15 @@ export function createViewer(host, options = {}) {
     return [];
   }
 
-  function buildVisualMesh(data, texture) {
+  function buildVisualMesh(data, texture, frame) {
     const count = Array.isArray(data.positions) ? data.positions.length : 0;
     if (!count) throw new Error('展示层缺少顶点');
     const attribute = (rows, size) => new THREE.Float32BufferAttribute(rows.flat(), size);
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', attribute(data.positions, 3));
+    geometry.setAttribute(
+      'position',
+      attribute(data.positions.map((point) => framePoint(point[0], point[1], point[2], frame)), 3),
+    );
     if (Array.isArray(data.faces) && data.faces.length) {
       const indices = data.faces.flat();
       if (indices.length % 3 || !indices.every((i) => Number.isInteger(i) && i >= 0 && i < count)) {
@@ -564,11 +601,15 @@ export function createViewer(host, options = {}) {
     return mesh;
   }
 
-  async function loadWindowVisual(url, headers) {
+  async function fetchWindowVisual(url, headers) {
     const res = await fetch(url, { headers, signal: abortController.signal }).catch(() => null);
-    if (!res || !res.ok) return;
+    if (!res || !res.ok) return null;
     const layer = await res.json().catch(() => null);
-    if (!layer || layer.purpose !== 'visual-only') return;
+    return layer && layer.purpose === 'visual-only' ? layer : null;
+  }
+
+  async function addWindowVisual(layer, frame) {
+    if (!layer) return;
     const items = visualLayerItems(layer);
     if (!items.length) return;
     const textureCache = new Map();
@@ -585,7 +626,7 @@ export function createViewer(host, options = {}) {
     };
     const meshes = await Promise.all(items.map(async (data) => {
       try {
-        return buildVisualMesh(data, await textureFor(data));
+        return buildVisualMesh(data, await textureFor(data), frame);
       } catch (error) {
         return null;
       }
@@ -671,20 +712,30 @@ export function createViewer(host, options = {}) {
       })();
 
       const windowVisualPromise = manifest.window_visual
-        ? loadWindowVisual(manifest.window_visual, headers)
-        : Promise.resolve();
+        ? fetchWindowVisual(manifest.window_visual, headers)
+        : Promise.resolve(null);
 
       onStatus({ phase: 'points', message: '流式加载稠密点云', progress: 0 });
       const { meta, data } = await fetchPly(manifest.ply, (frac) => {
         onStatus({ phase: 'points', message: '流式加载稠密点云', progress: frac });
       }, abortController.signal);
+      // 交付包可能导出自来源相机坐标系（竖直轴 Y）；按包内视角位姿判断并映射回 z-up 业务系，
+      // 否则点云/展示层会相对结构框整体旋转 90°。
+      const layer = await windowVisualPromise;
+      const upAxis = packUpAxis(layer?.views || null);
+      const frame = upAxis && Math.abs(upAxis[1]) > 0.9 && Math.abs(upAxis[2]) <= 0.9
+        ? resolveFrame(layer.views, sampleFloorAnchor(meta, data, upAxis[1]))
+        : null;
+      if (frame) {
+        onStatus({ phase: 'points', message: '已校正交付包坐标系（来源帧 Y-竖直 → 业务 z-up）' });
+      }
       await new Promise((resolve) => {
-        addPointChunks(meta, data, (frac) => {
+        addPointChunks(meta, data, frame, (frac) => {
           onStatus({ phase: 'render', message: '逐块渲染点云', progress: frac });
           if (frac >= 1) resolve();
         });
       });
-      await Promise.all([structurePromise, windowVisualPromise]);
+      await Promise.all([structurePromise, addWindowVisual(layer, frame)]);
       state.ready = true;
       if (!state.extent) computeBounds();
       ensureGrid();
