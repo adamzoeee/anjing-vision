@@ -153,3 +153,11 @@ flutter run -d web-server --web-hostname 127.0.0.1 --web-port 3000 --dart-define
 手调记录一致（原生尺寸）；`backend/tests/test_preview_frame_calibration.py` 守住清单字段
 与 404 回退。参数若重调，用校准页重新导出并覆盖 `frame_calibration.json` 即可，不需要
 重新训练或移动任何家具框。
+
+### 视图模式口径（同日追加）
+
+“真实场景”只渲染点云与窗边展示层；结构框架（墙/门/窗/家具）与标签只在“空间结构”里
+渲染，结构模式同时隐藏点云、启用结构网格。规则集中在
+`backend/app/static/console/js/viewer/mode.mjs` 的 `layerVisibility()`（真实场景、
+未知模式一律不画框架），`room.js` / `screen.js` 在切换模式时把框架图层 chip 降调并注明
+“框架仅在‘空间结构’视图渲染”；`backend/tests/test_console_mode.cjs` 守住这条口径。
