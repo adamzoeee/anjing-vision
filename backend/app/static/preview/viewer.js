@@ -23,6 +23,8 @@
   var boxGroups = { walls: null, doors: null, windows: null, objects: null };
   var labelGroup = null;
   var pointMaterial = null;
+  var roomFrame = null;
+  var roomUp = null;
   var rafId = null;
   var resizeHandler = null;
   var sceneDisposed = false;
@@ -338,7 +340,14 @@
         setTimeout(feedChunk, 0); // 连续化：让出主线程逐块上屏
       }
     }
-    feedChunk();
+    return new Promise(function (resolve) {
+      var progress = onProgress;
+      onProgress = function (fraction) {
+        progress(fraction);
+        if (fraction === 1) resolve();
+      };
+      feedChunk();
+    });
   }
 
   /* ---------------- 开顶房间补底层 ---------------- */
@@ -531,6 +540,12 @@
   }
 
   function resetView() {
+    if (roomFrame) {
+      if (controls) controls.dispose();
+      controls=PreviewVisualLayers.roomControls(THREE,camera,renderer.domElement,roomFrame);
+      $('ck-rotate').checked=false;
+      return;
+    }
     var extent = window.__extent || { x: [-2, 2], y: [-2, 2], z: [0, 3] };
     var cx = (extent.x[0] + extent.x[1]) / 2;
     var cy = (extent.y[0] + extent.y[1]) / 2;
@@ -562,10 +577,9 @@
         return loadPly(manifest.ply, function (frac) { setProgress(0.05 + 0.6 * frac, '加载稠密点云 ' + Math.round(frac * 100) + '%'); })
           .then(function (plyResult) {
             setProgress(0.65, '渲染点云');
-            addPointChunks(plyResult.meta, plyResult.data, function (frac) {
+            return addPointChunks(plyResult.meta, plyResult.data, function (frac) {
               setProgress(0.65 + 0.2 * frac, '渲染点云 ' + Math.round(frac * 100) + '%');
-            });
-            return manifest;
+            }).then(function () { return manifest; });
           });
       })
       .then(function (manifest) {
@@ -573,6 +587,10 @@
         return fetch(manifest.window_visual, { headers: token ? { Authorization: 'Bearer ' + token } : {} })
           .then(function (response) { if (!response.ok) throw new Error('窗户展示层加载失败'); return response.json(); })
           .then(function (layer) {
+            // This accepted pack uses source -Y vertical. Derive the display
+            // axis from its upright front view, not the tilted diagnostic pose.
+            var front=(layer.views || {}).front;
+            if (front) roomUp=new THREE.Vector3(-front.R[1][0],-front.R[1][2],front.R[1][1]);
             return PreviewVisualLayers.loadLayer(THREE, layer, pcdGroup);
           });
       })
@@ -581,6 +599,7 @@
           ? 'RGB 点云 + 已修正窗边展示层 · 展示层不参与尺寸和评分'
           : '纯 RGB 点云 · 结构数据保留在空间结构页面';
         $('stats').textContent = '';
+        roomFrame=PreviewVisualLayers.frameRoom(THREE,camera,pcdGroup,roomUp || new THREE.Vector3(0,1,0));
         setProgress(1, '完成');
         setTimeout(function () { $('overlay').style.display = 'none'; }, 250);
         resetView();

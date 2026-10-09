@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from build_scan46_source_traced_repair import (
     accept_candidate,
