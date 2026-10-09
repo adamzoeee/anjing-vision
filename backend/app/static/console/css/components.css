@@ -228,6 +228,9 @@
 .chip-toggle:hover { border-color: var(--border-strong); color: var(--text-1); transform: translateY(-1px); }
 .chip-toggle.on { color: var(--text-1); border-color: color-mix(in srgb, var(--accent) 50%, transparent); background: var(--accent-soft); }
 .chip-toggle.on .swatch { opacity: 1; box-shadow: 0 0 10px currentColor; }
+/* 框架图层只在“空间结构”里渲染，真实场景下把对应 chip 降调提示 */
+.chip-toggle.is-muted { opacity: 0.45; }
+.chip-toggle.is-muted:hover { opacity: 0.8; }
 
 /* —— 视图模式切换（真实场景 / 空间结构） —— */
 .mode-switch {
