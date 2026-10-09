@@ -116,3 +116,40 @@ flutter run -d web-server --web-hostname 127.0.0.1 --web-port 3000 --dart-define
 “框架贴合现实、不把点云整个包住”的预期行为）；交付包是 visual-only 资产
 （`.visual.json` 里 `excluded_from_measurements=true`），所有尺寸仍以
 `structure_calibrated.json` / `measurements.json` 为准，不要把点云当量测真值。
+
+## 2026-10-09 更新：整体框架校准参数固化（用户手调）
+
+上一节的口径（按墙面剖面把**点云**逐轴缩放拟合进房间轮廓）仍会被用户读成“点云被拉伸、
+框架还是不对”。用户改用校准页 `console/calibrate.html` 手动拉参数，定稿口径变成：
+
+**点云保持交付包原生尺寸**（`p_display = (pack_x, pack_z, floor − pack_y)`，不翻转、不缩放、
+不做水平拟合）；**整个结构大框架**（墙/门/窗/家具框 + 标签，全部一起）按
+`p_display = T · S · Rz(yaw) · p_business` 变换贴到点云上，不允许单独挪某个物品框。
+
+定稿参数（`scan46-frame-calibration.json`，贴合分 169734）：
+
+| 项 | 值 |
+|---|---|
+| yaw / mirror | 180° / 无镜像 |
+| scale | X 0.84、Y 0.71、Z 0.9 |
+| translate | X 1.54、Y 1.64、Z 0 |
+| 地板锚点 floor_y_pack | 1.3449620543191287 |
+
+落地方式：
+
+- 参数文件放在扫描数据目录 `backend/data/work/46/postprocess/frame_calibration.json`
+  （仓库内另存版本化副本 `docs/scan46-frame-calibration-20261009.json`）。
+- 清单 `manifest.json` 新增可选字段 `frame_calibration`（文件存在才给出），
+  路由 `GET /api/preview/{scan_id}/frame_calibration.json`（no-store）。
+- `frame.mjs` 新增 `calibrationTransform / calibrationPoint / calibrationRows /
+  resolveCalibration`：参数不完整、或包内视角与“up = −Y、地板在最大 y 一侧”的约定
+  不符时整体拒绝，绝不半套用；地板锚点优先用校准文件记录值（与手调时逐位一致）。
+- `pointcloud.js`：有校准文件时点云与窗边展示层只做竖直轴映射（`(x, z, floor − y)`），
+  结构框与标签所在的 `boxesGroup` / `labelGroup` 套同一个 `T · S · Rz(yaw)` 矩阵；
+  没有校准文件的扫描继续走上一节的墙面剖面通用拟合，行为不变。
+
+验收：`backend/tests/test_console_frame_calibration.cjs` 用真实交付包复算贴合分 =
+169734（与手调记录逐点一致），6 件家具框逐框命中（最少 4303 点），点云显示外接框与
+手调记录一致（原生尺寸）；`backend/tests/test_preview_frame_calibration.py` 守住清单字段
+与 404 回退。参数若重调，用校准页重新导出并覆盖 `frame_calibration.json` 即可，不需要
+重新训练或移动任何家具框。

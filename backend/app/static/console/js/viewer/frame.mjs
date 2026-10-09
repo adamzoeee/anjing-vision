@@ -5,6 +5,11 @@
  * 使用 z-up 世界系。包内自带的 views.*.R 是权威依据：OpenCV 约定相机 y 轴指向图像下方，
  * 因此来源系里的 world-up = -R[1]。
  *
+ * 两条路径：
+ *  - 扫描级“整体框架校准”（手调参数固化）：点云保持交付包原生尺寸，只做竖直轴映射；
+ *    结构框架整体套 T · S · Rz(yaw)（见下方 calibrationTransform / resolveCalibration）。
+ *  - 通用拟合（没有校准文件时）：用墙面剖面 / 包络把点云拟合进业务房间轮廓。
+ *
  * 纯函数、无 THREE 依赖，浏览器与 node 单测共用。
  */
 
@@ -186,6 +191,96 @@ export function resolveFrame(views, floorY, options = {}) {
   const horizontal = fitWallFrame(options?.wallProfile, options?.roomBounds)
     || fitHorizontalFrame(options?.pointExtent, options?.roomBounds);
   return horizontal ? { ...base, horizontal } : base;
+}
+
+/* —— 扫描级“整体框架校准”（用户手调参数固化，scan46 先行） ——
+ * 校准页导出的 p_display = T · S · Rz(yaw) · p_business 里，显示系就是交付包
+ * 原生帧 (pack_x, pack_z, floor − pack_y)：点云在那里保持原生尺寸，不翻转、不缩放；
+ * 整段缩放/平移由结构框架承担，家具框“刚好和现实重叠”，而不是把点云包住
+ * （用户 2026-10-09 手调验收，score 169734）。参数不完整时返回 null，绝不半套用。 */
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+export function calibrationTransform(calibration) {
+  const params = calibration?.transform || null;
+  if (!params) return null;
+  const yaw = finiteNumber(params.yaw_deg);
+  const scaleX = finiteNumber(params.scale_x);
+  const scaleY = finiteNumber(params.scale_y);
+  const scaleZ = finiteNumber(params.scale_z);
+  const translateX = finiteNumber(params.translate_x);
+  const translateY = finiteNumber(params.translate_y);
+  const translateZ = finiteNumber(params.translate_z);
+  if (yaw === null || scaleX === null || scaleY === null || scaleZ === null) return null;
+  if (translateX === null || translateY === null || translateZ === null) return null;
+  if (!(scaleX > 0) || !(scaleY > 0) || !(scaleZ > 0)) return null;
+  const radians = (yaw * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const fx = (params.mirror_x ? -1 : 1) * scaleX;
+  const fy = (params.mirror_y ? -1 : 1) * scaleY;
+  return {
+    yaw,
+    scale: [scaleX, scaleY, scaleZ],
+    mirror: [!!params.mirror_x, !!params.mirror_y],
+    translate: [translateX, translateY, translateZ],
+    /* 行主序 3x3 线性部分：L = diag(fx, fy, scaleZ) · Rz(yaw)（与校准页 mtx = T·S·Rz 一致） */
+    linear: [
+      [fx * cos, -fx * sin, 0],
+      [fy * sin, fy * cos, 0],
+      [0, 0, scaleZ],
+    ],
+  };
+}
+
+export function calibrationPoint(transform, x, y, z) {
+  if (!transform) return [x, y, z];
+  const rows = transform.linear;
+  const offset = transform.translate;
+  return [
+    offset[0] + rows[0][0] * x + rows[0][1] * y + rows[0][2] * z,
+    offset[1] + rows[1][0] * x + rows[1][1] * y + rows[1][2] * z,
+    offset[2] + rows[2][0] * x + rows[2][1] * y + rows[2][2] * z,
+  ];
+}
+
+/* 供 THREE.Matrix4.set(...rows) 使用（行主序参数）。 */
+export function calibrationRows(transform) {
+  if (!transform) return null;
+  const rows = transform.linear;
+  const offset = transform.translate;
+  return [
+    rows[0][0], rows[0][1], rows[0][2], offset[0],
+    rows[1][0], rows[1][1], rows[1][2], offset[1],
+    rows[2][0], rows[2][1], rows[2][2], offset[2],
+    0, 0, 0, 1,
+  ];
+}
+
+/* 把一份扫描级校准解析成查看器要的两块：
+ *  - frame：点云 / 展示层的原生帧校正，只做竖直轴映射 (x, z, floor − y)；
+ *  - rows ：结构框架整体矩阵（T · S · Rz(yaw)，业务 z-up → 显示系）。
+ * 参数不完整，或包内视角与校准文件“up = -Y、地板在最大 y 一侧”的约定不符时返回
+ * null，调用方退回通用拟合路径。floor 优先用校准文件记录的锚点（与手调时完全一致），
+ * 缺失时才用现场采样的 fallbackFloor。 */
+export function resolveCalibration(calibration, views, fallbackFloor) {
+  const transform = calibrationTransform(calibration);
+  if (!transform) return null;
+  const recorded = finiteNumber(calibration?.cloud_frame?.floor_y_pack);
+  const fallback = finiteNumber(fallbackFloor);
+  const floor = recorded ?? fallback;
+  if (floor === null) return null;
+  const up = views ? packUpAxis(views) : null;
+  if (up && !(up[1] < -0.9)) return null;
+  return {
+    transform,
+    rows: calibrationRows(transform),
+    frame: { kind: 'y-vertical', sign: -1, floor },
+    score: calibration?.score ?? null,
+  };
 }
 
 /* 单点校正：把来源帧坐标映射到 z-up 业务系。
