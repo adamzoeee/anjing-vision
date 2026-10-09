@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>框架校准 · 安龄智境大屏</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #05070d; color: #e6ecff; font: 13px/1.5 "Microsoft YaHei", system-ui, sans-serif; }
+  #app { display: grid; grid-template-columns: 340px 1fr; height: 100vh; }
+  #panel { padding: 14px 16px; overflow-y: auto; background: #0a0f1c; border-right: 1px solid #1a2440; }
+  #stage { position: relative; }
+  #view { position: absolute; inset: 0; }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  .sub { color: #7f90b8; font-size: 12px; margin-bottom: 12px; }
+  fieldset { border: 1px solid #1d2947; border-radius: 10px; margin: 0 0 12px; padding: 10px 12px 12px; }
+  legend { color: #7dd3fc; font-size: 12px; padding: 0 6px; }
+  label.row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  label.row span.k { width: 92px; color: #a8b7d9; }
+  input[type=range] { flex: 1; accent-color: #4f9cf9; }
+  input[type=number] { width: 74px; background: #0d1424; border: 1px solid #24304f; color: #e6ecff; border-radius: 6px; padding: 3px 6px; }
+  button { background: #14213d; border: 1px solid #274166; color: #cfe0ff; border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+  button:hover { background: #1b2c4f; }
+  button.primary { background: #1657c8; border-color: #2f7bff; color: #fff; font-weight: 600; }
+  .rowbtns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td, th { text-align: left; padding: 2px 4px; border-bottom: 1px solid #16203a; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  #score { color: #7dd3fc; font-weight: 600; }
+  textarea { width: 100%; height: 112px; background: #0d1424; border: 1px solid #24304f; color: #b7c8ea; border-radius: 8px; font: 11px/1.45 Consolas, monospace; padding: 6px; }
+  #status { position: absolute; left: 50%; top: 44%; transform: translate(-50%, -50%); background: rgba(9,14,26,.92); border: 1px solid #22345c; border-radius: 12px; padding: 14px 22px; text-align: center; }
+  #hint { position: absolute; left: 12px; bottom: 10px; color: #8ba0c9; font-size: 12px; background: rgba(8,12,22,.72); padding: 4px 8px; border-radius: 8px; }
+  .chk { display: inline-flex; align-items: center; gap: 5px; color: #a8b7d9; }
+  .warn { color: #ffd166; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="panel">
+    <h1>框架校准 · 扫描 46</h1>
+    <div class="sub">点云保持原始大小；这里调的是<b>整个房间框架</b>（房间轮廓 + 墙 + 门窗 + 全部物品框）的旋转 / 缩放 / 平移。拖到框刚好贴住物体，点保存。</div>
+
+    <fieldset>
+      <legend>起点预设</legend>
+      <div class="rowbtns">
+        <button id="preset-walls" class="primary">① 墙对齐</button>
+        <button id="preset-bbox">② 等比例（现用）</button>
+        <button id="preset-native">③ 原生 1.0</button>
+      </div>
+      <div class="warn" id="preset-note"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>水平面</legend>
+      <label class="row"><span class="k">水平旋转</span><input id="yaw" type="range" min="-180" max="180" step="0.5" value="180"><input id="yaw-n" type="number" step="0.5"></label>
+      <label class="row"><span class="k">水平缩放 X</span><input id="sx" type="range" min="0.4" max="1.6" step="0.005" value="0.845"><input id="sx-n" type="number" step="0.005"></label>
+      <label class="row"><span class="k">水平缩放 Y</span><input id="sy" type="range" min="0.4" max="1.6" step="0.005" value="0.644"><input id="sy-n" type="number" step="0.005"></label>
+      <div class="rowbtns">
+        <label class="chk"><input id="mirror-x" type="checkbox"> 镜像 X</label>
+        <label class="chk"><input id="mirror-y" type="checkbox"> 镜像 Y</label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>平移 / 高度</legend>
+      <label class="row"><span class="k">平移 X</span><input id="tx" type="range" min="-2.5" max="2.5" step="0.005" value="1.553"><input id="tx-n" type="number" step="0.005"></label>
+      <label class="row"><span class="k">平移 Y</span><input id="ty" type="range" min="-2.5" max="3.5" step="0.005" value="2.117"><input id="ty-n" type="number" step="0.005"></label>
+      <label class="row"><span class="k">垂直缩放</span><input id="sz" type="range" min="0.4" max="1.6" step="0.005" value="0.9"><input id="sz-n" type="number" step="0.005"></label>
+      <label class="row"><span class="k">垂直平移</span><input id="tz" type="range" min="-1" max="1" step="0.005" value="0"><input id="tz-n" type="number" step="0.005"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>显示 / 视角</legend>
+      <div class="rowbtns">
+        <button id="view-top">俯视</button>
+        <button id="view-front">正视</button>
+        <button id="view-iso">斜视</button>
+        <button id="view-reset">重置视角</button>
+      </div>
+      <div class="rowbtns">
+        <label class="chk"><input id="show-cloud" type="checkbox" checked> 点云</label>
+        <label class="chk"><input id="show-boxes" type="checkbox" checked> 结构框</label>
+        <label class="chk"><input id="show-labels" type="checkbox" checked> 名称</label>
+        <label class="chk"><input id="show-visual" type="checkbox" checked> 窗户展示层</label>
+      </div>
+      <label class="row"><span class="k">点大小</span><input id="psize" type="range" min="0.4" max="3" step="0.05" value="1"><input id="psize-n" type="number" step="0.05"></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>贴合检查（框内点数）</legend>
+      <div>总分：<span id="score">–</span> <span class="sub">每件家具越多越好；某件为 0 说明框跑到空地上。</span></div>
+      <table id="score-table"><tbody></tbody></table>
+    </fieldset>
+
+    <fieldset>
+      <legend>保存参数</legend>
+      <div class="rowbtns">
+        <button id="save" class="primary">保存并下载 JSON</button>
+        <button id="copy">复制参数</button>
+        <button id="diag">复制诊断日志</button>
+        <button id="reload">重新加载数据</button>
+      </div>
+      <textarea id="out" readonly></textarea>
+      <textarea id="log" readonly style="height:96px;margin-top:6px"></textarea>
+    </fieldset>
+  </div>
+  <div id="stage">
+    <div id="view"></div>
+    <div id="hint">左键旋转 / 右键平移 / 滚轮缩放 · 先点「俯视」对平面最直观</div>
+    <div id="status">加载中…</div>
+  </div>
+</div>
+<script src="/preview-static/three.min.js"></script>
+<script src="/preview-static/OrbitControls.js"></script>
+<script src="/console-static/js/calibrate.js?v=2"></script>
+</body>
+</html>

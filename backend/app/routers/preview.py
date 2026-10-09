@@ -87,6 +87,7 @@ def preview_manifest(
     structure_json = work / "postprocess" / "structure.json"
     calibrated_structure_json = work / "postprocess" / "structure_calibrated.json"
     measurements_json = work / "postprocess" / "measurements.json"
+    frame_calibration_json = work / "postprocess" / "frame_calibration.json"
     return {
         "scan_id": scan_id,
         "name": scan.project.name if scan.project else f"扫描 #{scan_id}",
@@ -105,9 +106,15 @@ def preview_manifest(
             if gaussian_web_ply.is_file()
             else (f"/api/preview/{scan_id}/gaussian.ply" if gaussian_ply.is_file() else None)
         ),
-        "layout": f"/api/preview/{scan_id}/layout.json" if layout_json.is_file() else None,
+        "layout": f"/api/preview/{scan_id}/layout.json" if layout_json is not None else None,
         "structure": f"/api/preview/{scan_id}/structure.json" if (calibrated_structure_json.is_file() or structure_json.is_file()) else None,
         "measurements": f"/api/preview/{scan_id}/measurements.json" if measurements_json.is_file() else None,
+        # 扫描级“整体框架校准”（手调参数固化）：点云保持原生尺寸，结构框架整体套矩阵
+        "frame_calibration": (
+            f"/api/preview/{scan_id}/frame_calibration.json"
+            if frame_calibration_json.is_file()
+            else None
+        ),
         "alignment": alignment,
         "status": scan.status,
     }
@@ -126,6 +133,23 @@ def preview_window_visual(
     path = _selected_preview_ply(_work_dir(scan_id, settings)).with_suffix('.visual.json')
     if not path.is_file():
         raise HTTPException(404, "窗户展示层不存在")
+    return FileResponse(path, media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/{scan_id}/frame_calibration.json", response_class=FileResponse)
+def preview_frame_calibration(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    scan = db.get(Scan, scan_id)
+    if scan is None or scan.project.org_id != org_id:
+        raise HTTPException(404, "扫描任务不存在")
+    work = _work_dir(scan_id, settings)
+    path = (work / "postprocess" / "frame_calibration.json").resolve()
+    if not path.is_relative_to(work) or not path.is_file():
+        raise HTTPException(404, "整体框架校准参数不存在")
     return FileResponse(path, media_type="application/json", headers={"Cache-Control": "no-store"})
 
 
