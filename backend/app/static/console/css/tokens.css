@@ -1,0 +1,155 @@
+/* ============================================================
+   安龄智境 · 大屏工作台 · 设计令牌 v2
+   双主题：dusk（暮光 · 默认）/ ivory（象牙 · 浅色）
+   来源：design-system/anjing-vision/MASTER.md（v2 override）
+   ============================================================ */
+
+:root,
+:root[data-skin="dusk"] {
+  color-scheme: dark;
+
+  /* —— 画布（深紫暮色，替代蓝黑） —— */
+  --bg-0: #120d1e;
+  --bg-1: #1a1130;
+  --bg-2: #241a3a;
+  --bg-3: #2e2148;
+  --bg-art-1: rgba(96, 45, 126, 0.55);
+  --bg-art-2: rgba(255, 122, 89, 0.16);
+  --bg-art-3: rgba(74, 52, 148, 0.5);
+  --grid-line: rgba(255, 255, 255, 0.055);
+
+  /* —— 玻璃 —— */
+  --panel: rgba(255, 255, 255, 0.055);
+  --panel-strong: rgba(255, 255, 255, 0.095);
+  --panel-solid: #1e1633;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.24);
+  --hairline: rgba(255, 255, 255, 0.07);
+  --well: #0d0a16; /* 3D 深井 */
+
+  /* —— 文本 —— */
+  --text-1: #f7f2fb;
+  --text-2: #c9bdd9;
+  --text-3: #948aa8;
+  --text-4: #635a78;
+
+  /* —— 强调（珊瑚蜜桃 + 紫罗兰） —— */
+  --accent: #ff8e6b;
+  --accent-2: #ffc9a3;
+  --accent-3: #a78bfa;
+  --accent-soft: rgba(255, 142, 107, 0.16);
+  --grad-accent: linear-gradient(135deg, #ff8e6b, #ffc9a3);
+  --grad-violet: linear-gradient(135deg, #a78bfa, #ff8e6b);
+  --on-accent: #2b1109;
+
+  /* —— 语义（与 3D 场景一致） —— */
+  --wall: #9b8cff;
+  --door: #ffc24b;
+  --window: #6ee7b7;
+  --furniture: #ff9db1;
+
+  /* —— 风险 —— */
+  --ok: #6ee7b7;
+  --warn: #ffc24b;
+  --bad: #ff7a8a;
+  --ok-soft: rgba(110, 231, 183, 0.14);
+  --warn-soft: rgba(255, 194, 75, 0.15);
+  --bad-soft: rgba(255, 122, 138, 0.15);
+
+  /* —— 阴影与光 —— */
+  --shadow-panel: 0 30px 60px -24px rgba(8, 3, 20, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --shadow-float: 0 44px 90px -32px rgba(8, 3, 20, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --glow-accent: 0 0 0 1px rgba(255, 142, 107, 0.35), 0 10px 40px -10px rgba(255, 142, 107, 0.55);
+  --glow-soft: 0 0 30px -6px rgba(255, 142, 107, 0.4);
+  --wash: radial-gradient(120% 120% at 12% 0%, rgba(255, 142, 107, 0.1), transparent 55%);
+}
+
+:root[data-skin="ivory"] {
+  color-scheme: light;
+
+  --bg-0: #f3ede5;
+  --bg-1: #faf6f0;
+  --bg-2: #efe7dc;
+  --bg-3: #e7ddd0;
+  --bg-art-1: rgba(255, 170, 130, 0.5);
+  --bg-art-2: rgba(167, 139, 250, 0.22);
+  --bg-art-3: rgba(255, 205, 160, 0.45);
+  --grid-line: rgba(43, 30, 60, 0.055);
+
+  --panel: rgba(255, 255, 255, 0.72);
+  --panel-strong: rgba(255, 255, 255, 0.92);
+  --panel-solid: #fffdfa;
+  --border: rgba(43, 30, 60, 0.09);
+  --border-strong: rgba(43, 30, 60, 0.22);
+  --hairline: rgba(43, 30, 60, 0.07);
+  --well: #17122a;
+
+  --text-1: #241b33;
+  --text-2: #55496b;
+  --text-3: #7d7292;
+  --text-4: #a49ab6;
+
+  --accent: #f0562d;
+  --accent-2: #ff9a63;
+  --accent-3: #7c5cf0;
+  --accent-soft: rgba(240, 86, 45, 0.12);
+  --grad-accent: linear-gradient(135deg, #f0562d, #ffa25c);
+  --grad-violet: linear-gradient(135deg, #7c5cf0, #f0562d);
+  --on-accent: #fff8f4;
+
+  --wall: #6d5bd0;
+  --door: #d98b00;
+  --window: #14a06e;
+  --furniture: #e0688a;
+
+  --ok: #12996a;
+  --warn: #c98a00;
+  --bad: #e0455c;
+  --ok-soft: rgba(18, 153, 106, 0.12);
+  --warn-soft: rgba(201, 138, 0, 0.12);
+  --bad-soft: rgba(224, 69, 92, 0.12);
+
+  --shadow-panel: 0 30px 60px -30px rgba(59, 40, 82, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --shadow-float: 0 40px 80px -30px rgba(59, 40, 82, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --glow-accent: 0 0 0 1px rgba(240, 86, 45, 0.3), 0 10px 34px -10px rgba(240, 86, 45, 0.45);
+  --glow-soft: 0 0 26px -6px rgba(240, 86, 45, 0.35);
+  --wash: radial-gradient(120% 120% at 12% 0%, rgba(240, 86, 45, 0.07), transparent 55%);
+}
+
+:root {
+  /* —— 圆角（更柔和） —— */
+  --r-xs: 10px;
+  --r-sm: 13px;
+  --r-md: 17px;
+  --r-lg: 22px;
+  --r-xl: 28px;
+  --r-full: 999px;
+
+  /* —— 间距 —— */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* —— 字体 —— */
+  --font-sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "JetBrains Mono", "Consolas", monospace;
+
+  /* —— 动效：慢、柔、有质感 —— */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-glide: cubic-bezier(0.37, 0, 0.63, 1);
+  --dur-fast: 220ms;
+  --dur: 360ms;
+  --dur-slow: 620ms;
+  --dur-glide: 900ms;
+
+  /* —— 布局 —— */
+  --rail-w: 218px;
+  --topbar-h: 74px;
+}
