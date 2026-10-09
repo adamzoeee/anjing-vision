@@ -4,7 +4,7 @@
 
 import { getToken } from '../api.js';
 import { typeName, measuredSizeMap, normalizeInstanceId } from '../ui.js';
-import { packUpAxis, resolveFrame, framePoint, percentile, envelope } from './frame.mjs';
+import { packUpAxis, resolveFrame, framePoint, framePointInto, percentile, envelope, modalPlane } from './frame.mjs';
 import { normalizeStructure } from './structure.mjs';
 
 const PLY_TYPE_SIZES = {
@@ -342,13 +342,15 @@ export function createViewer(host, options = {}) {
     controls.update();
   }
 
-  /* 交付包竖直轴不是 z 时，用地板侧点云给出竖直锚点（up=-Y→地板在最大 y；up=+Y→最小 y）。 */
+  /* 交付包竖直轴不是 z 时，用地板面给出竖直锚点（up=-Y→地板在最大 y；up=+Y→最小 y）。
+   * 取竖直方向直方图里地板一侧的高密度平面，而不是极端分位数：地板面是真平面，
+   * 分位数会落在“平面之外那几个离群点”上，让整包点云抬高十几厘米。 */
   function sampleFloorAnchor(meta, data, upSign) {
     const py = meta.properties.find((prop) => prop.name === 'y');
     if (!py) return null;
     const total = meta.vertexCount;
     const stride = meta.stride;
-    const step = Math.max(1, Math.floor(total / 20000));
+    const step = Math.max(1, Math.floor(total / 60000));
     const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
     const readY = (base) => {
       switch (py.type) {
@@ -359,10 +361,13 @@ export function createViewer(host, options = {}) {
     };
     const values = [];
     for (let i = 0; i < total; i += step) values.push(readY(i * stride));
-    return percentile(values, upSign < 0 ? 99.5 : 0.5);
+    if (values.length < 16) return percentile(values, upSign < 0 ? 99.5 : 0.5);
+    const plane = modalPlane(values, upSign);
+    return plane === null ? percentile(values, upSign < 0 ? 99.5 : 0.5) : plane;
   }
 
-  /* 交付包点云的水平包络（x/z），用来把点云刚体拟合到房间轮廓。 */
+  /* 交付包点云的水平范围（x/z），用来把点云刚体拟合到房间轮廓。
+   * 同时给出真实极值与 0.1%/99.9% 分位包络，由 fitHorizontalFrame 选两轴自洽的那组。 */
   function sampleHorizontalExtent(meta, data) {
     const px = meta.properties.find((prop) => prop.name === 'x');
     const pz = meta.properties.find((prop) => prop.name === 'z');
@@ -380,13 +385,31 @@ export function createViewer(host, options = {}) {
     };
     const xs = [];
     const zs = [];
-    for (let i = 0; i < total; i += step) {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    // 极值点很稀疏（穿窗/门口走廊），必须扫全部点；分位包络抽样即可
+    for (let i = 0; i < total; i += 1) {
       const base = i * stride;
-      xs.push(read(px, base));
-      zs.push(read(pz, base));
+      const x = read(px, base);
+      const z = read(pz, base);
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (z < minZ) minZ = z;
+      if (z > maxZ) maxZ = z;
+      if (i % step === 0) {
+        xs.push(x);
+        zs.push(z);
+      }
     }
-    if (!xs.length) return null;
-    return { x: envelope(xs), z: envelope(zs) };
+    if (!Number.isFinite(minX) || !Number.isFinite(minZ)) return null;
+    return {
+      x: [minX, maxX],
+      z: [minZ, maxZ],
+      xBand: envelope(xs),
+      zBand: envelope(zs),
+    };
   }
 
   /* 房间轮廓（业务 z-up 系）来自结构数据；缺失时不做水平拟合。 */
@@ -435,22 +458,9 @@ export function createViewer(host, options = {}) {
       const colArr = new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
         const base = (start + i) * stride;
-        const rx = readProp(px, base);
-        const ry = readProp(py, base);
-        const rz = readProp(pz, base);
-        if (frame && frame.sign < 0) {
-          posArr[i * 3] = rx;
-          posArr[i * 3 + 1] = rz;
-          posArr[i * 3 + 2] = frame.floor - ry;
-        } else if (frame) {
-          posArr[i * 3] = rx;
-          posArr[i * 3 + 1] = -rz;
-          posArr[i * 3 + 2] = ry - frame.floor;
-        } else {
-          posArr[i * 3] = rx;
-          posArr[i * 3 + 1] = ry;
-          posArr[i * 3 + 2] = rz;
-        }
+        // 与窗边展示层共用同一份坐标校正（竖直轴 + 水平面 180° + 尺度）；
+        // 点云单独跳过水平那段会让家具框与点云整体错开（scan46 的回归点）。
+        framePointInto(posArr, i * 3, readProp(px, base), readProp(py, base), readProp(pz, base), frame);
         colArr[i * 3] = (pr ? readProp(pr, base) : 205) * colorScale(pr);
         colArr[i * 3 + 1] = (pg ? readProp(pg, base) : 210) * colorScale(pg);
         colArr[i * 3 + 2] = (pb ? readProp(pb, base) : 220) * colorScale(pb);
@@ -747,7 +757,15 @@ export function createViewer(host, options = {}) {
         })
         : null;
       if (frame) {
-        onStatus({ phase: 'points', message: '已校正交付包坐标系（来源帧 Y-竖直 → 业务 z-up）' });
+        onStatus({
+          phase: 'points',
+          message: frame.horizontal
+            ? '已校正交付包坐标系（Y-竖直 → z-up + 水平面 180° 对齐房间）'
+            : '已校正交付包坐标系（来源帧 Y-竖直 → 业务 z-up）',
+        });
+      } else if (upAxis) {
+        // 静默退回“不做校正”是上一轮的坑：状态栏必须告诉用户原因。
+        onStatus({ phase: 'points', message: '交付包坐标系未识别，点云按包内坐标直接渲染' });
       }
       await new Promise((resolve) => {
         addPointChunks(meta, data, frame, (frac) => {
