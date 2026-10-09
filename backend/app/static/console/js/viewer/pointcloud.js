@@ -366,10 +366,13 @@ export function createViewer(host, options = {}) {
     return plane === null ? percentile(values, upSign < 0 ? 99.5 : 0.5) : plane;
   }
 
-  /* 交付包点云的水平范围（x/z），用来把点云刚体拟合到房间轮廓。
-   * 同时给出真实极值与 0.1%/99.9% 分位包络，由 fitHorizontalFrame 选两轴自洽的那组。 */
-  function sampleHorizontalExtent(meta, data) {
+  /* 交付包水平变换的输入：
+   *  - 真实极值（必须扫全部点：穿窗、门口走廊的极值点很稀疏）；
+   *  - 0.1%/99.9% 分位包络（兜底拟合用）；
+   *  - 竖直中段的 x/z 剖面（首选：墙面平面不会被走廊/穿窗几何撑大）。 */
+  function sampleHorizontalFrame(meta, data, floor, upSign) {
     const px = meta.properties.find((prop) => prop.name === 'x');
+    const py = meta.properties.find((prop) => prop.name === 'y');
     const pz = meta.properties.find((prop) => prop.name === 'z');
     if (!px || !pz) return null;
     const total = meta.vertexCount;
@@ -385,6 +388,7 @@ export function createViewer(host, options = {}) {
     };
     const xs = [];
     const zs = [];
+    const hs = [];
     let minX = Infinity;
     let maxX = -Infinity;
     let minZ = Infinity;
@@ -401,15 +405,42 @@ export function createViewer(host, options = {}) {
       if (i % step === 0) {
         xs.push(x);
         zs.push(z);
+        if (py) {
+          const y = read(py, base);
+          hs.push(upSign < 0 ? floor - y : y - floor);
+        }
       }
     }
     if (!Number.isFinite(minX) || !Number.isFinite(minZ)) return null;
-    return {
+    const frame = {
       x: [minX, maxX],
       z: [minZ, maxZ],
       xBand: envelope(xs),
       zBand: envelope(zs),
     };
+    if (py && hs.length >= 64) {
+      let minH = Infinity;
+      let maxH = -Infinity;
+      hs.forEach((h) => {
+        if (h < minH) minH = h;
+        if (h > maxH) maxH = h;
+      });
+      const span = maxH - minH;
+      if (span > 1) {
+        const lo = minH + span * 0.2;
+        const hi = minH + span * 0.8;
+        const bandX = [];
+        const bandZ = [];
+        for (let i = 0; i < hs.length; i += 1) {
+          if (hs[i] >= lo && hs[i] <= hi) {
+            bandX.push(xs[i]);
+            bandZ.push(zs[i]);
+          }
+        }
+        if (bandX.length >= 64) frame.wallProfile = { x: bandX, z: bandZ };
+      }
+    }
+    return frame;
   }
 
   /* 房间轮廓（业务 z-up 系）来自结构数据；缺失时不做水平拟合。 */
@@ -751,16 +782,21 @@ export function createViewer(host, options = {}) {
       const { source, measurements } = await structurePromise;
       const upAxis = packUpAxis(layer?.views || null);
       const frame = upAxis && Math.abs(upAxis[1]) > 0.9 && Math.abs(upAxis[2]) <= 0.9
-        ? resolveFrame(layer.views, sampleFloorAnchor(meta, data, upAxis[1]), {
-          pointExtent: sampleHorizontalExtent(meta, data),
-          roomBounds: roomOutline(source),
-        })
+        ? (() => {
+          const floor = sampleFloorAnchor(meta, data, upAxis[1]);
+          const horizontal = sampleHorizontalFrame(meta, data, floor, upAxis[1]);
+          return resolveFrame(layer.views, floor, {
+            pointExtent: horizontal,
+            wallProfile: horizontal?.wallProfile || null,
+            roomBounds: roomOutline(source),
+          });
+        })()
         : null;
       if (frame) {
         onStatus({
           phase: 'points',
           message: frame.horizontal
-            ? '已校正交付包坐标系（Y-竖直 → z-up + 水平面 180° 对齐房间）'
+            ? '已校正交付包坐标系（Y-竖直 → z-up，水平面逐轴对齐房间墙面）'
             : '已校正交付包坐标系（来源帧 Y-竖直 → 业务 z-up）',
         });
       } else if (upAxis) {
