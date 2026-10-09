@@ -340,9 +340,22 @@ export async function screenView(ctx, scanId) {
           buttons.forEach((node) => node.classList.toggle('active', node === btn));
           positionThumb();
           viewer.setMode(btn.dataset.mode);
+          syncScreenChips(btn.dataset.mode);
         });
       });
     }
+
+    /* 框架图层（墙/门/窗/家具）只在“空间结构”里渲染；真实场景下 chip 降调并注明。 */
+    const frameChips = Array.from(ctx.host.querySelectorAll('[data-screen-layer]'))
+      .filter((chip) => chip.dataset.screenLayer !== 'pcd');
+    const syncScreenChips = (mode) => {
+      const structure = mode === 'structure';
+      frameChips.forEach((chip) => {
+        chip.classList.toggle('is-muted', !structure);
+        chip.title = structure ? '' : '框架仅在“空间结构”视图渲染';
+      });
+    };
+    syncScreenChips('scene');
 
     ctx.host.querySelectorAll('[data-screen-layer]').forEach((chip) => {
       chip.addEventListener('click', () => {

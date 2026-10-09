@@ -442,6 +442,7 @@ export async function roomView(ctx, scanId) {
           buttons.forEach((node) => node.classList.toggle('active', node === btn));
           positionThumb();
           viewer.setMode(btn.dataset.mode);
+          syncLayerChips(btn.dataset.mode);
           if (btn.dataset.mode === 'structure') {
             document.getElementById('btn-autorotate')?.classList.add('is-active');
             viewer.setAutoRotate(true);
@@ -449,6 +450,18 @@ export async function roomView(ctx, scanId) {
         });
       });
     }
+
+    /* 框架图层（墙/门/窗/家具/标签）只在“空间结构”里渲染；真实场景下 chip 降调并注明。 */
+    const frameChips = Array.from(ctx.host.querySelectorAll('.chip-toggle[data-layer]'))
+      .filter((chip) => chip.dataset.layer !== 'pcd');
+    const syncLayerChips = (mode) => {
+      const structure = mode === 'structure';
+      frameChips.forEach((chip) => {
+        chip.classList.toggle('is-muted', !structure);
+        chip.title = structure ? '' : '框架仅在“空间结构”视图渲染';
+      });
+    };
+    syncLayerChips('scene');
 
     ctx.host.querySelectorAll('.chip-toggle[data-layer]').forEach((chip) => {
       chip.addEventListener('click', () => {

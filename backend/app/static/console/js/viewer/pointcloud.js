@@ -6,6 +6,7 @@ import { getToken } from '../api.js';
 import { typeName, measuredSizeMap, normalizeInstanceId } from '../ui.js';
 import { packUpAxis, resolveFrame, resolveCalibration, framePoint, framePointInto, percentile, envelope, modalPlane } from './frame.mjs';
 import { normalizeStructure } from './structure.mjs';
+import { layerVisibility } from './mode.mjs';
 
 const PLY_TYPE_SIZES = {
   char: 1, uchar: 1, short: 2, ushort: 2,
@@ -147,7 +148,8 @@ export function createViewer(host, options = {}) {
   const state = {
     extent: null,
     points: 0,
-    layers: { pcd: true, walls: true, doors: true, windows: true, objects: true, labels: false },
+    // labels 默认与界面 chip 的初始“开”状态一致；真实场景下标签同样不渲染（见 layerVisibility）。
+    layers: { pcd: true, walls: true, doors: true, windows: true, objects: true, labels: true },
     pointScale: defaultPointScale,
     autoRotate: defaultAutoRotate && !reducedMotion(),
     ready: false,
@@ -720,25 +722,24 @@ export function createViewer(host, options = {}) {
 
   function applyMode() {
     const structure = state.mode === 'structure';
+    const view = layerVisibility(state.mode, state.layers, state.hasLayout);
     if (structure) {
-      pcdGroup.visible = false;
-      labelGroup.visible = state.hasLayout;
       ensureGrid();
-      gridGroup.visible = gridGroup.children.length > 0;
       structureFills.forEach((material) => {
         material.opacity = Math.min(0.3, (material.userData.base || 0.05) * 3.4);
       });
       structureEdges.forEach((material) => { material.opacity = 1; });
     } else {
-      pcdGroup.visible = state.layers.pcd;
-      labelGroup.visible = state.layers.labels && state.layers.objects;
-      gridGroup.visible = false;
       structureFills.forEach((material) => { material.opacity = material.userData.base || 0.05; });
       structureEdges.forEach((material) => { material.opacity = 0.92; });
     }
-    boxesGroup.visible = state.hasLayout;
+    // 真实场景保持纯点云：框架与标签只在“空间结构”里渲染（用户 2026-10-09 口径）
+    pcdGroup.visible = view.pcd;
+    labelGroup.visible = view.labels;
+    boxesGroup.visible = view.boxes;
+    gridGroup.visible = view.grid && gridGroup.children.length > 0;
     ['walls', 'doors', 'windows', 'objects'].forEach((key) => {
-      if (boxGroups[key]) boxGroups[key].visible = state.layers[key];
+      if (boxGroups[key]) boxGroups[key].visible = view[key];
     });
   }
 
