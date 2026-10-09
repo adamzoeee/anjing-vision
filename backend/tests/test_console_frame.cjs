@@ -46,6 +46,14 @@ const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '../app/static/console/js/viewer/pointcloud.js'), 'utf8');
   assert(src.includes("from './frame.mjs'"), 'pointcloud.js must import the frame helper');
   assert(/addPointChunks\(\s*meta,\s*data,\s*frame\b/.test(src), 'point cloud must be frame-corrected');
+  // 点云逐点映射必须走 framePointInto（含水平面 180° 对齐）。
+  // 只写 `floor - y` 的竖直翻转会漏掉水平那一段，家具框与点云整体错开（scan46 回归）。
+  const chunkBody = /function addPointChunks\([\s\S]*?\n  \}/.exec(src);
+  assert(chunkBody, 'addPointChunks must stay extractable for the regression check');
+  assert(/framePointInto\(\s*posArr,\s*i \* 3,/.test(chunkBody[0]),
+    'point cloud chunks must map through framePointInto (shared with the visual layers)');
+  assert(!/posArr\[i \* 3 \+ 1\] = rz;/.test(chunkBody[0]),
+    'point cloud must not keep the old vertical-only inline mapping');
   assert(/buildVisualMesh\(data,\s*await textureFor\(data\),\s*frame\)/.test(src),
     'visual meshes must share the same correction');
   assert(/sampleFloorAnchor\(/.test(src), 'floor anchor must come from the loaded cloud');
