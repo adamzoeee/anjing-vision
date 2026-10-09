@@ -4,7 +4,7 @@
 
 import { getToken } from '../api.js';
 import { typeName, measuredSizeMap, normalizeInstanceId } from '../ui.js';
-import { packUpAxis, resolveFrame, framePoint, framePointInto, percentile, envelope, modalPlane } from './frame.mjs';
+import { packUpAxis, resolveFrame, resolveCalibration, framePoint, framePointInto, percentile, envelope, modalPlane } from './frame.mjs';
 import { normalizeStructure } from './structure.mjs';
 
 const PLY_TYPE_SIZES = {
@@ -596,6 +596,19 @@ export function createViewer(host, options = {}) {
     applyMode();
   }
 
+  /* 结构框架整体套用“扫描级校准”（手调参数固化）：与校准页 frameGroup 完全同一个
+   * 矩阵 T · S · Rz(yaw)（业务 z-up → 显示系）。只调整体大框架，不单独挪某个物品框；
+   * 点云此时保持交付包原生尺寸，两者“刚好和现实重叠”。 */
+  function applyStructureCalibration(rows) {
+    if (!rows) return;
+    const matrix = new THREE.Matrix4().set(...rows);   // 行主序参数
+    [boxesGroup, labelGroup].forEach((group) => {
+      group.matrixAutoUpdate = false;
+      group.matrix.copy(matrix);
+      group.matrixWorldNeedsUpdate = true;
+    });
+  }
+
   /* —— 已修正窗边展示层（visual-only，不参与几何/评分）
    * 兼容新版多层网格（meshes[] + 内嵌贴图/顶点色/colorDelta）与旧版单层贴图。 —— */
   function visualLayerItems(layer) {
@@ -771,6 +784,14 @@ export function createViewer(host, options = {}) {
         ? fetchWindowVisual(manifest.window_visual, headers)
         : Promise.resolve(null);
 
+      /* 扫描级“整体框架校准”（校准页手调参数固化，可选）：点云保持原生尺寸，
+       * 结构框架整体套矩阵，二者“刚好和现实重叠”。 */
+      const calibrationPromise = manifest.frame_calibration
+        ? fetch(manifest.frame_calibration, { headers, signal: abortController.signal })
+          .then((res) => (res.ok ? res.json().catch(() => null) : null))
+          .catch(() => null)
+        : Promise.resolve(null);
+
       onStatus({ phase: 'points', message: '流式加载稠密点云', progress: 0 });
       const { meta, data } = await fetchPly(manifest.ply, (frac) => {
         onStatus({ phase: 'points', message: '流式加载稠密点云', progress: frac });
@@ -780,19 +801,38 @@ export function createViewer(host, options = {}) {
       const layer = await windowVisualPromise;
       // 结构/测量清单是小文件且与点云并发下载，这里已经就绪，用它拿房间轮廓做水平面对齐。
       const { source, measurements } = await structurePromise;
+      const calibrationPayload = await calibrationPromise;
       const upAxis = packUpAxis(layer?.views || null);
-      const frame = upAxis && Math.abs(upAxis[1]) > 0.9 && Math.abs(upAxis[2]) <= 0.9
-        ? (() => {
-          const floor = sampleFloorAnchor(meta, data, upAxis[1]);
-          const horizontal = sampleHorizontalFrame(meta, data, floor, upAxis[1]);
-          return resolveFrame(layer.views, floor, {
-            pointExtent: horizontal,
-            wallProfile: horizontal?.wallProfile || null,
-            roomBounds: roomOutline(source),
-          });
-        })()
-        : null;
-      if (frame) {
+      let calibration = null;
+      if (calibrationPayload) {
+        const recorded = Number(calibrationPayload?.cloud_frame?.floor_y_pack);
+        const floorHint = Number.isFinite(recorded) ? recorded : sampleFloorAnchor(meta, data, -1);
+        calibration = resolveCalibration(calibrationPayload, layer?.views || null, floorHint);
+        if (!calibration) {
+          onStatus({ phase: 'points', message: '扫描级校准与当前点云不匹配，已退回通用拟合' });
+        }
+      }
+      // 有校准：点云/展示层只做竖直轴映射（原生尺寸）；无校准：按墙面剖面对齐房间轮廓。
+      const frame = calibration
+        ? calibration.frame
+        : upAxis && Math.abs(upAxis[1]) > 0.9 && Math.abs(upAxis[2]) <= 0.9
+          ? (() => {
+            const floor = sampleFloorAnchor(meta, data, upAxis[1]);
+            const horizontal = sampleHorizontalFrame(meta, data, floor, upAxis[1]);
+            return resolveFrame(layer.views, floor, {
+              pointExtent: horizontal,
+              wallProfile: horizontal?.wallProfile || null,
+              roomBounds: roomOutline(source),
+            });
+          })()
+          : null;
+      if (calibration) {
+        applyStructureCalibration(calibration.rows);
+        onStatus({
+          phase: 'points',
+          message: '点云保持交付包原生尺寸，结构框架整体套用手调校准（180°，X×0.84 / Y×0.71 / Z×0.9）',
+        });
+      } else if (frame) {
         onStatus({
           phase: 'points',
           message: frame.horizontal
@@ -812,7 +852,7 @@ export function createViewer(host, options = {}) {
       if (source) addLayout(normalizeStructure(source), measuredSizeMap(measurements));
       await addWindowVisual(layer, frame);
       state.ready = true;
-      if (!state.extent) computeBounds();
+      if (!state.extent || calibration) computeBounds();
       ensureGrid();
       applyMode();
       if (cinematic) startIntro(); else resetView();

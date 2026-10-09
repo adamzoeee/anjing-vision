@@ -1,0 +1,47 @@
+{
+  "source": "scan46-frame-calibration",
+  "scan_id": 46,
+  "created_at": "2026-10-09T13:12:02.937Z",
+  "note": "p_display = T · S · Rz(yaw) · p_business；显示系为交付包原生系 (pack_x, pack_z, floor - pack_y)",
+  "transform": {
+    "yaw_deg": 180,
+    "mirror_x": false,
+    "mirror_y": false,
+    "scale_x": 0.84,
+    "scale_y": 0.71,
+    "scale_z": 0.9,
+    "translate_x": 1.54,
+    "translate_y": 1.64,
+    "translate_z": 0
+  },
+  "cloud_frame": {
+    "floor_y_pack": 1.3449620543191287,
+    "sampled_points": 437948,
+    "source_points": 875896
+  },
+  "room_box": {
+    "min": [
+      -0.4844042583000001,
+      -0.5009722654999997,
+      0
+    ],
+    "max": [
+      2.4095957417,
+      2.7690277345,
+      2.710520756
+    ]
+  },
+  "cloud_box": {
+    "min": [
+      -0.5380893349647522,
+      -0.5275366306304932,
+      -0.14807172119617462
+    ],
+    "max": [
+      2.0876357555389404,
+      2.440000057220459,
+      2.28182315826416
+    ]
+  },
+  "score": "169734"
+}
