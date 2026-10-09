@@ -11,6 +11,7 @@ import {
 } from '../ui.js';
 import { scoreRingHTML, mountRings, barRowHTML, mountBars } from '../charts.js';
 import { createViewer } from '../viewer/pointcloud.js';
+import { normalizeStructure } from '../viewer/structure.mjs';
 import { navigate, setLastScan } from '../app.js';
 
 const ACTIVE_STATUSES = new Set(['uploading', 'extracting', 'reconstructing', 'cleaning', 'understanding']);
@@ -263,9 +264,10 @@ export async function roomView(ctx, scanId) {
     const scaleLabel = scale?.status === 'metric_references' ? '参考尺寸标定'
       : measurements?.metric_scale_available ? '层高先验标定' : '未标定';
 
-    /* 家具清单：优先展示修补后的 structure.json（含审计后尺寸），回退到测量对象 */
+    /* 家具清单：优先审计后的 semantic_instances（与 2D 平面图/测量逐项一致），
+       旧 objects 只是候选框，位置/尺寸/旋转必须与显示来源同一条实例记录。 */
     const measured = measuredSizeMap(measurements);
-    const structureObjects = structure?.objects || [];
+    const structureObjects = normalizeStructure(structure || layout).objects;
     let furnitureRows = [];
     if (structureObjects.length) {
       furnitureRows = structureObjects.map((item) => {

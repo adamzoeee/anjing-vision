@@ -4,7 +4,8 @@
 
 import { getToken } from '../api.js';
 import { typeName, measuredSizeMap, normalizeInstanceId } from '../ui.js';
-import { packUpAxis, resolveFrame, framePoint, percentile } from './frame.mjs';
+import { packUpAxis, resolveFrame, framePoint, percentile, envelope } from './frame.mjs';
+import { normalizeStructure } from './structure.mjs';
 
 const PLY_TYPE_SIZES = {
   char: 1, uchar: 1, short: 2, ushort: 2,
@@ -21,26 +22,6 @@ const LAYER_STYLE = {
 
 function reducedMotion() {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
-
-/* 结构数据源：优先修补后的 structure.json，回退到原始 layout.json。
- * 两种 schema 都归一化为 {center,size,rotation_z_deg,category,instance_id}。 */
-function normalizeStructure(source) {
-  const pass = (items, kind) => (items || [])
-    .filter((item) => Array.isArray(item.center) && Array.isArray(item.size))
-    .map((item) => ({
-      center: item.center,
-      size: item.size,
-      rotation_z_deg: item.rotation_z_deg || 0,
-      category: item.category || kind,
-      instance_id: item.instance_id || item.id || `${kind}_${Math.random().toString(36).slice(2, 7)}`,
-    }));
-  return {
-    walls: pass(source.walls, 'wall'),
-    doors: pass(source.doors, 'door'),
-    windows: pass(source.windows, 'window'),
-    objects: pass(source.objects, 'object'),
-  };
 }
 
 function parsePlyHeader(headerText) {
@@ -381,6 +362,40 @@ export function createViewer(host, options = {}) {
     return percentile(values, upSign < 0 ? 99.5 : 0.5);
   }
 
+  /* 交付包点云的水平包络（x/z），用来把点云刚体拟合到房间轮廓。 */
+  function sampleHorizontalExtent(meta, data) {
+    const px = meta.properties.find((prop) => prop.name === 'x');
+    const pz = meta.properties.find((prop) => prop.name === 'z');
+    if (!px || !pz) return null;
+    const total = meta.vertexCount;
+    const stride = meta.stride;
+    const step = Math.max(1, Math.floor(total / 120000));
+    const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const read = (prop, base) => {
+      switch (prop.type) {
+        case 'double': return dv.getFloat64(base + prop.offset, true);
+        case 'float': return dv.getFloat32(base + prop.offset, true);
+        default: return 0;
+      }
+    };
+    const xs = [];
+    const zs = [];
+    for (let i = 0; i < total; i += step) {
+      const base = i * stride;
+      xs.push(read(px, base));
+      zs.push(read(pz, base));
+    }
+    if (!xs.length) return null;
+    return { x: envelope(xs), z: envelope(zs) };
+  }
+
+  /* 房间轮廓（业务 z-up 系）来自结构数据；缺失时不做水平拟合。 */
+  function roomOutline(source) {
+    const bounds = source?.room?.bounds_xy;
+    if (bounds && Array.isArray(bounds.min) && Array.isArray(bounds.max)) return bounds;
+    return null;
+  }
+
   function addPointChunks(meta, data, frame, onProgress) {
     const props = meta.properties;
     const find = (name) => props.find((prop) => prop.name === name) || null;
@@ -708,7 +723,7 @@ export function createViewer(host, options = {}) {
           const res = await fetch(manifest.measurements, { headers, signal: abortController.signal }).catch(() => null);
           if (res && res.ok) measurements = await res.json().catch(() => null);
         }
-        if (source) addLayout(normalizeStructure(source), measuredSizeMap(measurements));
+        return { source, measurements };
       })();
 
       const windowVisualPromise = manifest.window_visual
@@ -722,9 +737,14 @@ export function createViewer(host, options = {}) {
       // 交付包可能导出自来源相机坐标系（竖直轴 Y）；按包内视角位姿判断并映射回 z-up 业务系，
       // 否则点云/展示层会相对结构框整体旋转 90°。
       const layer = await windowVisualPromise;
+      // 结构/测量清单是小文件且与点云并发下载，这里已经就绪，用它拿房间轮廓做水平面对齐。
+      const { source, measurements } = await structurePromise;
       const upAxis = packUpAxis(layer?.views || null);
       const frame = upAxis && Math.abs(upAxis[1]) > 0.9 && Math.abs(upAxis[2]) <= 0.9
-        ? resolveFrame(layer.views, sampleFloorAnchor(meta, data, upAxis[1]))
+        ? resolveFrame(layer.views, sampleFloorAnchor(meta, data, upAxis[1]), {
+          pointExtent: sampleHorizontalExtent(meta, data),
+          roomBounds: roomOutline(source),
+        })
         : null;
       if (frame) {
         onStatus({ phase: 'points', message: '已校正交付包坐标系（来源帧 Y-竖直 → 业务 z-up）' });
@@ -735,7 +755,8 @@ export function createViewer(host, options = {}) {
           if (frac >= 1) resolve();
         });
       });
-      await Promise.all([structurePromise, addWindowVisual(layer, frame)]);
+      if (source) addLayout(normalizeStructure(source), measuredSizeMap(measurements));
+      await addWindowVisual(layer, frame);
       state.ready = true;
       if (!state.extent) computeBounds();
       ensureGrid();

@@ -9,6 +9,7 @@ import {
 } from '../ui.js';
 import { scoreRingHTML, mountRings, barRowHTML, mountBars } from '../charts.js';
 import { createViewer } from '../viewer/pointcloud.js';
+import { structureFurniture } from '../viewer/structure.mjs';
 import { navigate, setLastScan } from '../app.js';
 import { loadRoomData } from './room.js';
 
@@ -69,7 +70,7 @@ export async function screenView(ctx, scanId) {
     const scale = measurements.scale || null;
     const references = scale?.references || [];
     const counts = data.structure?.counts || data.layout?.counts || {};
-    const structureObjectCount = (data.structure?.objects || []).length;
+    const structureObjectCount = structureFurniture(data.structure || data.layout).length;
     const projectName = data.project?.name || '未命名项目';
 
     ctx.host.innerHTML = `
