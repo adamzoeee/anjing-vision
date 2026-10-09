@@ -1,0 +1,298 @@
+/* ============================================================
+   Base v2 · 画布 / 排版 / 柔和动效 / 页面切换
+   ============================================================ */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-1);
+  background: var(--bg-0);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  transition: background 600ms var(--ease-glide), color 600ms var(--ease-glide);
+}
+
+/* —— 全局画布：暮色光晕 + 网格 + 悬浮 3D 层（canvas 由 JS 插入 z-index:-1） —— */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -4;
+  background:
+    radial-gradient(1200px 800px at 12% -12%, var(--bg-art-1), transparent 62%),
+    radial-gradient(1000px 700px at 108% 6%, var(--bg-art-2), transparent 58%),
+    radial-gradient(900px 900px at 60% 120%, var(--bg-art-3), transparent 62%),
+    linear-gradient(180deg, var(--bg-1), var(--bg-0) 82%);
+  transition: background 700ms var(--ease-glide);
+}
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -3;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(1300px 900px at 50% 24%, rgba(0, 0, 0, 0.85), transparent 82%);
+  -webkit-mask-image: radial-gradient(1300px 900px at 50% 24%, rgba(0, 0, 0, 0.85), transparent 82%);
+}
+
+#bg3d {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  opacity: 0.55;
+  transition: opacity 900ms var(--ease-glide);
+}
+#bg3d.subtle { opacity: 0.22; }
+
+.aurora {
+  position: fixed;
+  z-index: -3;
+  width: 780px;
+  height: 780px;
+  border-radius: 50%;
+  filter: blur(110px);
+  opacity: 0.5;
+  pointer-events: none;
+  transition: opacity 700ms var(--ease-glide);
+}
+.aurora-a {
+  top: -280px;
+  left: -200px;
+  background: radial-gradient(circle, var(--bg-art-1), transparent 66%);
+  animation: aurora-drift-a 38s var(--ease-glide) infinite alternate;
+}
+.aurora-b {
+  right: -260px;
+  bottom: -320px;
+  background: radial-gradient(circle, var(--bg-art-2), transparent 66%);
+  animation: aurora-drift-b 46s var(--ease-glide) infinite alternate;
+}
+
+@keyframes aurora-drift-a {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(110px, 70px, 0) scale(1.14); }
+}
+@keyframes aurora-drift-b {
+  from { transform: translate3d(0, 0, 0) scale(1.06); }
+  to { transform: translate3d(-90px, -60px, 0) scale(0.94); }
+}
+
+/* —— 排版 —— */
+h1, h2, h3, h4, p { margin: 0; }
+a { color: var(--accent-2); text-decoration: none; }
+
+.eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+}
+.muted { color: var(--text-2); }
+.faint { color: var(--text-3); }
+.mono { font-family: var(--font-mono); }
+
+/* —— 滚动条 —— */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-3) 32%, transparent) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text-3) 30%, transparent); border-radius: 8px; }
+*::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--text-3) 48%, transparent); }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* —— 焦点与选区 —— */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+::selection { background: var(--accent-soft); color: var(--text-1); }
+
+/* —— 工具类 —— */
+.row { display: flex; align-items: center; }
+.col { display: flex; flex-direction: column; }
+.gap-1 { gap: var(--sp-1); }
+.gap-2 { gap: var(--sp-2); }
+.gap-3 { gap: var(--sp-3); }
+.gap-4 { gap: var(--sp-4); }
+.grow { flex: 1 1 auto; min-width: 0; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hidden { display: none !important; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}
+
+/* —— 入场：慢速、柔和、有重量感 —— */
+.rise {
+  opacity: 0;
+  transform: translateY(22px) scale(0.988);
+  animation: rise-in var(--dur-glide) var(--ease-soft) forwards;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+@keyframes rise-in {
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.fade {
+  opacity: 0;
+  animation: fade-in var(--dur-slow) var(--ease-soft) forwards;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+@keyframes fade-in { to { opacity: 1; } }
+
+/* —— 页面切换（View Transitions API + 光带扫掠） —— */
+::view-transition-old(root) {
+  animation: vt-out 460ms var(--ease-glide) both;
+}
+::view-transition-new(root) {
+  animation: vt-in 720ms var(--ease-soft) both;
+}
+@keyframes vt-out {
+  to { opacity: 0; transform: scale(1.012) translateY(-8px); filter: blur(10px); }
+}
+@keyframes vt-in {
+  from { opacity: 0; transform: scale(0.988) translateY(12px); filter: blur(12px); }
+}
+
+#route-sweep {
+  position: fixed;
+  inset: -10%;
+  z-index: 240;
+  pointer-events: none;
+  opacity: 0;
+}
+#route-sweep::before {
+  content: "";
+  position: absolute;
+  top: -15%;
+  bottom: -15%;
+  left: -55%;
+  width: 40%;
+  background: linear-gradient(
+    100deg,
+    transparent,
+    rgba(255, 255, 255, 0.1) 34%,
+    var(--accent-soft) 50%,
+    rgba(255, 255, 255, 0.1) 66%,
+    transparent
+  );
+  filter: blur(10px);
+  transform: skewX(-14deg);
+}
+#route-sweep.run { animation: sweep-fade 1100ms var(--ease-glide) 1; }
+#route-sweep.run::before { animation: sweep-move 1100ms var(--ease-glide) 1; }
+@keyframes sweep-fade { 0% { opacity: 0; } 16% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes sweep-move { from { left: -55%; } to { left: 118%; } }
+
+/* —— 呼吸与微光 —— */
+.pulse-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ok);
+  animation: pulse-ring 2.8s var(--ease-glide) infinite;
+}
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 45%, transparent); }
+  70% { box-shadow: 0 0 0 10px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+.shimmer {
+  position: relative;
+  overflow: hidden;
+  background: var(--panel);
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--panel-strong), transparent);
+  animation: shimmer-sweep 2.2s var(--ease-glide) infinite;
+}
+@keyframes shimmer-sweep { to { transform: translateX(100%); } }
+
+.scan-beam {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.scan-beam::before {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 280px;
+  background: linear-gradient(90deg, transparent, var(--accent-soft), transparent);
+  animation: beam-sweep 9s var(--ease-glide) infinite;
+}
+@keyframes beam-sweep {
+  0% { left: -300px; }
+  60% { left: 105%; }
+  100% { left: 105%; }
+}
+
+/* —— 大屏宽度门帘 —— */
+.width-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--bg-0) 88%, transparent);
+  backdrop-filter: blur(16px);
+}
+.width-gate[hidden] { display: none; }
+.width-gate-card {
+  max-width: 540px;
+  padding: var(--sp-8) var(--sp-10);
+  text-align: center;
+}
+.width-gate-card h1 { font-size: 24px; font-weight: 650; margin-bottom: var(--sp-3); }
+.width-gate-card p { color: var(--text-2); }
+.width-gate-icon { display: grid; place-items: center; margin-bottom: var(--sp-4); color: var(--accent); }
+
+/* ============================================================
+   动效策略：
+   · 系统未开启“减少动效” → 全量柔和动效
+   · 系统开启了减少动效   → 只保留透明度渐变（不位移、不旋转）
+   · 用户在工作台里切到「全效」→ data-motion="full" 强制全量动效
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  .aurora-a, .aurora-b, .brand-mark::after, .scan-beam::before, .ticker-items, .float-slow {
+    animation: none !important;
+  }
+  .rise { animation: fade-in 340ms ease both; transform: none; }
+  .rise, .fade { transform: none !important; }
+  ::view-transition-old(root) { animation: fade-in 200ms ease reverse both; }
+  ::view-transition-new(root) { animation: fade-in 280ms ease both; }
+}
+
+/* 用户显式选择「全效」：覆盖系统减少动效 */
+:root[data-motion="full"] .rise {
+  animation: rise-in var(--dur-glide) var(--ease-soft) forwards;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+:root[data-motion="full"] .aurora-a { animation: aurora-drift-a 38s var(--ease-glide) infinite alternate; }
+:root[data-motion="full"] .aurora-b { animation: aurora-drift-b 46s var(--ease-glide) infinite alternate; }
+:root[data-motion="full"] .scan-beam::before { animation: beam-sweep 9s var(--ease-glide) infinite; }
+:root[data-motion="full"] .ticker-items { animation: ticker-scroll 46s linear infinite; }
+:root[data-motion="full"] ::view-transition-old(root) { animation: vt-out 460ms var(--ease-glide) both; }
+:root[data-motion="full"] ::view-transition-new(root) { animation: vt-in 720ms var(--ease-soft) both; }

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
@@ -114,6 +115,7 @@ class ScanOut(BaseModel):
     message: str
     capture_type: Literal["video", "photos"]
     reference_measurements: list[ReferenceMeasurement] = Field(default_factory=list)
+    created_at: datetime | None = None
 
     @field_validator("progress", mode="before")
     @classmethod
