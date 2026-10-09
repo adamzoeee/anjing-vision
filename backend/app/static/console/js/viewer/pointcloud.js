@@ -489,7 +489,7 @@ export function createViewer(host, options = {}) {
       const colArr = new Float32Array(count * 3);
       for (let i = 0; i < count; i++) {
         const base = (start + i) * stride;
-        // 与窗边展示层共用同一份坐标校正（竖直轴 + 水平面 180° + 尺度）；
+    // 与窗边展示层共用同一份坐标校正（竖直轴 + 水平面 180° + 逐轴尺度）；
         // 点云单独跳过水平那段会让家具框与点云整体错开（scan46 的回归点）。
         framePointInto(posArr, i * 3, readProp(px, base), readProp(py, base), readProp(pz, base), frame);
         colArr[i * 3] = (pr ? readProp(pr, base) : 205) * colorScale(pr);
