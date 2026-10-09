@@ -42,15 +42,94 @@ export function packUpAxis(views) {
   return [sum[0] / length, sum[1] / length, sum[2] / length];
 }
 
-/* 交付包的水平面还相对业务系绕竖轴转了 180°，并整体偏小（scan46 约 1.10 倍）。
- * 用“点云水平范围 ↔ 房间轮廓”拟合这一段刚体变换。
+/* 交付包不只“竖直轴是 Y”：它的水平面还相对业务系绕竖轴转了 180°，而且是非度量
+ * 重建——两条水平轴的尺度可以不一致（相机焦距误差只压缩深度方向，scan46 实测
+ * 宽度 1.19、进深 1.44）。
  *
- * 包内两条水平轴各自推出的尺度必须一致，才说明这段范围就是房间轮廓：
- *  - bounds：真实极值。含少量穿窗/门口走廊的点时会略微外扩，但当房间轮廓本身就是
- *    按点云极值定义的（scan46）时它是自洽的；
- *  - band  ：0.1%/99.9% 分位包络，抗离群点，但会把真实极值（贴墙点）切掉。
- * 两组输入各算一遍，选“两轴比例最一致”的那组；两组都不一致就返回 null，
- * 退回只做竖直轴映射，绝不盲目拉伸点云。 */
+ * 这里用“竖直中段的墙面剖面”解这段变换，而不是点云外接包络：外接包络会被穿窗、
+ * 门口走廊这类伸出房间的几何撑大（scan46 上把包络角点当房间角点，整包点云会朝
+ * 门那一侧推偏约 0.5 m，家具框因此全部错位），而墙面剖面只反映房间自己的墙。 */
+
+/* 一条水平轴的“墙面剖面”：在竖直中段统计该轴坐标的直方图，取两侧外半区里最密的
+ * 一层当作墙平面，并要求它足够突出（占样本 2% 以上）、两墙之间至少 1 m。 */
+export function wallPeaks(values, bins = 240) {
+  if (!values || values.length < 64) return null;
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < values.length; i += 1) {
+    const value = values[i];
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max - min < 0.5) return null;
+  const width = (max - min) / bins;
+  const hist = new Uint32Array(bins);
+  for (let i = 0; i < values.length; i += 1) {
+    const slot = Math.min(bins - 1, Math.max(0, Math.floor((values[i] - min) / width)));
+    hist[slot] += 1;
+  }
+  const split = Math.floor(bins * 0.4);
+  let lo = 0;
+  let hi = split;
+  for (let slot = 1; slot < split; slot += 1) if (hist[slot] > hist[lo]) lo = slot;
+  for (let slot = split + 1; slot < bins; slot += 1) if (hist[slot] > hist[hi]) hi = slot;
+  const share = (slot) => {
+    const from = Math.max(0, slot - 1);
+    const to = Math.min(bins - 1, slot + 1);
+    let count = 0;
+    for (let i = from; i <= to; i += 1) count += hist[i];
+    return count / values.length;
+  };
+  return {
+    lo: min + (lo + 0.5) * width,
+    hi: min + (hi + 0.5) * width,
+    shareLo: share(lo),
+    shareHi: share(hi),
+  };
+}
+
+/* 用两条轴的墙面剖面解水平变换：每轴各自定尺度（非度量包允许两轴不同），
+ * 包内最大 x/z 一侧的墙面落到房间轮廓的最小角（水平面绕竖轴 180°）。
+ * 尺度、突出度或两轴比例不自洽时返回 null，退回只做竖直轴映射。 */
+export function fitWallFrame(profile, roomBounds) {
+  if (!profile || !roomBounds) return null;
+  const lo = roomBounds.min;
+  const hi = roomBounds.max;
+  if (!Array.isArray(lo) || !Array.isArray(hi)) return null;
+  const roomX = Number(hi[0]) - Number(lo[0]);
+  const roomY = Number(hi[1]) - Number(lo[1]);
+  if (!(roomX > 1) || !(roomY > 1)) return null;
+  const px = wallPeaks(profile.x);
+  const pz = wallPeaks(profile.z);
+  if (!px || !pz) return null;
+  const spanX = px.hi - px.lo;
+  const spanZ = pz.hi - pz.lo;
+  if (spanX < 1 || spanZ < 1) return null;                 // 两面“墙”之间至少 1 m
+  if (px.shareLo < 0.02 || px.shareHi < 0.02) return null; // 剖面太散：墙面不确定
+  if (pz.shareLo < 0.02 || pz.shareHi < 0.02) return null;
+  const scaleX = roomX / spanX;
+  const scaleZ = roomY / spanZ;
+  if (!(scaleX > 0.8 && scaleX < 1.6) || !(scaleZ > 0.8 && scaleZ < 1.6)) return null;
+  const anisotropy = Math.abs(scaleX - scaleZ) / Math.min(scaleX, scaleZ);
+  if (anisotropy > 0.45) return null;                      // 两轴差太多：不是同一房间的墙
+  return {
+    scaleX,
+    scaleZ,
+    // 竖直方向按“没被压缩”的那条水平轴走：重建的压缩在深度方向上，宽度和高度同尺度。
+    scaleUp: Math.min(scaleX, scaleZ),
+    offsetX: Number(lo[0]) + scaleX * px.hi,
+    offsetY: Number(lo[1]) + scaleZ * pz.hi,
+    flip: true,
+    source: 'walls',
+    anisotropy,
+    peaks: { x: [px.lo, px.hi], z: [pz.lo, pz.hi] },
+  };
+}
+
+/* 只有点云包络（拿不到墙面剖面）时的退路：把“水平范围 ↔ 房间轮廓”当刚体拟合。
+ * 包络被穿窗/门口走廊撑大时会算出偏大的尺度，所以这只是兜底，不是首选。
+ *  - bounds：真实极值；band：0.1%/99.9% 分位包络（抗离群点，但会切掉贴墙点）。
+ * 两组输入各算一遍，选“两轴比例最一致”的那组；都不一致就返回 null。 */
 export function fitHorizontalFrame(pointExtent, roomBounds) {
   if (!pointExtent || !roomBounds) return null;
   const lo = roomBounds.min;
@@ -92,7 +171,8 @@ export function fitHorizontalFrame(pointExtent, roomBounds) {
 }
 
 /* 返回把交付包映射进 z-up 业务系所需的校正；已经是 z-up 或无法识别时返回 null。
- * options.pointExtent / options.roomBounds 同时给出时才顺带做水平面拟合。 */
+ * options.roomBounds 与 options.wallProfile / options.pointExtent 给出时才做水平面拟合：
+ * 先用墙面剖面（首选），拿不到剖面时退回包络拟合。 */
 export function resolveFrame(views, floorY, options = {}) {
   const up = packUpAxis(views);
   if (!up) return null;
@@ -103,12 +183,13 @@ export function resolveFrame(views, floorY, options = {}) {
   const base = up[1] < 0
     ? { kind: 'y-vertical', sign: -1, floor }   // up = -Y：地板在最大 y 一侧
     : { kind: 'y-vertical', sign: 1, floor };   // up = +Y：地板在最小 y 一侧
-  const horizontal = fitHorizontalFrame(options?.pointExtent, options?.roomBounds);
+  const horizontal = fitWallFrame(options?.wallProfile, options?.roomBounds)
+    || fitHorizontalFrame(options?.pointExtent, options?.roomBounds);
   return horizontal ? { ...base, horizontal } : base;
 }
 
 /* 单点校正：把来源帧坐标映射到 z-up 业务系。
- * 竖直轴翻转、水平面 180° 偏转与整体尺度都在这一个函数里，
+ * 竖直轴翻转、水平面 180° 偏转与逐轴尺度都在这一个函数里，
  * 点云与展示层必须走同一份实现，否则两者会再次错开（scan46 的回归点）。 */
 export function framePointInto(target, index, x, y, z, frame) {
   if (!frame) {
@@ -118,17 +199,20 @@ export function framePointInto(target, index, x, y, z, frame) {
     return target;
   }
   const fitted = frame.horizontal || null;
-  const scale = fitted ? fitted.scale : 1;
-  const mapX = fitted ? fitted.offsetX - scale * x : x;
-  const mapY = fitted ? fitted.offsetY - scale * z : z;
+  // scaleX/scaleZ 逐轴给出；只有单一 scale 的旧拟合（包络兜底）三轴同尺度。
+  const scaleX = fitted ? (fitted.scaleX ?? fitted.scale ?? 1) : 1;
+  const scaleZ = fitted ? (fitted.scaleZ ?? fitted.scale ?? 1) : 1;
+  const scaleUp = fitted ? (fitted.scaleUp ?? fitted.scale ?? 1) : 1;
+  const mapX = fitted ? fitted.offsetX - scaleX * x : x;
+  const mapY = fitted ? fitted.offsetY - scaleZ * z : z;
   if (frame.sign < 0) {
     target[index] = mapX;
     target[index + 1] = mapY;
-    target[index + 2] = scale * (frame.floor - y);
+    target[index + 2] = scaleUp * (frame.floor - y);
   } else {
     target[index] = mapX;
     target[index + 1] = -mapY;
-    target[index + 2] = scale * (y - frame.floor);
+    target[index + 2] = scaleUp * (y - frame.floor);
   }
   return target;
 }
