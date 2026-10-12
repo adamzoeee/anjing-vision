@@ -380,6 +380,17 @@
 }
 .room-col > * { flex: none; }
 
+/* AI 改造助手入口跳转后的高亮脉冲（面板在右栏底部，按钮负责把它带到眼前） */
+.panel.assistant-flash {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  animation: assistantFlash 1600ms var(--ease-soft);
+}
+@keyframes assistantFlash {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 46%, transparent); }
+  55% { box-shadow: 0 0 0 16px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
 .room-stage {
   position: relative;
   min-height: 0;
