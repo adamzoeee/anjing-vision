@@ -686,6 +686,11 @@ def render_passage_analysis(
     ax.set_aspect("equal")
     ax.axis("off")
     fig.tight_layout()
+    if hasattr(output_png, "write"):
+        # 方案可视化：内存里直接出图（BytesIO），不落盘、不动真实产物。
+        fig.savefig(output_png, format="png", facecolor="#f7f7f3")
+        plt.close(fig)
+        return output_png
     output_png = Path(output_png)
     output_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_png, facecolor="#f7f7f3")
