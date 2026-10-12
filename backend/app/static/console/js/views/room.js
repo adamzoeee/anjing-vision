@@ -861,7 +861,7 @@ export async function roomView(ctx, scanId) {
       }
       body.innerHTML = `<div class="scheme-list">
         ${schemes.map((scheme) => `
-          <div class="scheme-row" data-scheme="${scheme.id}">
+          <div class="scheme-row" data-scheme="${scheme.id}" role="button" tabindex="0" aria-label="查看方案可视化">
             <div class="sc-main">
               <div class="sc-name">${esc(scheme.name)}</div>
               <div class="sc-meta">
@@ -872,16 +872,26 @@ export async function roomView(ctx, scanId) {
             </div>
             <div class="sc-score">${fmtScore(scheme.score)}</div>
             <div class="sc-actions">
+              <button class="icon-btn" data-scheme-action="view" data-id="${scheme.id}" data-tip="方案可视化" aria-label="方案可视化">${icon('image', 15)}</button>
               <button class="icon-btn" data-scheme-action="export" data-id="${scheme.id}" data-tip="导出 PDF" aria-label="导出 PDF">${icon('download', 15)}</button>
               <button class="icon-btn" data-scheme-action="delete" data-id="${scheme.id}" data-tip="删除" aria-label="删除">${icon('trash', 15)}</button>
             </div>
           </div>`).join('')}
       </div>`;
+      /* 整行进入方案可视化（干完后的框架图/平面图/通行图），行内按钮各自 stopPropagation */
+      body.querySelectorAll('.scheme-row').forEach((row) => {
+        const open = () => navigate(`#/scans/${scanId}/schemes/${row.dataset.scheme}`);
+        row.addEventListener('click', open);
+        row.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); }
+        });
+      });
       body.querySelectorAll('[data-scheme-action]').forEach((btn) => {
         btn.addEventListener('click', async (event) => {
           event.stopPropagation();
           const schemeId = Number(btn.dataset.id);
-          if (btn.dataset.schemeAction === 'export') await exportScheme(schemeId);
+          if (btn.dataset.schemeAction === 'view') navigate(`#/scans/${scanId}/schemes/${schemeId}`);
+          else if (btn.dataset.schemeAction === 'export') await exportScheme(schemeId);
           else {
             const ok = await confirmDialog({ title: '删除方案', message: '删除后不可恢复，确定删除该方案？', confirmText: '删除', danger: true });
             if (!ok) return;

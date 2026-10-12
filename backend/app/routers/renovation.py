@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from pathlib import Path
 from urllib.parse import quote
@@ -23,6 +24,9 @@ from assistant.intent_parser import parse_intent
 from pipeline.scheme_assessment import build_scheme, diff_assessments
 from pipeline.scheme_pdf import build_scheme_appendix_pdf
 from pipeline.scheme_solver import CONSTRUCTION_METRICS, _movable_objects, solve_metric
+from pipeline.scheme_state import apply_edits
+from pipeline.space_foundation import analyze_structure_passages, render_passage_analysis
+from pipeline.structure_figure import render_structure_plan_to
 
 from ..config import Settings, get_settings
 from ..db import get_db
@@ -288,6 +292,40 @@ def get_scheme(scan_id: int, scheme_id: int, db: Session = Depends(get_db),
             **_based_on_status(scheme, work),
             "plan": {"id": scheme.id, "name": scheme.name, "edits": scheme.edits,
                      "source": scheme.source, "based_on": scheme.based_on}}
+
+
+def _scheme_derived(work: Path, scheme: RenovationScheme) -> tuple[dict, dict]:
+    """方案派生状态：真实产物只读，编辑全部在内存副本上执行。"""
+    measurements, structure = _require_measurements(work), _load_structure(work)
+    state = apply_edits(measurements, structure, scheme.edits or [])
+    return state["measurements"], state["structure"]
+
+
+@router.get("/scans/{scan_id}/schemes/{scheme_id}/plan.png")
+def scheme_plan_png(scan_id: int, scheme_id: int, db: Session = Depends(get_db),
+                    org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
+    """改造后的 2D 平面图：与报告同一渲染器，按方案派生状态出图（不落盘）。"""
+    _, work = _scan_and_work(scan_id, db, org_id, settings)
+    scheme = _get_scheme(db, scan_id, scheme_id)
+    measurements, structure = _scheme_derived(work, scheme)
+    buffer = io.BytesIO()
+    render_structure_plan_to(measurements, structure, buffer)
+    return Response(content=buffer.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
+
+
+@router.get("/scans/{scan_id}/schemes/{scheme_id}/passage.png")
+def scheme_passage_png(scan_id: int, scheme_id: int, db: Session = Depends(get_db),
+                       org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
+    """改造后的通行图：与正式链路同一分析+渲染（门→床路径、净宽红黄绿分级）。"""
+    _, work = _scan_and_work(scan_id, db, org_id, settings)
+    scheme = _get_scheme(db, scan_id, scheme_id)
+    measurements, structure = _scheme_derived(work, scheme)
+    passage = analyze_structure_passages(measurements, structure)
+    buffer = io.BytesIO()
+    render_passage_analysis(measurements, structure, passage, buffer)
+    return Response(content=buffer.getvalue(), media_type="image/png",
+                    headers={"Cache-Control": "no-store"})
 
 
 @router.patch("/scans/{scan_id}/schemes/{scheme_id}")

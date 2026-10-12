@@ -28,9 +28,21 @@ def _name(item: dict, index: int) -> str:
     return f"{cn}{CN_NUM[index] if index < len(CN_NUM) else index + 1}"
 
 
-def render_structure_plan(measurements_json: Path, structure_json: Path, output_png: Path) -> Path:
-    measurements = json.loads(Path(measurements_json).read_text(encoding="utf-8"))
-    structure = json.loads(Path(structure_json).read_text(encoding="utf-8"))
+def _save_figure(fig, output, facecolor: str):
+    """输出既可以是文件路径，也可以是 BytesIO（方案可视化在内存里直接出图）。"""
+    if hasattr(output, "write"):
+        fig.savefig(output, format="png", facecolor=facecolor)
+        plt.close(fig)
+        return output
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, facecolor=facecolor)
+    plt.close(fig)
+    return output
+
+
+def _plan_figure(measurements: dict, structure: dict):
+    """按测量结果绘制俯视平面图（dict 输入，供文件版与方案派生状态共用）。"""
     room = measurements.get("room", {})
     objects = measurements.get("objects", [])
     openings = measurements.get("openings", [])
@@ -122,11 +134,18 @@ def render_structure_plan(measurements_json: Path, structure_json: Path, output_
     ax.set_aspect("equal")
     ax.axis("off")
     fig.tight_layout()
-    output_png = Path(output_png)
-    output_png.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_png, facecolor="#f6f4ee")
-    plt.close(fig)
-    return output_png
+    return fig
+
+
+def render_structure_plan_to(measurements: dict, structure: dict, output) -> Path:
+    """dict 输入版：方案的派生状态直接渲染，不经过临时文件。"""
+    return _save_figure(_plan_figure(measurements, structure), output, "#f6f4ee")
+
+
+def render_structure_plan(measurements_json: Path, structure_json: Path, output_png: Path) -> Path:
+    measurements = json.loads(Path(measurements_json).read_text(encoding="utf-8"))
+    structure = json.loads(Path(structure_json).read_text(encoding="utf-8"))
+    return _save_figure(_plan_figure(measurements, structure), output_png, "#f6f4ee")
 
 
 if __name__ == "__main__":
