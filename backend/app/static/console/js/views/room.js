@@ -132,6 +132,7 @@ export async function roomView(ctx, scanId) {
             </div>
           </div>
           <div class="rt-actions">
+            ${done ? `<button class="btn" id="btn-room-assistant">${icon('wand', 15)} AI 改造助手</button>` : ''}
             ${done ? `<button class="btn" id="btn-room-pdf">${icon('download', 15)} 报告 PDF</button>` : ''}
             <button class="btn btn-primary" id="btn-room-screen">${icon('monitor', 15)} 大屏模式</button>
           </div>
@@ -168,6 +169,7 @@ export async function roomView(ctx, scanId) {
 
     document.getElementById('btn-room-screen')?.addEventListener('click', () => navigate(`#/screen/${scanId}`));
     document.getElementById('btn-room-pdf')?.addEventListener('click', openPdf);
+    document.getElementById('btn-room-assistant')?.addEventListener('click', jumpToAssistant);
 
     if (done) {
       renderLeft();
@@ -178,6 +180,22 @@ export async function roomView(ctx, scanId) {
     } else {
       renderProcessing();
     }
+  }
+
+  /* AI 改造助手（右栏底部的“AI 改造模拟 + 方案库”）在 1080p 下位于折叠线以下，
+   * 顶部入口按钮负责把它带到眼前并高亮，避免“功能没了”的错觉。 */
+  function jumpToAssistant() {
+    const col = document.getElementById('room-right');
+    const panel = document.getElementById('sim-panel');
+    if (!col || !panel) return;
+    const delta = panel.getBoundingClientRect().top - col.getBoundingClientRect().top;
+    const top = Math.max(0, col.scrollTop + delta - 16);
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    col.scrollTo({ top, behavior: reduced ? 'auto' : 'smooth' });
+    panel.classList.remove('assistant-flash');
+    void panel.offsetWidth;   // 强制重排，保证连续点击也能重放高亮
+    panel.classList.add('assistant-flash');
+    window.setTimeout(() => panel.classList.remove('assistant-flash'), 2000);
   }
 
   function stageChrome() {

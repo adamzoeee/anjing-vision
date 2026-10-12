@@ -161,3 +161,11 @@ flutter run -d web-server --web-hostname 127.0.0.1 --web-port 3000 --dart-define
 `backend/app/static/console/js/viewer/mode.mjs` 的 `layerVisibility()`（真实场景、
 未知模式一律不画框架），`room.js` / `screen.js` 在切换模式时把框架图层 chip 降调并注明
 “框架仅在‘空间结构’视图渲染”；`backend/tests/test_console_mode.cjs` 守住这条口径。
+
+### AI 改造助手入口（2026-10-12 追加）
+
+“AI 改造模拟 + 方案库”面板一直位于房间工作台右栏底部；1080p 下它在折叠线以下，右栏本身
+可滚动（实测 clientHeight 878 / scrollHeight 2284），因此容易被误认为“功能不见了”。
+现在房间页顶部操作区新增“AI 改造助手”按钮：点击后右栏平滑滚动到该面板并播放一次高亮
+脉冲（`jumpToAssistant`；样式 `.panel.assistant-flash`）。实测点击后右栏 scrollTop
+0 → 1121、面板入视且高亮生效。
