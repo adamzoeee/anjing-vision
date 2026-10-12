@@ -169,3 +169,27 @@ flutter run -d web-server --web-hostname 127.0.0.1 --web-port 3000 --dart-define
 现在房间页顶部操作区新增“AI 改造助手”按钮：点击后右栏平滑滚动到该面板并播放一次高亮
 脉冲（`jumpToAssistant`；样式 `.panel.assistant-flash`）。实测点击后右栏 scrollTop
 0 → 1121、面板入视且高亮生效。
+
+### 方案可视化页（2026-10-12 追加）
+
+“AI 改造助手”产出的每个方案现在都能单独出一页
+`#/scans/{scanId}/schemes/{schemeId}`（“干完后的样子”），而不是只把分算出来：
+
+- **家居框架图（3D）**：`viewer/scheme3d.mjs` 渲染 `layout_before/after` 的墙/门/窗/家具
+  线框，可拖拽旋转、缩放、自动旋转；青色=本方案改动、琥珀=新增（假设放置）、
+  对照改造前时红色=将被移除；前后切换不重置用户已转好的视角（重置按钮可回默认取景）。
+- **平面图 / 通行图**：改造后由服务端按方案派生状态重渲染，与报告同一渲染器
+  （`pipeline/structure_figure.py`、`pipeline/space_foundation.py`，新增 BytesIO 输出路径）；
+  改造前直接复用扫描自己的 `structure_plan.png` / `passage_analysis.png`。
+  三块均支持改造前/后切换，图纸点击可放大（lightbox）。
+- 页面底部“改造了什么”：编辑清单（人话）+ 指标变化 + 风险等级变化 + 沙盒声明。
+- 入口：房间工作台右栏“方案库”每行——整行点击或行内“可视化”按钮。
+- 后端新增两个**只读**端点：`GET /api/assistant/scans/{id}/schemes/{sid}/plan.png` 与
+  `.../passage.png`；渲染走内存派生状态（BytesIO），不落盘、不改真实产物，沿用
+  `scope: {simulation: true, structured_inputs_only: true}` 声明。
+
+验收：`backend/tests/test_scheme_visuals_api.py`（同扫描下“动过书桌”与“原样基线”的
+平面图/通行图必须不同；机构隔离 404；渲染后真实产物目录字节级不变）、
+`backend/tests/test_console_scheme3d.cjs`（图层归一 + 改动/新增/移除标记）；真机 CDP
+实测：方案库点“可视化”→ 页面 3D 画布 1575×538、平面图 990×770、通行图 1300×1040
+全部加载，前/后切换换图成功。
