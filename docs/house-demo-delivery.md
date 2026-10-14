@@ -5,6 +5,16 @@
 
 ## 从仓库启动
 
+`127.0.0.1` 指向访问者自己的电脑，GitHub 不会自动提供服务。先启动后再点击链接；电脑重启或服务停止后需要重新启动。GitHub 可直接查看仓库中的 PNG、源码并下载模型包。
+
+Windows 一键启动（仓库根目录，Python 3）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/start_house_demos.ps1 -OpenBrowser
+```
+
+可用 `-PythonPath "实际路径/python.exe"` 指定解释器。脚本重复运行会复用已经就绪的 Demo；端口被其他服务占用时会报错。日志保存到 `backend/tmp/house-demo-servers/`。
+
 在仓库根目录打开两个终端（Python 3 标准库即可）：
 
 ```text

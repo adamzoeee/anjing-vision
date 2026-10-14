@@ -8,6 +8,18 @@
 
 ## 先体验已完成的展示
 
+**下面的 8095/8096 地址是本机服务入口，不是 GitHub 在线网站。** 直接点击前，请先下载/克隆仓库并启动服务；没有启动时会显示“无法连接”。换一台电脑需要在那台电脑启动，重启电脑后需重新启动。
+
+只想在 GitHub 查看效果，可以直接打开 [整屋渲染图](backend/data/demos/house_render_20261014_final/overview.png)、[客厅渲染图](backend/data/demos/house_render_20261014_final/living_room.png)或下方的数据下载，无需启动服务。
+
+Windows 一键启动并打开两个页面（在仓库根目录执行，需要 Python 3）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/start_house_demos.ps1 -OpenBrowser
+```
+
+如果 Python 不在 PATH，增加 `-PythonPath "你的 Python 安装目录/python.exe"`。脚本验证服务就绪，可重复执行；日志在 `backend/tmp/house-demo-servers/`。
+
 在仓库根目录分别打开两个终端，使用 Python 3 启动：
 
 ```powershell
@@ -20,8 +32,8 @@ python -m http.server 8096 --bind 127.0.0.1 --directory backend/data/demos/house
 
 | 入口 | 可以查看什么 |
 |---|---|
-| [点云隐患 Demo · 8095](http://127.0.0.1:8095/) | 五个房间的彩色点云、房间切换、家具框与标签、几何布局建议 |
-| [三维渲染版 · 8096](http://127.0.0.1:8096/) | 可旋转实体场景、剖墙/天花板开关、整屋与分房间图片、模型下载 |
+| [点云隐患 Demo · 本地启动后访问 8095](http://127.0.0.1:8095/) | 五个房间的彩色点云、房间切换、家具框与标签、几何布局建议 |
+| [三维渲染版 · 本地启动后访问 8096](http://127.0.0.1:8096/) | 可旋转实体场景、剖墙/天花板开关、整屋与分房间图片、模型下载 |
 
 这些页面使用已提交的静态资源，预览不需要启动 API、重新推理或安装 Blender。通过 HTTP 打开，避免直接双击 HTML；端口已被占用时改用其他端口。
 
