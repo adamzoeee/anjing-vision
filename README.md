@@ -2,7 +2,7 @@
 
 面向居家适老化的三维空间分析项目：通过手机视频重建房间，识别空间结构与家具，生成尺寸、通行分析、风险评估和整改建议。提供 Flutter/Web 业务界面，以及可直接运行的家庭点云与三维渲染展示。
 
-**文档导航：** [项目与代码索引](docs/INDEX.md) · [家庭 Demo 交付](docs/house-demo-delivery.md) · [Scan46 恢复](docs/scan46-handoff-20261008.md) · [风险评估开发报告](docs/risk-assessment-development-report.md)
+**文档导航：** [项目与代码索引](docs/INDEX.md) · [家庭 Demo 交付](docs/house-demo-delivery.md) · [整屋 Scan 工作台](docs/house-scan-workbench.md) · [Scan46 恢复](docs/scan46-handoff-20261008.md) · [风险评估开发报告](docs/risk-assessment-development-report.md)
 
 本页依据 2026-10-14 的仓库实现整理。已打包的家庭 Demo 可以直接预览；处理新视频需要另行配置重建模型和 GPU 环境。
 
@@ -59,6 +59,7 @@ python -m http.server 8096 --bind 127.0.0.1 --directory backend/data/demos/house
 | 报告 | 结构图、通行图、正式风险图、PDF，API 与 Flutter 页面读取同一评估结果 |
 | 改造助手 | 根据建议或自然语言改造意图，在内存副本中模拟家具移动/新增/移除，比较指标与评分 |
 | 三维查看 | 业务点云查看器、Scan46 六个展示层；另有独立家庭点云及实体渲染 Demo |
+| 整屋 Scan | 将仓库内五个合成空间按对应门洞拼接为一个 Scan，在工作台切换整屋点云、框架与叠加视图 |
 
 当前视频主流程是 **SLAM3R + SpatialLM**。Gaussian 由 `GAUSSIAN_EXPERIMENTAL_ENABLED` 显式启用，默认关闭；已有结构化结果的正式风险评估不要求重新训练 Gaussian。
 

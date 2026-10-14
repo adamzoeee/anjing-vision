@@ -103,7 +103,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         （2026-10-14 复盘：用户刷新后仍看到旧前端）。"""
         response = await call_next(request)
         if request.url.path.startswith(("/console-static/", "/preview-static/")):
-            response.headers.setdefault("cache-control", "no-cache")
+            response.headers["cache-control"] = "no-store"
         return response
 
     @application.exception_handler(StarletteHTTPException)
