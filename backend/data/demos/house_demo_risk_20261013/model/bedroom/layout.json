@@ -1,0 +1,180 @@
+{
+  "backend": "spatiallm1.1-qwen-0.5b",
+  "detect_type": "all",
+  "categories": [],
+  "coordinate_unit": "meters",
+  "z_up": true,
+  "seconds": 22.3,
+  "counts": {
+    "walls": 4,
+    "doors": 1,
+    "windows": 0,
+    "objects": 5
+  },
+  "walls": [
+    {
+      "id": 1,
+      "center": [
+        2.025,
+        5.75,
+        1.525
+      ],
+      "size": [
+        3.4499999999999993,
+        0.05,
+        3.0
+      ],
+      "rotation_z_deg": 90.0,
+      "height": 3.0,
+      "thickness": 0.0
+    },
+    {
+      "id": 0,
+      "center": [
+        4.025,
+        4.025,
+        1.525
+      ],
+      "size": [
+        4.0,
+        0.05,
+        3.0
+      ],
+      "rotation_z_deg": 0.0,
+      "height": 3.0,
+      "thickness": 0.0
+    },
+    {
+      "id": 3,
+      "center": [
+        4.025,
+        7.475,
+        1.525
+      ],
+      "size": [
+        4.0,
+        0.05,
+        3.0
+      ],
+      "rotation_z_deg": 0.0,
+      "height": 3.0,
+      "thickness": 0.0
+    },
+    {
+      "id": 2,
+      "center": [
+        6.025,
+        5.75,
+        1.525
+      ],
+      "size": [
+        3.4499999999999993,
+        0.05,
+        3.0
+      ],
+      "rotation_z_deg": 90.0,
+      "height": 3.0,
+      "thickness": 0.0
+    }
+  ],
+  "doors": [
+    {
+      "kind": "door",
+      "center": [
+        6.025,
+        5.7,
+        1.125
+      ],
+      "size": [
+        1.06,
+        0.15,
+        2.18
+      ],
+      "rotation_z_deg": 90.0,
+      "wall_id": 2
+    }
+  ],
+  "windows": [],
+  "objects": [
+    {
+      "kind": "object",
+      "category": "bed",
+      "center": [
+        3.125,
+        6.275,
+        0.525
+      ],
+      "size": [
+        1.796875,
+        1.890625,
+        1.0
+      ],
+      "rotation_z_deg": -3.1416,
+      "support_points": 12588
+    },
+    {
+      "kind": "object",
+      "category": "curtain",
+      "center": [
+        3.65,
+        7.35,
+        1.7
+      ],
+      "size": [
+        2.0625,
+        0.21875,
+        1.453125
+      ],
+      "rotation_z_deg": -3.1416,
+      "support_points": 4410
+    },
+    {
+      "kind": "object",
+      "category": "nightstand",
+      "center": [
+        4.45,
+        7.0,
+        0.275
+      ],
+      "size": [
+        0.609375,
+        0.609375,
+        0.515625
+      ],
+      "rotation_z_deg": -3.1416,
+      "support_points": 853
+    },
+    {
+      "kind": "object",
+      "category": "coffee_table",
+      "center": [
+        4.525,
+        4.4,
+        0.475
+      ],
+      "size": [
+        1.296875,
+        0.6875,
+        0.859375
+      ],
+      "rotation_z_deg": -3.1416,
+      "support_points": 1564
+    },
+    {
+      "kind": "object",
+      "category": "chair",
+      "center": [
+        4.525,
+        5.4,
+        0.45
+      ],
+      "size": [
+        0.46875,
+        0.53125,
+        0.84375
+      ],
+      "rotation_z_deg": -3.1416,
+      "support_points": 633
+    }
+  ]
+}
