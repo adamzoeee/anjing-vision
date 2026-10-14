@@ -15,6 +15,7 @@ const root = document.getElementById('app');
 const LAST_SCAN_KEY = 'anjing.console.lastScan';
 const SKIN_KEY = 'anjing.console.skin';
 const MOTION_KEY = 'anjing.console.motion';
+const RAIL_KEY = 'anjing.console.rail';
 
 let cleanups = [];
 export function registerCleanup(fn) { cleanups.push(fn); }
@@ -52,6 +53,31 @@ export function setMotionMode(mode) {
 export function motionEnabled() {
   if (getMotionMode() === 'full') return true;
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/* —— 侧边栏折叠（工作台外壳；折叠态只保留图标，悬停气泡显示名称） —— */
+export function getRailMode() {
+  return localStorage.getItem(RAIL_KEY) === 'collapsed' ? 'collapsed' : 'expanded';
+}
+export function applyRail(mode = getRailMode()) {
+  const collapsed = mode === 'collapsed';
+  root.classList.toggle('rail-collapsed', collapsed);
+  /* 展开态文字可见，不需要气泡；折叠态把名称挂成 data-tip（气泡改在右侧弹出）。 */
+  root.querySelectorAll('[data-rail-label]').forEach((node) => {
+    if (collapsed) node.setAttribute('data-tip', node.dataset.railLabel);
+    else node.removeAttribute('data-tip');
+  });
+  const toggle = root.querySelector('#rail-toggle');
+  if (toggle) {
+    const label = collapsed ? '展开侧边栏' : '折叠侧边栏';
+    toggle.dataset.tip = label;
+    toggle.setAttribute('aria-label', label);
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+  }
+}
+export function setRailMode(mode) {
+  localStorage.setItem(RAIL_KEY, mode === 'collapsed' ? 'collapsed' : 'expanded');
+  applyRail(mode);
 }
 
 /* —— 路由 —— */
@@ -119,16 +145,19 @@ function buildShell() {
           <div class="brand-en">ANJING VISION</div>
         </div>
       </div>
+      <div class="rail-toggle-row">
+        <button class="icon-btn rail-toggle" id="rail-toggle" data-tip="折叠侧边栏" aria-label="折叠侧边栏" aria-expanded="true">${icon('chevronRight', 16)}</button>
+      </div>
       <nav class="rail-nav">
         <div class="nav-section eyebrow">工作台</div>
-        <a class="nav-item ${isActive('#/projects') ? 'active' : ''}" href="#/projects">
+        <a class="nav-item ${isActive('#/projects') ? 'active' : ''}" href="#/projects" data-rail-label="项目工作台">
           ${icon('folder', 18)}<span>项目工作台</span>
         </a>
-        <a class="nav-item ${isActive('#/scans') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="#/scans/${lastScan || '0'}">
+        <a class="nav-item ${isActive('#/scans') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="#/scans/${lastScan || '0'}" data-rail-label="房间工作台">
           ${icon('home', 18)}<span>房间工作台</span>
         </a>
         <div class="nav-section eyebrow">演示</div>
-        <a class="nav-item ${isActive('#/screen') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="#/screen/${lastScan || '0'}">
+        <a class="nav-item ${isActive('#/screen') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="#/screen/${lastScan || '0'}" data-rail-label="大屏模式">
           ${icon('monitor', 18)}<span>大屏模式</span>
         </a>
       </nav>
@@ -162,6 +191,10 @@ function buildShell() {
       <section class="view" id="view-container"></section>
     </div>`;
 
+  applyRail();   /* 外壳重建后同步折叠态与气泡 */
+  root.querySelector('#rail-toggle')?.addEventListener('click', () => {
+    setRailMode(getRailMode() === 'collapsed' ? 'expanded' : 'collapsed');
+  });
   root.querySelector('#btn-logout').addEventListener('click', logout);
   root.querySelectorAll('.skin-dot').forEach((dot) => {
     dot.addEventListener('click', () => {
@@ -287,6 +320,7 @@ async function render() {
 async function boot() {
   applySkin();
   applyMotionMode();
+  applyRail();
   sweepEl = document.createElement('div');
   sweepEl.id = 'route-sweep';
   document.body.appendChild(sweepEl);
