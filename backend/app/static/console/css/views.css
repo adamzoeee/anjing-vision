@@ -751,6 +751,27 @@
 .view-project { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .scan-list { flex: 1; min-height: 0; overflow-y: auto; }
 
+@media (max-width: 1279px) {
+  .app-root.project-route .rail { display: none; }
+  .app-root.project-route .main { min-width: 0; width: 100%; }
+  .app-root.project-route .view { overflow-y: auto; padding: 16px; }
+  .view-project { height: auto; min-height: 100%; }
+  .project-hero { flex-wrap: wrap; padding: 18px; }
+  .project-hero .ph-stats { flex-basis: 100%; margin-left: 0; justify-content: space-between; gap: 10px; }
+  .ph-stat { text-align: left; }
+  .scan-list { overflow: visible; }
+  .scan-row { grid-template-columns: 48px minmax(0, 1fr) auto; gap: 12px; }
+  .scan-thumb { width: 48px; height: 48px; }
+  .scan-progress { grid-column: 2 / -1; }
+  .scan-actions { grid-column: 2 / -1; justify-content: flex-start; flex-wrap: wrap; }
+}
+@media (max-width: 690px) {
+  .scan-row { grid-template-columns: 44px minmax(0, 1fr); }
+  .scan-row > :nth-child(4) { grid-column: 2; }
+  .scan-progress, .scan-actions { grid-column: 1 / -1; }
+  .project-hero .ph-stats { display: grid; grid-template-columns: repeat(2, 1fr); }
+}
+
 /* ---- 整屋 Scan ---- */
 .house-view { height: 100%; display: flex; flex-direction: column; min-height: 0; gap: 16px; }
 .house-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; }

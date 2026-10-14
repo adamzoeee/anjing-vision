@@ -1,6 +1,6 @@
 /* 房间管理工作台：3D 点云 + 结构/尺寸 + 风险评估 + AI 改造模拟 + 方案库 */
 
-import { api } from '../api.js?v=house-scan-1';
+import { api } from '../api.js?v=house-flow-1';
 import { icon } from '../icons.js';
 import {
   esc, toast, fmtMeters, fmtScore, fmtPct, riskLevel, scoreTone, typeName,
@@ -13,6 +13,7 @@ import { scoreRingHTML, mountRings, barRowHTML, mountBars } from '../charts.js';
 import { createViewer } from '../viewer/pointcloud.js';
 import { normalizeStructure } from '../viewer/structure.mjs';
 import { navigate, setLastScan } from '../app.js';
+import { houseView } from './house.js?v=house-flow-1';
 
 const ACTIVE_STATUSES = new Set(['uploading', 'extracting', 'reconstructing', 'cleaning', 'understanding']);
 const REFERENCE_LABEL = { door: '门', bed: '床', sofa: '沙发', table: '桌', cabinet: '柜', bookshelf: '书架' };
@@ -45,10 +46,7 @@ export async function loadRoomData(scanId) {
 
 export async function roomView(ctx, scanId) {
   const selectedScan = await api.getScan(scanId);
-  if (selectedScan.capture_type === 'house_demo') {
-    navigate(`#/house/${scanId}`, { replace: true });
-    return;
-  }
+  if (['house', 'house_demo'].includes(selectedScan.capture_type)) return houseView(ctx, scanId, selectedScan);
   setLastScan(scanId);
   let data = null;
   let viewer = null;
