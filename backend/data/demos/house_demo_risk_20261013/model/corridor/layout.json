@@ -1,0 +1,193 @@
+{
+  "backend": "spatiallm1.1-qwen-0.5b",
+  "detect_type": "all",
+  "categories": [],
+  "coordinate_unit": "meters",
+  "z_up": true,
+  "seconds": 21.1,
+  "counts": {
+    "walls": 4,
+    "doors": 4,
+    "windows": 0,
+    "objects": 3
+  },
+  "walls": [
+    {
+      "id": 1,
+      "center": [
+        6.01,
+        3.75,
+        1.52
+      ],
+      "size": [
+        7.5,
+        0.05,
+        2.94
+      ],
+      "rotation_z_deg": 90.0,
+      "height": 2.94,
+      "thickness": 0.0
+    },
+    {
+      "id": 0,
+      "center": [
+        6.7475,
+        0.0,
+        1.52
+      ],
+      "size": [
+        1.4749999999999996,
+        0.05,
+        2.94
+      ],
+      "rotation_z_deg": 0.0,
+      "height": 2.94,
+      "thickness": 0.0
+    },
+    {
+      "id": 3,
+      "center": [
+        6.7475,
+        7.5,
+        1.52
+      ],
+      "size": [
+        1.4749999999999996,
+        0.05,
+        2.94
+      ],
+      "rotation_z_deg": 0.0,
+      "height": 2.94,
+      "thickness": 0.0
+    },
+    {
+      "id": 2,
+      "center": [
+        7.484999999999999,
+        3.75,
+        1.52
+      ],
+      "size": [
+        7.5,
+        0.05,
+        2.94
+      ],
+      "rotation_z_deg": 90.0,
+      "height": 2.94,
+      "thickness": 0.0
+    }
+  ],
+  "doors": [
+    {
+      "kind": "door",
+      "center": [
+        6.01,
+        2.0,
+        1.125
+      ],
+      "size": [
+        0.9400000000000001,
+        0.15,
+        2.16
+      ],
+      "rotation_z_deg": 90.0,
+      "wall_id": 1
+    },
+    {
+      "kind": "door",
+      "center": [
+        6.01,
+        5.7,
+        1.125
+      ],
+      "size": [
+        0.9400000000000001,
+        0.15,
+        2.16
+      ],
+      "rotation_z_deg": 90.0,
+      "wall_id": 1
+    },
+    {
+      "kind": "door",
+      "center": [
+        7.484999999999999,
+        1.0,
+        1.125
+      ],
+      "size": [
+        0.9400000000000001,
+        0.15,
+        2.16
+      ],
+      "rotation_z_deg": 90.0,
+      "wall_id": 2
+    },
+    {
+      "kind": "door",
+      "center": [
+        7.484999999999999,
+        5.475,
+        1.125
+      ],
+      "size": [
+        0.9400000000000001,
+        0.15,
+        2.16
+      ],
+      "rotation_z_deg": 90.0,
+      "wall_id": 2
+    }
+  ],
+  "windows": [],
+  "objects": [
+    {
+      "kind": "object",
+      "category": "floor-standing_lamp",
+      "center": [
+        6.21,
+        4.25,
+        0.9
+      ],
+      "size": [
+        0.390625,
+        0.390625,
+        1.71875
+      ],
+      "rotation_z_deg": -3.1416,
+      "support_points": 693
+    },
+    {
+      "kind": "object",
+      "category": "cupboard",
+      "center": [
+        7.1850000000000005,
+        3.2,
+        0.5
+      ],
+      "size": [
+        1.1875,
+        0.375,
+        0.921875
+      ],
+      "rotation_z_deg": -1.5708000000000002,
+      "support_points": 432
+    },
+    {
+      "kind": "object",
+      "category": "cupboard",
+      "center": [
+        7.21,
+        6.0,
+        0.5
+      ],
+      "size": [
+        0.640625,
+        0.375,
+        0.921875
+      ],
+      "rotation_z_deg": -1.5708000000000002,
+      "support_points": 450
+    }
+  ]
+}

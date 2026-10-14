@@ -1,0 +1,2470 @@
+{
+  "schema_version": 1,
+  "unit": "m",
+  "up_axis": "z",
+  "source": "E:\\anlingzhijing\\anjing-vision-remote-latest\\backend\\data\\demos\\house_demo_risk_20261013",
+  "source_hashes": {
+    "manifest.json": "dd82f9de4d7cfe2152fa74f38f5bbfaee8de713691f9f93c9a30c4db693de6cc",
+    "ground_truth.json": "1dc4aaa5960b03f607fdae0166f13e040e643abe958255838552d9192d7c8d4c",
+    "layout_analysis.json": "2ce3f06065db29c357f34883f8e0eed7fb8fa360e568d13bd79fe9044d68bbc5"
+  },
+  "method": "parameter_driven_proxy_geometry_not_photogrammetric_surface_reconstruction",
+  "furniture_source": "synthetic_ground_truth",
+  "shell_source": "synthetic_manifest_and_window_layout",
+  "rooms": [
+    {
+      "id": "living_room",
+      "label": "客厅",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "size": [
+        6,
+        4,
+        3
+      ],
+      "color": [
+        0.79,
+        0.65,
+        0.48
+      ],
+      "points": 64499,
+      "pcd": "living_room.pcd",
+      "ply": "living_room.ply",
+      "buffer": "living_room.bin",
+      "layers": "living_room.layers.bin"
+    },
+    {
+      "id": "bedroom",
+      "label": "卧室",
+      "origin": [
+        2,
+        4,
+        0
+      ],
+      "size": [
+        4,
+        3.5,
+        3
+      ],
+      "color": [
+        0.52,
+        0.7,
+        0.85
+      ],
+      "points": 60058,
+      "pcd": "bedroom.pcd",
+      "ply": "bedroom.ply",
+      "buffer": "bedroom.bin",
+      "layers": "bedroom.layers.bin"
+    },
+    {
+      "id": "kitchen",
+      "label": "厨房",
+      "origin": [
+        7.5,
+        4,
+        0
+      ],
+      "size": [
+        3,
+        3,
+        3
+      ],
+      "color": [
+        0.61,
+        0.8,
+        0.61
+      ],
+      "points": 36002,
+      "pcd": "kitchen.pcd",
+      "ply": "kitchen.ply",
+      "buffer": "kitchen.bin",
+      "layers": "kitchen.layers.bin"
+    },
+    {
+      "id": "bathroom",
+      "label": "卫生间",
+      "origin": [
+        7.5,
+        0,
+        0
+      ],
+      "size": [
+        2.5,
+        2,
+        3
+      ],
+      "color": [
+        0.69,
+        0.64,
+        0.83
+      ],
+      "points": 23616,
+      "pcd": "bathroom.pcd",
+      "ply": "bathroom.ply",
+      "buffer": "bathroom.bin",
+      "layers": "bathroom.layers.bin"
+    },
+    {
+      "id": "corridor",
+      "label": "走廊",
+      "origin": [
+        6,
+        0,
+        0
+      ],
+      "size": [
+        1.5,
+        7.5,
+        3
+      ],
+      "color": [
+        0.77,
+        0.77,
+        0.73
+      ],
+      "points": 40216,
+      "pcd": "corridor.pcd",
+      "ply": "corridor.ply",
+      "buffer": "corridor.bin",
+      "layers": "corridor.layers.bin"
+    }
+  ],
+  "portals": [
+    {
+      "rooms": [
+        "living_room",
+        "corridor"
+      ],
+      "axis": "x",
+      "plane": 6,
+      "center": 2,
+      "width": 0.9,
+      "height": 2.1
+    },
+    {
+      "rooms": [
+        "bedroom",
+        "corridor"
+      ],
+      "axis": "x",
+      "plane": 6,
+      "center": 5.7,
+      "width": 0.9,
+      "height": 2.1
+    },
+    {
+      "rooms": [
+        "kitchen",
+        "corridor"
+      ],
+      "axis": "x",
+      "plane": 7.5,
+      "center": 5.5,
+      "width": 0.9,
+      "height": 2.1
+    },
+    {
+      "rooms": [
+        "bathroom",
+        "corridor"
+      ],
+      "axis": "x",
+      "plane": 7.5,
+      "center": 1,
+      "width": 0.9,
+      "height": 2.1
+    }
+  ],
+  "windows": [
+    {
+      "room_id": "living_room",
+      "axis": 0,
+      "plane": 0,
+      "center": 1.7,
+      "width": 1.8,
+      "bottom": 1.05,
+      "height": 1.35
+    },
+    {
+      "room_id": "bedroom",
+      "axis": 1,
+      "plane": 7.5,
+      "center": 3.65,
+      "width": 1.7,
+      "bottom": 1.1,
+      "height": 1.25
+    },
+    {
+      "room_id": "kitchen",
+      "axis": 0,
+      "plane": 10.5,
+      "center": 5.4,
+      "width": 1.25,
+      "bottom": 1.1,
+      "height": 1.25
+    }
+  ],
+  "walls": [
+    {
+      "position": [
+        0,
+        0.4,
+        0.525
+      ],
+      "size": [
+        0.06,
+        0.8,
+        1.05
+      ],
+      "rooms": [
+        "living_room"
+      ],
+      "axis": 0,
+      "plane": 0
+    },
+    {
+      "position": [
+        0,
+        0.4,
+        1.725
+      ],
+      "size": [
+        0.06,
+        0.8,
+        1.3499999999999999
+      ],
+      "rooms": [
+        "living_room"
+      ],
+      "axis": 0,
+      "plane": 0
+    },
+    {
+      "position": [
+        0,
+        0.4,
+        2.7
+      ],
+      "size": [
+        0.06,
+        0.8,
+        0.6000000000000001
+      ],
+      "rooms": [
+        "living_room"
+      ],
+      "axis": 0,
+      "plane": 0
+    },
+    {
+      "position": [
+        0,
+        1.7000000000000002,
+        0.525
+      ],
+      "size": [
+        0.06,
+        1.8,
+        1.05
+      ],
+      "rooms": [
+        "living_room"
+      ],
+      "axis": 0,
+      "plane": 0
+    },
+    {
+      "position": [
+        0,
+        1.7000000000000002,
+        2.7
+      ],
+      "size": [
+        0.06,
+        1.8,
+        0.6000000000000001
+      ],
+      "rooms": [
+        "living_room"
+      ],
+      "axis": 0,
+      "plane": 0
+    },
+    {
+      "position": [
+        0,
+        3.3,
+        0.525
+      ],
+      "size": [
+        0.06,
+        1.4,
+        1.05
+      ],
+      "rooms": [
+        "living_room"
+      ],
+      "axis": 0,
+      "plane": 0
+    },
+    {
+      "position": [
+        0,
+        3.3,
+        1.725
+      ],
+      "size": [
+        0.06,
+        1.4,
+        1.3499999999999999
+      ],
+      "rooms": [
+        "living_room"
+      ],
+      "axis": 0,
+      "plane": 0
+    },
+    {
+      "position": [
+        0,
+        3.3,
+        2.7
+      ],
+      "size": [
+        0.06,
+        1.4,
+        0.6000000000000001
+      ],
+      "rooms": [
+        "living_room"
+      ],
+      "axis": 0,
+      "plane": 0
+    },
+    {
+      "position": [
+        6,
+        0.775,
+        1.05
+      ],
+      "size": [
+        0.06,
+        1.55,
+        2.1
+      ],
+      "rooms": [
+        "living_room",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 6
+    },
+    {
+      "position": [
+        6,
+        0.775,
+        2.55
+      ],
+      "size": [
+        0.06,
+        1.55,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "living_room",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 6
+    },
+    {
+      "position": [
+        6,
+        2.0,
+        2.55
+      ],
+      "size": [
+        0.06,
+        0.9000000000000001,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "living_room",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 6
+    },
+    {
+      "position": [
+        6,
+        3.225,
+        1.05
+      ],
+      "size": [
+        0.06,
+        1.5499999999999998,
+        2.1
+      ],
+      "rooms": [
+        "living_room",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 6
+    },
+    {
+      "position": [
+        6,
+        3.225,
+        2.55
+      ],
+      "size": [
+        0.06,
+        1.5499999999999998,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "living_room",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 6
+    },
+    {
+      "position": [
+        6,
+        4.625,
+        1.05
+      ],
+      "size": [
+        0.06,
+        1.25,
+        2.1
+      ],
+      "rooms": [
+        "bedroom",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 6
+    },
+    {
+      "position": [
+        6,
+        4.625,
+        2.55
+      ],
+      "size": [
+        0.06,
+        1.25,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "bedroom",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 6
+    },
+    {
+      "position": [
+        6,
+        5.7,
+        2.55
+      ],
+      "size": [
+        0.06,
+        0.9000000000000004,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "bedroom",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 6
+    },
+    {
+      "position": [
+        6,
+        6.825,
+        1.05
+      ],
+      "size": [
+        0.06,
+        1.3499999999999996,
+        2.1
+      ],
+      "rooms": [
+        "bedroom",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 6
+    },
+    {
+      "position": [
+        6,
+        6.825,
+        2.55
+      ],
+      "size": [
+        0.06,
+        1.3499999999999996,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "bedroom",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 6
+    },
+    {
+      "position": [
+        3.0,
+        0,
+        1.5
+      ],
+      "size": [
+        6,
+        0.06,
+        3
+      ],
+      "rooms": [
+        "living_room"
+      ],
+      "axis": 1,
+      "plane": 0
+    },
+    {
+      "position": [
+        6.75,
+        0,
+        1.5
+      ],
+      "size": [
+        1.5,
+        0.06,
+        3
+      ],
+      "rooms": [
+        "corridor"
+      ],
+      "axis": 1,
+      "plane": 0
+    },
+    {
+      "position": [
+        8.75,
+        0,
+        1.5
+      ],
+      "size": [
+        2.5,
+        0.06,
+        3
+      ],
+      "rooms": [
+        "bathroom"
+      ],
+      "axis": 1,
+      "plane": 0
+    },
+    {
+      "position": [
+        1.0,
+        4,
+        1.5
+      ],
+      "size": [
+        2,
+        0.06,
+        3
+      ],
+      "rooms": [
+        "living_room"
+      ],
+      "axis": 1,
+      "plane": 4
+    },
+    {
+      "position": [
+        4.0,
+        4,
+        1.5
+      ],
+      "size": [
+        4,
+        0.06,
+        3
+      ],
+      "rooms": [
+        "living_room",
+        "bedroom"
+      ],
+      "axis": 1,
+      "plane": 4
+    },
+    {
+      "position": [
+        9.0,
+        4,
+        1.5
+      ],
+      "size": [
+        3.0,
+        0.06,
+        3
+      ],
+      "rooms": [
+        "kitchen"
+      ],
+      "axis": 1,
+      "plane": 4
+    },
+    {
+      "position": [
+        2,
+        5.75,
+        1.5
+      ],
+      "size": [
+        0.06,
+        3.5,
+        3
+      ],
+      "rooms": [
+        "bedroom"
+      ],
+      "axis": 0,
+      "plane": 2
+    },
+    {
+      "position": [
+        2.4,
+        7.5,
+        0.55
+      ],
+      "size": [
+        0.7999999999999998,
+        0.06,
+        1.1
+      ],
+      "rooms": [
+        "bedroom"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        2.4,
+        7.5,
+        1.725
+      ],
+      "size": [
+        0.7999999999999998,
+        0.06,
+        1.25
+      ],
+      "rooms": [
+        "bedroom"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        2.4,
+        7.5,
+        2.675
+      ],
+      "size": [
+        0.7999999999999998,
+        0.06,
+        0.6499999999999999
+      ],
+      "rooms": [
+        "bedroom"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        3.65,
+        7.5,
+        0.55
+      ],
+      "size": [
+        1.7000000000000002,
+        0.06,
+        1.1
+      ],
+      "rooms": [
+        "bedroom"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        3.65,
+        7.5,
+        2.675
+      ],
+      "size": [
+        1.7000000000000002,
+        0.06,
+        0.6499999999999999
+      ],
+      "rooms": [
+        "bedroom"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        5.25,
+        7.5,
+        0.55
+      ],
+      "size": [
+        1.5,
+        0.06,
+        1.1
+      ],
+      "rooms": [
+        "bedroom"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        5.25,
+        7.5,
+        1.725
+      ],
+      "size": [
+        1.5,
+        0.06,
+        1.25
+      ],
+      "rooms": [
+        "bedroom"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        5.25,
+        7.5,
+        2.675
+      ],
+      "size": [
+        1.5,
+        0.06,
+        0.6499999999999999
+      ],
+      "rooms": [
+        "bedroom"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        6.75,
+        7.5,
+        0.55
+      ],
+      "size": [
+        1.5,
+        0.06,
+        1.1
+      ],
+      "rooms": [
+        "corridor"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        6.75,
+        7.5,
+        1.725
+      ],
+      "size": [
+        1.5,
+        0.06,
+        1.25
+      ],
+      "rooms": [
+        "corridor"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        6.75,
+        7.5,
+        2.675
+      ],
+      "size": [
+        1.5,
+        0.06,
+        0.6499999999999999
+      ],
+      "rooms": [
+        "corridor"
+      ],
+      "axis": 1,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        0.275,
+        1.05
+      ],
+      "size": [
+        0.06,
+        0.55,
+        2.1
+      ],
+      "rooms": [
+        "bathroom",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        0.275,
+        2.55
+      ],
+      "size": [
+        0.06,
+        0.55,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "bathroom",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        1.0,
+        2.55
+      ],
+      "size": [
+        0.06,
+        0.8999999999999999,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "bathroom",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        1.725,
+        1.05
+      ],
+      "size": [
+        0.06,
+        0.55,
+        2.1
+      ],
+      "rooms": [
+        "bathroom",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        1.725,
+        2.55
+      ],
+      "size": [
+        0.06,
+        0.55,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "bathroom",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        3.0,
+        1.05
+      ],
+      "size": [
+        0.06,
+        2,
+        2.1
+      ],
+      "rooms": [
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        3.0,
+        2.55
+      ],
+      "size": [
+        0.06,
+        2,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        4.525,
+        1.05
+      ],
+      "size": [
+        0.06,
+        1.0499999999999998,
+        2.1
+      ],
+      "rooms": [
+        "kitchen",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        4.525,
+        2.55
+      ],
+      "size": [
+        0.06,
+        1.0499999999999998,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "kitchen",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        5.5,
+        2.55
+      ],
+      "size": [
+        0.06,
+        0.9000000000000004,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "kitchen",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        6.475,
+        1.05
+      ],
+      "size": [
+        0.06,
+        1.0499999999999998,
+        2.1
+      ],
+      "rooms": [
+        "kitchen",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        6.475,
+        2.55
+      ],
+      "size": [
+        0.06,
+        1.0499999999999998,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "kitchen",
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        7.25,
+        1.05
+      ],
+      "size": [
+        0.06,
+        0.5,
+        2.1
+      ],
+      "rooms": [
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        7.5,
+        7.25,
+        2.55
+      ],
+      "size": [
+        0.06,
+        0.5,
+        0.8999999999999999
+      ],
+      "rooms": [
+        "corridor"
+      ],
+      "axis": 0,
+      "plane": 7.5
+    },
+    {
+      "position": [
+        10.5,
+        4.3875,
+        0.55
+      ],
+      "size": [
+        0.06,
+        0.7750000000000004,
+        1.1
+      ],
+      "rooms": [
+        "kitchen"
+      ],
+      "axis": 0,
+      "plane": 10.5
+    },
+    {
+      "position": [
+        10.5,
+        4.3875,
+        1.725
+      ],
+      "size": [
+        0.06,
+        0.7750000000000004,
+        1.25
+      ],
+      "rooms": [
+        "kitchen"
+      ],
+      "axis": 0,
+      "plane": 10.5
+    },
+    {
+      "position": [
+        10.5,
+        4.3875,
+        2.675
+      ],
+      "size": [
+        0.06,
+        0.7750000000000004,
+        0.6499999999999999
+      ],
+      "rooms": [
+        "kitchen"
+      ],
+      "axis": 0,
+      "plane": 10.5
+    },
+    {
+      "position": [
+        10.5,
+        5.4,
+        0.55
+      ],
+      "size": [
+        0.06,
+        1.25,
+        1.1
+      ],
+      "rooms": [
+        "kitchen"
+      ],
+      "axis": 0,
+      "plane": 10.5
+    },
+    {
+      "position": [
+        10.5,
+        5.4,
+        2.675
+      ],
+      "size": [
+        0.06,
+        1.25,
+        0.6499999999999999
+      ],
+      "rooms": [
+        "kitchen"
+      ],
+      "axis": 0,
+      "plane": 10.5
+    },
+    {
+      "position": [
+        10.5,
+        6.5125,
+        0.55
+      ],
+      "size": [
+        0.06,
+        0.9749999999999996,
+        1.1
+      ],
+      "rooms": [
+        "kitchen"
+      ],
+      "axis": 0,
+      "plane": 10.5
+    },
+    {
+      "position": [
+        10.5,
+        6.5125,
+        1.725
+      ],
+      "size": [
+        0.06,
+        0.9749999999999996,
+        1.25
+      ],
+      "rooms": [
+        "kitchen"
+      ],
+      "axis": 0,
+      "plane": 10.5
+    },
+    {
+      "position": [
+        10.5,
+        6.5125,
+        2.675
+      ],
+      "size": [
+        0.06,
+        0.9749999999999996,
+        0.6499999999999999
+      ],
+      "rooms": [
+        "kitchen"
+      ],
+      "axis": 0,
+      "plane": 10.5
+    },
+    {
+      "position": [
+        9.0,
+        7,
+        1.5
+      ],
+      "size": [
+        3.0,
+        0.06,
+        3
+      ],
+      "rooms": [
+        "kitchen"
+      ],
+      "axis": 1,
+      "plane": 7
+    },
+    {
+      "position": [
+        10.0,
+        1.0,
+        1.5
+      ],
+      "size": [
+        0.06,
+        2,
+        3
+      ],
+      "rooms": [
+        "bathroom"
+      ],
+      "axis": 0,
+      "plane": 10.0
+    },
+    {
+      "position": [
+        8.75,
+        2,
+        1.5
+      ],
+      "size": [
+        2.5,
+        0.06,
+        3
+      ],
+      "rooms": [
+        "bathroom"
+      ],
+      "axis": 1,
+      "plane": 2
+    }
+  ],
+  "objects": [
+    {
+      "instance_id": "living_room_001",
+      "room_id": "living_room",
+      "object": "sofa",
+      "position": [
+        1.55,
+        3.35,
+        0.45
+      ],
+      "size": [
+        2.4,
+        0.85,
+        0.9
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "沙发",
+      "point_range": [
+        42336,
+        48766
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "living_room_002",
+      "room_id": "living_room",
+      "object": "table",
+      "position": [
+        2.35,
+        2.46,
+        0.24
+      ],
+      "size": [
+        1.2,
+        0.65,
+        0.48
+      ],
+      "rotation": 8,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "桌子",
+      "point_range": [
+        48766,
+        49858
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "living_room_003",
+      "room_id": "living_room",
+      "object": "tv",
+      "position": [
+        2.0,
+        0.35,
+        0.87
+      ],
+      "size": [
+        1.25,
+        0.3,
+        0.78
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "电视",
+      "point_range": [
+        49858,
+        51002
+      ],
+      "role": "major",
+      "supported_by": "tv_stand",
+      "assembly": null
+    },
+    {
+      "instance_id": "living_room_004",
+      "room_id": "living_room",
+      "object": "tv_stand",
+      "position": [
+        2.0,
+        0.35,
+        0.24
+      ],
+      "size": [
+        1.8,
+        0.55,
+        0.48
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "电视柜",
+      "point_range": [
+        51002,
+        53542
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "living_room_005",
+      "room_id": "living_room",
+      "object": "plant",
+      "position": [
+        5.48,
+        2.66,
+        0.575
+      ],
+      "size": [
+        0.55,
+        0.55,
+        1.15
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "绿植",
+      "point_range": [
+        53542,
+        56595
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "living_room_006",
+      "room_id": "living_room",
+      "object": "window",
+      "position": [
+        0.045,
+        1.7,
+        1.725
+      ],
+      "size": [
+        1.8,
+        0.08,
+        1.35
+      ],
+      "rotation": 90,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "窗户",
+      "point_range": [
+        56595,
+        59603
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "living_room_007",
+      "room_id": "living_room",
+      "object": "curtain",
+      "position": [
+        0.185,
+        1.7,
+        1.75
+      ],
+      "size": [
+        2.15,
+        0.15,
+        1.5
+      ],
+      "rotation": 90,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "窗帘",
+      "point_range": [
+        59603,
+        63419
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "living_room_008",
+      "room_id": "living_room",
+      "object": "side_table",
+      "position": [
+        4.95,
+        1.43,
+        0.3
+      ],
+      "size": [
+        0.55,
+        0.55,
+        0.6
+      ],
+      "rotation": -7,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "小桌",
+      "point_range": [
+        63419,
+        64165
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "living_room_009",
+      "room_id": "living_room",
+      "object": "book",
+      "position": [
+        2.23,
+        2.4499999999999997,
+        0.4975
+      ],
+      "size": [
+        0.24,
+        0.17,
+        0.035
+      ],
+      "rotation": 19,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "书本",
+      "point_range": [
+        64165,
+        64397
+      ],
+      "role": "detail",
+      "supported_by": "table",
+      "assembly": null
+    },
+    {
+      "instance_id": "living_room_010",
+      "room_id": "living_room",
+      "object": "cup",
+      "position": [
+        2.68,
+        2.4899999999999998,
+        0.54
+      ],
+      "size": [
+        0.085,
+        0.085,
+        0.12
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "杯子",
+      "point_range": [
+        64397,
+        64499
+      ],
+      "role": "detail",
+      "supported_by": "table",
+      "assembly": null
+    },
+    {
+      "instance_id": "bedroom_001",
+      "room_id": "bedroom",
+      "object": "bed",
+      "position": [
+        3.15,
+        6.35,
+        0.5
+      ],
+      "size": [
+        1.8,
+        2.0,
+        1.0
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "床",
+      "point_range": [
+        28458,
+        43792
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bedroom_002",
+      "room_id": "bedroom",
+      "object": "wardrobe",
+      "position": [
+        5.55,
+        6.85,
+        1.05
+      ],
+      "size": [
+        1.2,
+        0.6,
+        2.1
+      ],
+      "rotation": 90,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "衣柜",
+      "point_range": [
+        43792,
+        49520
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bedroom_003",
+      "room_id": "bedroom",
+      "object": "nightstand",
+      "position": [
+        4.45,
+        7.0600000000000005,
+        0.25
+      ],
+      "size": [
+        0.55,
+        0.6,
+        0.5
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "床头柜",
+      "point_range": [
+        49520,
+        50532
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bedroom_004",
+      "room_id": "bedroom",
+      "object": "desk",
+      "position": [
+        4.55,
+        4.4,
+        0.375
+      ],
+      "size": [
+        1.25,
+        0.65,
+        0.75
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "书桌",
+      "point_range": [
+        50532,
+        51846
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bedroom_005",
+      "room_id": "bedroom",
+      "object": "chair",
+      "position": [
+        4.529999999999999,
+        5.43,
+        0.45
+      ],
+      "size": [
+        0.48,
+        0.48,
+        0.9
+      ],
+      "rotation": 165,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "椅子",
+      "point_range": [
+        51846,
+        52726
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bedroom_006",
+      "room_id": "bedroom",
+      "object": "lamp",
+      "position": [
+        4.45,
+        7.0600000000000005,
+        0.7
+      ],
+      "size": [
+        0.26,
+        0.26,
+        0.4
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "台灯",
+      "point_range": [
+        52726,
+        53364
+      ],
+      "role": "major",
+      "supported_by": "nightstand",
+      "assembly": null
+    },
+    {
+      "instance_id": "bedroom_007",
+      "room_id": "bedroom",
+      "object": "window",
+      "position": [
+        3.65,
+        7.455,
+        1.725
+      ],
+      "size": [
+        1.7,
+        0.08,
+        1.25
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "窗户",
+      "point_range": [
+        53364,
+        56060
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bedroom_008",
+      "room_id": "bedroom",
+      "object": "curtain",
+      "position": [
+        3.65,
+        7.3149999999999995,
+        1.75
+      ],
+      "size": [
+        2.05,
+        0.15,
+        1.5
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "窗帘",
+      "point_range": [
+        56060,
+        59724
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bedroom_009",
+      "room_id": "bedroom",
+      "object": "book",
+      "position": [
+        4.35,
+        4.43,
+        0.7675
+      ],
+      "size": [
+        0.24,
+        0.17,
+        0.035
+      ],
+      "rotation": -14,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "书本",
+      "point_range": [
+        59724,
+        59956
+      ],
+      "role": "detail",
+      "supported_by": "desk",
+      "assembly": null
+    },
+    {
+      "instance_id": "bedroom_010",
+      "room_id": "bedroom",
+      "object": "cup",
+      "position": [
+        4.87,
+        4.35,
+        0.81
+      ],
+      "size": [
+        0.085,
+        0.085,
+        0.12
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "杯子",
+      "point_range": [
+        59956,
+        60058
+      ],
+      "role": "detail",
+      "supported_by": "desk",
+      "assembly": null
+    },
+    {
+      "instance_id": "kitchen_001",
+      "room_id": "kitchen",
+      "object": "cabinet",
+      "position": [
+        8.7,
+        6.65,
+        0.42
+      ],
+      "size": [
+        2.2,
+        0.6,
+        0.84
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "橱柜",
+      "point_range": [
+        21083,
+        25559
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": "worktop"
+    },
+    {
+      "instance_id": "kitchen_002",
+      "room_id": "kitchen",
+      "object": "table",
+      "position": [
+        9.52,
+        5.65,
+        0.375
+      ],
+      "size": [
+        0.85,
+        0.6,
+        0.75
+      ],
+      "rotation": 11,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "桌子",
+      "point_range": [
+        25559,
+        26595
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "kitchen_003",
+      "room_id": "kitchen",
+      "object": "chair",
+      "position": [
+        8.78,
+        4.95,
+        0.425
+      ],
+      "size": [
+        0.42,
+        0.42,
+        0.85
+      ],
+      "rotation": 165,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "椅子",
+      "point_range": [
+        26595,
+        27373
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "kitchen_004",
+      "room_id": "kitchen",
+      "object": "sink",
+      "position": [
+        8.2,
+        6.65,
+        0.96
+      ],
+      "size": [
+        0.64,
+        0.42,
+        0.48
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "水槽",
+      "point_range": [
+        27373,
+        28146
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": "worktop"
+    },
+    {
+      "instance_id": "kitchen_005",
+      "room_id": "kitchen",
+      "object": "fridge",
+      "position": [
+        10.15,
+        6.6,
+        0.925
+      ],
+      "size": [
+        0.65,
+        0.7,
+        1.85
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "冰箱",
+      "point_range": [
+        28146,
+        31646
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "kitchen_006",
+      "room_id": "kitchen",
+      "object": "stove",
+      "position": [
+        9.25,
+        6.65,
+        0.925
+      ],
+      "size": [
+        0.65,
+        0.5,
+        0.05
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "灶台",
+      "point_range": [
+        31646,
+        32096
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": "worktop"
+    },
+    {
+      "instance_id": "kitchen_007",
+      "room_id": "kitchen",
+      "object": "range_hood",
+      "position": [
+        9.25,
+        6.76,
+        1.99
+      ],
+      "size": [
+        0.7,
+        0.42,
+        0.68
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "抽油烟机",
+      "point_range": [
+        32096,
+        32794
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "kitchen_008",
+      "room_id": "kitchen",
+      "object": "window",
+      "position": [
+        10.455,
+        5.4,
+        1.725
+      ],
+      "size": [
+        1.25,
+        0.08,
+        1.25
+      ],
+      "rotation": 90,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "窗户",
+      "point_range": [
+        32794,
+        34914
+      ],
+      "role": "detail",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "kitchen_009",
+      "room_id": "kitchen",
+      "object": "countertop",
+      "position": [
+        8.7,
+        6.65,
+        0.87
+      ],
+      "size": [
+        2.2,
+        0.6,
+        0.06
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "操作台",
+      "point_range": [
+        34914,
+        36002
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": "worktop"
+    },
+    {
+      "instance_id": "bathroom_001",
+      "room_id": "bathroom",
+      "object": "vanity",
+      "position": [
+        9.05,
+        1.73,
+        0.425
+      ],
+      "size": [
+        0.6,
+        0.5,
+        0.85
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "洗手台",
+      "point_range": [
+        14908,
+        16202
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bathroom_002",
+      "room_id": "bathroom",
+      "object": "toilet",
+      "position": [
+        8.14,
+        1.63,
+        0.4
+      ],
+      "size": [
+        0.4,
+        0.68,
+        0.8
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "马桶",
+      "point_range": [
+        16202,
+        17809
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bathroom_003",
+      "room_id": "bathroom",
+      "object": "mirror",
+      "position": [
+        9.05,
+        1.975,
+        1.4749999999999999
+      ],
+      "size": [
+        0.58,
+        0.035,
+        0.65
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "镜子",
+      "point_range": [
+        17809,
+        18491
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bathroom_004",
+      "room_id": "bathroom",
+      "object": "shower",
+      "position": [
+        9.54,
+        0.5,
+        1.0
+      ],
+      "size": [
+        0.85,
+        0.9,
+        2.0
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "淋浴区域",
+      "point_range": [
+        18491,
+        20763
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bathroom_005",
+      "room_id": "bathroom",
+      "object": "shower_head",
+      "position": [
+        9.83,
+        0.5,
+        1.55
+      ],
+      "size": [
+        0.1,
+        0.28,
+        1.1
+      ],
+      "rotation": 90,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "花洒",
+      "point_range": [
+        20763,
+        21089
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bathroom_006",
+      "room_id": "bathroom",
+      "object": "towel_rack",
+      "position": [
+        8.2,
+        0.1,
+        1.225
+      ],
+      "size": [
+        0.62,
+        0.15,
+        0.45
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "毛巾架",
+      "point_range": [
+        21089,
+        21369
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bathroom_007",
+      "room_id": "bathroom",
+      "object": "washing_machine",
+      "position": [
+        7.99,
+        0.64,
+        0.42
+      ],
+      "size": [
+        0.55,
+        0.55,
+        0.84
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "洗衣机",
+      "point_range": [
+        21369,
+        22758
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "bathroom_008",
+      "room_id": "bathroom",
+      "object": "storage_cabinet",
+      "position": [
+        8.73,
+        0.43,
+        0.525
+      ],
+      "size": [
+        0.4,
+        0.42,
+        1.05
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "储物柜",
+      "point_range": [
+        22758,
+        23616
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "corridor_001",
+      "room_id": "corridor",
+      "object": "shoe_cabinet",
+      "position": [
+        7.1,
+        3.0,
+        0.5
+      ],
+      "size": [
+        0.38,
+        1.2,
+        1.0
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "鞋柜",
+      "point_range": [
+        31032,
+        33080
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "corridor_002",
+      "room_id": "corridor",
+      "object": "wall_art",
+      "position": [
+        6.025,
+        3.2,
+        1.8
+      ],
+      "size": [
+        0.65,
+        0.035,
+        0.6
+      ],
+      "rotation": 90,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "墙面装饰",
+      "point_range": [
+        33080,
+        33752
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "corridor_003",
+      "room_id": "corridor",
+      "object": "ceiling_light",
+      "position": [
+        6.75,
+        3.75,
+        2.92
+      ],
+      "size": [
+        0.5,
+        0.5,
+        0.08
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "顶灯",
+      "point_range": [
+        33752,
+        35051
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "corridor_004",
+      "room_id": "corridor",
+      "object": "coat_rack",
+      "position": [
+        6.22,
+        4.3,
+        0.85
+      ],
+      "size": [
+        0.32,
+        0.32,
+        1.7
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "衣帽架",
+      "point_range": [
+        35051,
+        35841
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "corridor_005",
+      "room_id": "corridor",
+      "object": "umbrella_stand",
+      "position": [
+        7.3,
+        6.8,
+        0.325
+      ],
+      "size": [
+        0.26,
+        0.26,
+        0.65
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "伞架",
+      "point_range": [
+        35841,
+        36901
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "corridor_006",
+      "room_id": "corridor",
+      "object": "storage_box",
+      "position": [
+        7.24,
+        4.1,
+        0.15
+      ],
+      "size": [
+        0.4,
+        0.4,
+        0.3
+      ],
+      "rotation": 5,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "收纳箱",
+      "point_range": [
+        36901,
+        37221
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "corridor_007",
+      "room_id": "corridor",
+      "object": "plant",
+      "position": [
+        6.28,
+        2.95,
+        0.525
+      ],
+      "size": [
+        0.42,
+        0.42,
+        1.05
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "绿植",
+      "point_range": [
+        37221,
+        39126
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    },
+    {
+      "instance_id": "corridor_008",
+      "room_id": "corridor",
+      "object": "storage_cabinet",
+      "position": [
+        7.25,
+        6.0,
+        0.525
+      ],
+      "size": [
+        0.4,
+        0.65,
+        1.05
+      ],
+      "rotation": 0,
+      "rotation_unit": "degrees",
+      "source": "synthetic_ground_truth",
+      "label": "储物柜",
+      "point_range": [
+        39126,
+        40216
+      ],
+      "role": "major",
+      "supported_by": null,
+      "assembly": null
+    }
+  ],
+  "pointclouds": [
+    {
+      "room_id": "living_room",
+      "path": "E:\\anlingzhijing\\anjing-vision-remote-latest\\backend\\data\\demos\\house_demo_risk_20261013\\living_room.bin",
+      "points": 64499
+    },
+    {
+      "room_id": "bedroom",
+      "path": "E:\\anlingzhijing\\anjing-vision-remote-latest\\backend\\data\\demos\\house_demo_risk_20261013\\bedroom.bin",
+      "points": 60058
+    },
+    {
+      "room_id": "kitchen",
+      "path": "E:\\anlingzhijing\\anjing-vision-remote-latest\\backend\\data\\demos\\house_demo_risk_20261013\\kitchen.bin",
+      "points": 36002
+    },
+    {
+      "room_id": "bathroom",
+      "path": "E:\\anlingzhijing\\anjing-vision-remote-latest\\backend\\data\\demos\\house_demo_risk_20261013\\bathroom.bin",
+      "points": 23616
+    },
+    {
+      "room_id": "corridor",
+      "path": "E:\\anlingzhijing\\anjing-vision-remote-latest\\backend\\data\\demos\\house_demo_risk_20261013\\corridor.bin",
+      "points": 40216
+    }
+  ]
+}
