@@ -67,6 +67,7 @@
 | [house_demo_lived.py](../backend/pipeline/house_demo_lived.py)、[house_demo_risk.py](../backend/pipeline/house_demo_risk.py) | 生活化 / 风险示例的独立布局配置 |
 | [house_demo_layout.py](../backend/pipeline/house_demo_layout.py) | 家具间距、局部路线净空、门内占用和几何规则建议 |
 | [house_demo.py（CLI）](../backend/scripts/house_demo.py) | generate / infer / serve；rich、lived、risk 配置 |
+| [start_house_demos.ps1](../backend/scripts/start_house_demos.ps1) | Windows 一键启动 8095/8096，验证就绪并可选打开浏览器 |
 | [点云查看器](../backend/app/static/house_demo/) | 房间、证据来源、物体标签与助手展示 |
 | [点云结果目录](../backend/data/demos/house_demo_risk_20261013/) | 202306 个整屋去重点，五房间已完成模型解析 |
 | [house_render_prepare.py](../backend/scripts/house_render_prepare.py) | 从布局准备可追溯规格、去重墙面、门窗洞 |
