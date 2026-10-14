@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -94,6 +95,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             elapsed_ms,
             request_id,
         )
+        return response
+
+    @application.middleware("http")
+    async def revalidate_frontend_assets(request: Request, call_next):
+        """前端资产一律回源校验：本地迭代频繁，浏览器不得拿旧 JS/CSS 不放
+        （2026-10-14 复盘：用户刷新后仍看到旧前端）。"""
+        response = await call_next(request)
+        if request.url.path.startswith(("/console-static/", "/preview-static/")):
+            response.headers.setdefault("cache-control", "no-cache")
         return response
 
     @application.exception_handler(StarletteHTTPException)
@@ -193,9 +203,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.get("/console", include_in_schema=False)
     @application.get("/console/", include_in_schema=False)
     def console_page():
-        from fastapi.responses import FileResponse
+        from fastapi.responses import HTMLResponse
 
-        return FileResponse(console_static_dir / "index.html")
+        html = (console_static_dir / "index.html").read_text(encoding="utf-8")
+
+        def _version(url_path: str) -> str:
+            asset = console_static_dir / url_path.removeprefix("/console-static/")
+            try:
+                return str(int(asset.stat().st_mtime))
+            except OSError:
+                return "0"
+
+        # 资产 URL 带文件版本：文件一改，入口页引用的就是新 URL，浏览器无从拿旧缓存
+        html = re.sub(
+            r'"(/console-static/[^"?]+)"',
+            lambda match: f'"{match.group(1)}?v={_version(match.group(1))}"',
+            html,
+        )
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
     @application.get("/api/health")
     def health():
