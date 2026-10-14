@@ -152,6 +152,8 @@ export const api = {
   listScans: (projectId, limit = 60) => request(`/api/projects/${projectId}/scans?limit=${limit}`),
   createScan: (projectId) => request(`/api/projects/${projectId}/scans`, { method: 'POST', json: { capture_type: 'video' } }),
   importHouseDemo: (projectId) => request(`/api/projects/${projectId}/scans/house-demo`, { method: 'POST' }),
+  getHouseRooms: (projectId) => request(`/api/projects/${projectId}/scans/house/rooms`),
+  assembleHouse: (projectId, payload) => request(`/api/projects/${projectId}/scans/house`, { method: 'POST', json: payload }),
   getScan: (id) => request(`/api/scans/${id}`),
   uploadVideo: (scanId, file, onProgress) => uploadWithProgress(`/api/scans/${scanId}/upload`, file, onProgress),
   putReferences: (scanId, measurements) => request(`/api/scans/${scanId}/references`, { method: 'PUT', json: { measurements } }),

@@ -1,6 +1,6 @@
 /* 项目详情：房间/扫描管理 + 视频上传 + 管道进度 */
 
-import { api } from '../api.js?v=house-scan-1';
+import { api } from '../api.js?v=house-flow-1';
 import { icon } from '../icons.js';
 import {
   esc, toast, fmtScore, timeAgo, scoreTone, emptyState, openModal,
@@ -32,24 +32,11 @@ export async function projectView(ctx, projectId) {
   newScanBtn.addEventListener('click', () => createRoom(ctx, projectId, refresh));
   ctx.actions.appendChild(newScanBtn);
 
-  const importHouseBtn = document.createElement('button');
-  importHouseBtn.className = 'btn';
-  importHouseBtn.innerHTML = `${icon('home', 16)} 导入整屋演示`;
-  importHouseBtn.addEventListener('click', async () => {
-    importHouseBtn.disabled = true;
-    importHouseBtn.textContent = '正在导入整屋点云…';
-    try {
-      const scan = await api.importHouseDemo(projectId);
-      setLastScan(scan.id, 'house_demo');
-      toast('ok', '整屋 Scan 已就绪', '五个空间已按门连接');
-      navigate(`#/house/${scan.id}`);
-    } catch (error) {
-      toast('error', '整屋导入失败', error?.message || '');
-      importHouseBtn.disabled = false;
-      importHouseBtn.innerHTML = `${icon('home', 16)} 导入整屋演示`;
-    }
-  });
-  ctx.actions.appendChild(importHouseBtn);
+  const assembleBtn = document.createElement('button');
+  assembleBtn.className = 'btn';
+  assembleBtn.innerHTML = `${icon('home', 16)} 拼接整屋`;
+  assembleBtn.addEventListener('click', () => openAssemblyModal(projectId, refresh));
+  ctx.actions.appendChild(assembleBtn);
 
   ctx.host.innerHTML = `<div class="glass panel" style="height:100%">${'<div class="skeleton-line shimmer" style="width:40%"></div><div class="skeleton-line shimmer" style="width:70%"></div><div class="skeleton-block shimmer" style="flex:1;margin-top:12px"></div>'}</div>`;
 
@@ -70,7 +57,7 @@ export async function projectView(ctx, projectId) {
 
   async function refresh() {
     scans = await api.listScans(projectId);
-    await Promise.all(scans.filter((scan) => scan.status === 'done' && scan.capture_type !== 'house_demo' && !reportScores.has(scan.id)).map(async (scan) => {
+    await Promise.all(scans.filter((scan) => scan.status === 'done' && !['house', 'house_demo'].includes(scan.capture_type) && !reportScores.has(scan.id)).map(async (scan) => {
       try { reportScores.set(scan.id, (await api.getReport(scan.id))?.score ?? null); }
       catch { reportScores.set(scan.id, null); }
     }));
@@ -78,7 +65,7 @@ export async function projectView(ctx, projectId) {
   }
 
   function render() {
-    const doneCount = scans.filter((scan) => scan.status === 'done').length;
+    const doneCount = scans.filter((scan) => scan.status === 'done' && !['house', 'house_demo'].includes(scan.capture_type)).length;
     const activeCount = scans.filter((scan) => ACTIVE_STATUSES.has(scan.status)).length;
     const scores = scans.map((scan) => reportScores.get(scan.id)).filter((score) => typeof score === 'number');
     const avg = scores.length ? (scores.reduce((sum, value) => sum + value, 0) / scores.length) : null;
@@ -91,14 +78,19 @@ export async function projectView(ctx, projectId) {
             <div class="ph-sub">${icon('building', 13)} ${esc(project.address || '未填写地址')} · 项目编号 P${String(project.id).padStart(3, '0')}</div>
           </div>
           <div class="ph-stats">
-            <div class="ph-stat"><div class="ps-value">${scans.length}</div><div class="ps-name">扫描</div></div>
-            <div class="ph-stat"><div class="ps-value">${doneCount}</div><div class="ps-name">已完成</div></div>
+            <div class="ph-stat"><div class="ps-value">${scans.filter((scan) => !['house', 'house_demo'].includes(scan.capture_type)).length}</div><div class="ps-name">房间扫描</div></div>
+            <div class="ph-stat"><div class="ps-value">${doneCount}</div><div class="ps-name">已完成房间</div></div>
             <div class="ph-stat"><div class="ps-value">${activeCount}</div><div class="ps-name">处理中</div></div>
             <div class="ph-stat"><div class="ps-value" style="color:${avg === null ? 'var(--text-3)' : `var(--${scoreTone(avg) === 'ok' ? 'ok' : scoreTone(avg) === 'warn' ? 'warn' : 'bad'})`}">${avg === null ? '—' : fmtScore(avg)}</div><div class="ps-name">平均评分</div></div>
           </div>
         </div>
+        <div class="glass panel" style="padding:16px 20px;margin:15px 0;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap">
+          <div><strong>逐房间扫描 → 配对两侧门 → 生成整屋 Scan</strong><div class="muted" style="font-size:12px;margin-top:5px">所有房间放在同一项目；至少两个房间完成结构识别后，确认门对应关系即可拼接。</div></div>
+          <button class="btn btn-primary" id="project-assemble">${icon('home', 15)} 拼接整屋</button>
+        </div>
         <div class="scan-list view-scroll" id="scan-list"></div>
       </div>`;
+    ctx.host.querySelector('#project-assemble').addEventListener('click', () => openAssemblyModal(projectId, refresh));
 
     const list = ctx.host.querySelector('#scan-list');
     if (!scans.length) {
@@ -117,24 +109,24 @@ export async function projectView(ctx, projectId) {
       const scanId = Number(row.dataset.id);
       row.addEventListener('click', (event) => {
         if (event.target.closest('button')) return;
-        const isHouse = scans.find((scan) => scan.id === scanId)?.capture_type === 'house_demo';
-        setLastScan(scanId, isHouse ? 'house_demo' : 'video');
-        navigate(`${isHouse ? '#/house' : '#/scans'}/${scanId}`);
+        const type = scans.find((scan) => scan.id === scanId)?.capture_type || 'video';
+        setLastScan(scanId, type);
+        navigate(`#/scans/${scanId}`);
       });
       row.addEventListener('keydown', (event) => {
         if (event.target !== row || !['Enter', ' '].includes(event.key)) return;
         event.preventDefault();
-        const isHouse = scans.find((scan) => scan.id === scanId)?.capture_type === 'house_demo';
-        setLastScan(scanId, isHouse ? 'house_demo' : 'video');
-        navigate(`${isHouse ? '#/house' : '#/scans'}/${scanId}`);
+        const type = scans.find((scan) => scan.id === scanId)?.capture_type || 'video';
+        setLastScan(scanId, type);
+        navigate(`#/scans/${scanId}`);
       });
     });
     list.querySelectorAll('[data-action="open"]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const scanId = Number(btn.dataset.id);
-        const isHouse = scans.find((scan) => scan.id === scanId)?.capture_type === 'house_demo';
-        setLastScan(scanId, isHouse ? 'house_demo' : 'video');
-        navigate(`${isHouse ? '#/house' : '#/scans'}/${scanId}`);
+        const type = scans.find((scan) => scan.id === scanId)?.capture_type || 'video';
+        setLastScan(scanId, type);
+        navigate(`#/scans/${scanId}`);
       });
     });
     list.querySelectorAll('[data-action="screen"]').forEach((btn) => {
@@ -162,7 +154,7 @@ export async function projectView(ctx, projectId) {
   }
 
   function scanRow(scan, index) {
-    const house = scan.capture_type === 'house_demo';
+    const house = ['house', 'house_demo'].includes(scan.capture_type);
     const active = ACTIVE_STATUSES.has(scan.status);
     const done = scan.status === 'done';
     const failed = scan.status === 'failed';
@@ -174,14 +166,14 @@ export async function projectView(ctx, projectId) {
         <div class="scan-thumb">${icon(done ? 'home' : failed ? 'alert' : 'video', 24)}</div>
         <div class="grow" style="min-width:0">
           <div class="scan-name">
-            ${house ? '整屋演示' : `房间 ${index + 1}`}
+            ${house ? (scan.capture_type === 'house_demo' ? '整屋演示' : '整屋 Scan') : `房间 Scan`}
             <span class="faint mono" style="font-size:12px">#${scan.id}</span>
             ${done ? '<span class="badge ok"><span class="dot"></span>已完成</span>'
               : failed ? '<span class="badge bad"><span class="dot"></span>失败</span>'
               : `<span class="badge info"><span class="dot"></span>${esc(stage)}</span>`}
           </div>
           <div class="scan-sub">
-            <span>${icon(house ? 'home' : 'video', 12)} ${house ? '合成家庭点云' : '视频扫描'}</span>
+            <span>${icon(house ? 'home' : 'video', 12)} ${house ? (scan.capture_type === 'house_demo' ? '合成家庭点云' : '逐房间拼接点云') : '视频扫描'}</span>
             ${scan.created_at ? `<span>${esc(timeAgo(scan.created_at))}</span>` : ''}
             ${scan.message ? `<span>${esc(scan.message)}</span>` : ''}
             ${done && !house ? '<span>评估报告已生成</span>' : ''}
@@ -223,6 +215,97 @@ export async function projectView(ctx, projectId) {
     })();
     void context;
   }
+}
+
+async function openAssemblyModal(projectId, onDone) {
+  let catalog;
+  try {
+    catalog = (await api.getHouseRooms(projectId)).rooms;
+  } catch (error) {
+    toast('error', '无法读取房间门信息', error?.message || '');
+    return;
+  }
+  const ready = catalog.filter((room) => room.ready);
+  const modal = openModal({
+    title: '拼接整屋 Scan',
+    desc: '选出本次要拼接的房间，并逐组指定同一扇门在两个房间 Scan 中的对应关系。',
+    width: '720px',
+    body: `<div class="col gap-4">
+      <div class="muted" style="font-size:12px">第 1 步 · 选择房间（至少 2 个）</div>
+      <div id="assembly-rooms" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px"></div>
+      <div class="muted" style="font-size:12px">第 2 步 · 配对门（每扇门仅能使用一次，连接图必须覆盖所有所选房间）</div>
+      <div id="assembly-links" class="col gap-2"></div>
+      <button type="button" class="btn btn-sm" id="assembly-add">${icon('plus', 14)} 添加一组门</button>
+      <div id="assembly-hint" class="muted" style="font-size:12px;line-height:1.5"></div>
+    </div>`,
+    actions: [
+      { label: '取消', variant: 'btn-ghost', onClick: (close) => close() },
+      { label: '生成整屋 Scan', variant: 'btn-primary', onClick: async (close, el) => {
+        const scan_ids = [...el.querySelectorAll('[data-room-check]:checked')].map((input) => Number(input.value));
+        const links = [...el.querySelectorAll('.assembly-link')].map((row) => {
+          const first = row.querySelector('[data-side="a"]').value.split(':');
+          const second = row.querySelector('[data-side="b"]').value.split(':');
+          return { scan_a: Number(first[0]), door_a: first[1], scan_b: Number(second[0]), door_b: second[1] };
+        });
+        if (scan_ids.length < 2) { toast('error', '请至少选择两个房间'); return; }
+        if (links.length < scan_ids.length - 1 || links.some((link) => !link.door_a || !link.door_b)) {
+          toast('error', '请配齐所选房间之间的门'); return;
+        }
+        const selected = new Set(scan_ids);
+        if (links.some((link) => !selected.has(link.scan_a) || !selected.has(link.scan_b))) {
+          toast('error', '门配对中包含未选中的房间'); return;
+        }
+        const labels = Object.fromEntries([...el.querySelectorAll('[data-room-name]')]
+          .filter((input) => selected.has(Number(input.dataset.roomName)))
+          .map((input) => [input.dataset.roomName, input.value.trim()]));
+        const button = el.querySelector('.modal-actions .btn-primary');
+        button.disabled = true;
+        button.textContent = '正在拼接…';
+        try {
+          const scan = await api.assembleHouse(projectId, { scan_ids, links, labels });
+          close();
+          await onDone?.();
+          setLastScan(scan.id, 'house');
+          toast('ok', '整屋 Scan 已生成', `${scan_ids.length} 个房间已拼接`);
+          navigate(`#/scans/${scan.id}`);
+        } catch (error) {
+          toast('error', '拼接失败', error?.message || '请检查门对应关系');
+          button.disabled = false;
+          button.textContent = '生成整屋 Scan';
+        }
+      } },
+    ],
+  });
+  const el = modal.modal;
+  const roomsHost = el.querySelector('#assembly-rooms');
+  roomsHost.innerHTML = catalog.length ? catalog.map((room) => `
+    <div class="glass" style="padding:10px;border-radius:10px;opacity:${room.ready ? 1 : .6}">
+      <label style="display:flex;gap:8px;align-items:start;cursor:pointer">
+        <input type="checkbox" data-room-check value="${room.scan_id}" ${room.ready ? '' : 'disabled'}>
+        <span><strong style="font-size:13px">${esc(room.label)}</strong><small style="display:block;color:var(--text-3);margin-top:3px">${room.ready ? `${room.doors.length} 扇可配对门` : esc(room.reason)}</small></span>
+      </label>
+      ${room.ready ? `<input class="input" type="text" data-room-name="${room.scan_id}" value="${esc(room.label)}" maxlength="40" aria-label="房间 #${room.scan_id} 名称" style="margin-top:8px;width:100%">` : ''}
+    </div>`).join('') : '<p class="muted">当前项目没有已完成的单房间扫描。请先新建房间并上传扫描视频。</p>';
+  const linksHost = el.querySelector('#assembly-links');
+  const options = () => `<option value="">选择房间与门</option>${ready.flatMap((room) => room.doors.map((door) =>
+    `<option value="${room.scan_id}:${esc(door.id)}">${esc(room.label)} · ${esc(door.side)}${esc(door.id)} · ${door.width_m.toFixed(2)} × ${door.height_m.toFixed(2)} m</option>`)).join('')}`;
+  const addLink = () => {
+    const row = document.createElement('div');
+    row.className = 'assembly-link';
+    row.style.cssText = 'display:grid;grid-template-columns:minmax(0,1fr) 22px minmax(0,1fr) 34px;align-items:center;gap:7px';
+    row.innerHTML = `<select class="input" data-side="a" aria-label="门的一侧">${options()}</select><span style="text-align:center">↔</span><select class="input" data-side="b" aria-label="门的另一侧">${options()}</select><button type="button" class="icon-btn" aria-label="移除这组门">×</button>`;
+    row.querySelector('button').addEventListener('click', () => row.remove());
+    linksHost.appendChild(row);
+  };
+  el.querySelector('#assembly-add').addEventListener('click', addLink);
+  if (ready.length >= 2) addLink();
+  if (ready.length < 2) {
+    el.querySelector('#assembly-add').disabled = true;
+    el.querySelector('.modal-actions .btn-primary').disabled = true;
+  }
+  el.querySelector('#assembly-hint').textContent = ready.length < 2
+    ? '当前可用房间不足两个。房间扫描完成并识别到门后，就会出现在这里。'
+    : '门宽或门高差异过大、重复使用同一扇门、连接图不完整时，系统会阻止生成。每次生成都会保存为新的整屋 Scan。';
 }
 
 export function openUploadModal(scanId, onDone, presetFile = null) {

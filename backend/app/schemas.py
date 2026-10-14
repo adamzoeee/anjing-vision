@@ -113,7 +113,7 @@ class ScanOut(BaseModel):
     status: str
     progress: int
     message: str
-    capture_type: Literal["video", "photos", "house_demo"]
+    capture_type: Literal["video", "photos", "house", "house_demo"]
     reference_measurements: list[ReferenceMeasurement] = Field(default_factory=list)
     created_at: datetime | None = None
 

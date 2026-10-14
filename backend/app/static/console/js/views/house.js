@@ -1,5 +1,5 @@
 /* 整屋 Scan：五个空间共享坐标系，门连接图与整体点云/框架同步展示。 */
-import { api } from '../api.js?v=house-scan-1';
+import { api } from '../api.js?v=house-flow-1';
 import { icon } from '../icons.js';
 import { esc, toast } from '../ui.js';
 import { createViewer } from '../viewer/pointcloud.js?v=house-overlay-4';
@@ -21,11 +21,14 @@ function boundsForDoor(connection) {
 
 export async function houseView(ctx, scanId, selectedScan = null) {
   const scan = selectedScan || await api.getScan(scanId);
-  if (scan.capture_type !== 'house_demo') {
+  if (!['house', 'house_demo'].includes(scan.capture_type)) {
     ctx.host.innerHTML = '<div class="glass panel"><h1>这不是整屋 Scan</h1></div>';
     return;
   }
-  setLastScan(scanId, 'house_demo');
+  setLastScan(scanId, scan.capture_type);
+  document.getElementById('app')?.classList.add('house-route');
+  const widthGate = document.getElementById('min-width-gate');
+  if (widthGate) widthGate.hidden = true;
   ctx.title([
     { label: '项目工作台', href: '#/projects' },
     { label: '整屋 Scan', current: true },
@@ -56,7 +59,7 @@ export async function houseView(ctx, scanId, selectedScan = null) {
       <header class="house-heading rise">
         <div>
           <div class="row gap-3"><h1>整屋点云与空间框架</h1><span class="badge ok"><span class="dot"></span>已连接</span></div>
-          <p>合成家庭演示 · ${graph.rooms.length} 个空间通过 ${graph.connections.length} 组门连接 · Scan #${scanId}</p>
+          <p>${scan.capture_type === 'house_demo' ? '合成家庭演示' : '项目内逐房间扫描拼接'} · ${graph.rooms.length} 个空间通过 ${graph.connections.length} 组门连接 · Scan #${scanId}</p>
         </div>
         <div class="house-summary">
           <span><strong>${graph.rooms.length}</strong> 空间</span>
@@ -90,7 +93,7 @@ export async function houseView(ctx, scanId, selectedScan = null) {
                 </button>`).join('')}
             </div>
           </section>
-          <p class="house-provenance">本 Scan 来自仓库内的合成点云与布局，门配对经过共墙、位置和方向校验。这里不显示正式风险评分。</p>
+          <p class="house-provenance">${scan.capture_type === 'house_demo' ? '本 Scan 来自仓库内的合成点云与布局。' : '本 Scan 由当前项目中已完成的房间 Scan 按门对应关系拼接；点击房间可查看其来源编号。'}整屋模型暂不显示正式风险评分。</p>
         </aside>
         <div class="room-stage house-stage corner-frame" id="house-stage">
           <div id="house-stage-host"></div>
