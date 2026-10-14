@@ -118,12 +118,15 @@
 .rail-user .u-org { font-size: 11.5px; color: var(--text-3); }
 
 /* ---- 侧边栏折叠（工作台外壳；折叠态只保留图标） ---- */
-.rail-brand { padding: 4px 10px 10px; }
-.rail-toggle-row { display: flex; justify-content: flex-end; padding: 0 6px 12px 0; }
+.rail-brand { padding: 4px 10px 14px; }
+/* 折叠按钮与下面的导航按钮同款：整行、透明、圆角，hover 同样抬升 */
 .rail-toggle {
+  width: 100%;
   flex: none;
-  border-color: var(--border);
-  background: color-mix(in srgb, var(--panel-solid) 45%, transparent);
+  margin-bottom: 6px;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
 }
 .rail-toggle .icon { transition: transform 340ms var(--ease-soft); transform: rotate(180deg); }
 
@@ -135,7 +138,6 @@
 .app-root.rail-collapsed .rail-user .grow { display: none; }
 
 .app-root.rail-collapsed .rail-brand { justify-content: center; padding: 4px 0 8px; }
-.app-root.rail-collapsed .rail-toggle-row { justify-content: center; padding: 0 0 14px; }
 .app-root.rail-collapsed .rail-toggle .icon { transform: rotate(0deg); }
 
 .app-root.rail-collapsed .rail-nav { gap: 9px; }

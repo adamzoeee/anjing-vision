@@ -69,10 +69,14 @@ export function applyRail(mode = getRailMode()) {
   });
   const toggle = root.querySelector('#rail-toggle');
   if (toggle) {
-    const label = collapsed ? '展开侧边栏' : '折叠侧边栏';
-    toggle.dataset.tip = label;
+    const label = collapsed ? '展开侧边栏' : '收起侧边栏';
     toggle.setAttribute('aria-label', label);
     toggle.setAttribute('aria-expanded', String(!collapsed));
+    /* 与其它导航按钮一致：折叠态（纯图标）才挂气泡，展开态文字已经写着动作 */
+    if (collapsed) toggle.setAttribute('data-tip', label);
+    else toggle.removeAttribute('data-tip');
+    const text = toggle.querySelector('span');
+    if (text) text.textContent = label;
   }
 }
 export function setRailMode(mode) {
@@ -145,9 +149,9 @@ function buildShell() {
           <div class="brand-en">ANJING VISION</div>
         </div>
       </div>
-      <div class="rail-toggle-row">
-        <button class="icon-btn rail-toggle" id="rail-toggle" data-tip="折叠侧边栏" aria-label="折叠侧边栏" aria-expanded="true">${icon('chevronRight', 16)}</button>
-      </div>
+      <button class="nav-item rail-toggle" id="rail-toggle" aria-label="收起侧边栏" aria-expanded="true">
+        ${icon('chevronRight', 18)}<span>收起侧边栏</span>
+      </button>
       <nav class="rail-nav">
         <div class="nav-section eyebrow">工作台</div>
         <a class="nav-item ${isActive('#/projects') ? 'active' : ''}" href="#/projects" data-rail-label="项目工作台">
