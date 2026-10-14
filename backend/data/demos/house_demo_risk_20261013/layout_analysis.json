@@ -1,0 +1,2808 @@
+{
+  "source": "synthetic_ground_truth",
+  "analysis_kind": "deterministic_geometry_demo_not_llm_or_formal_risk",
+  "room_bounds_source": "synthetic_manifest",
+  "safety_score": null,
+  "warning": "未命中规则不代表安全；模型漏检会高估净空。不得据此判断真实住宅安全。",
+  "rooms": {
+    "living_room": {
+      "room_id": "living_room",
+      "source": "synthetic_ground_truth",
+      "unit": "m",
+      "resolution_m": 0.04,
+      "uncertainty": "synthetic_geometry_not_real_scan",
+      "status": "derived",
+      "pairs": [
+        {
+          "between": [
+            "living_room_001",
+            "living_room_002"
+          ],
+          "categories": [
+            "sofa",
+            "table"
+          ],
+          "labels": [
+            "沙发",
+            "桌子"
+          ],
+          "clearance_m": 0.08,
+          "delta_xy_m": [
+            0.8,
+            -0.89
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "living_room_005",
+            "living_room_008"
+          ],
+          "categories": [
+            "plant",
+            "side_table"
+          ],
+          "labels": [
+            "绿植",
+            "小桌"
+          ],
+          "clearance_m": 0.704,
+          "delta_xy_m": [
+            -0.53,
+            -1.23
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "living_room_002",
+            "living_room_004"
+          ],
+          "categories": [
+            "table",
+            "tv_stand"
+          ],
+          "labels": [
+            "桌子",
+            "电视柜"
+          ],
+          "clearance_m": 1.43,
+          "delta_xy_m": [
+            -0.35,
+            -2.11
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "living_room_002",
+            "living_room_008"
+          ],
+          "categories": [
+            "table",
+            "side_table"
+          ],
+          "labels": [
+            "桌子",
+            "小桌"
+          ],
+          "clearance_m": 1.788,
+          "delta_xy_m": [
+            2.6,
+            -1.03
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "living_room_004",
+            "living_room_008"
+          ],
+          "categories": [
+            "tv_stand",
+            "side_table"
+          ],
+          "labels": [
+            "电视柜",
+            "小桌"
+          ],
+          "clearance_m": 1.833,
+          "delta_xy_m": [
+            2.95,
+            1.08
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "living_room_002",
+            "living_room_005"
+          ],
+          "categories": [
+            "table",
+            "plant"
+          ],
+          "labels": [
+            "桌子",
+            "绿植"
+          ],
+          "clearance_m": 2.222,
+          "delta_xy_m": [
+            3.13,
+            0.2
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "living_room_001",
+            "living_room_008"
+          ],
+          "categories": [
+            "sofa",
+            "side_table"
+          ],
+          "labels": [
+            "沙发",
+            "小桌"
+          ],
+          "clearance_m": 2.293,
+          "delta_xy_m": [
+            3.4,
+            -1.92
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "living_room_001",
+            "living_room_004"
+          ],
+          "categories": [
+            "sofa",
+            "tv_stand"
+          ],
+          "labels": [
+            "沙发",
+            "电视柜"
+          ],
+          "clearance_m": 2.3,
+          "delta_xy_m": [
+            0.45,
+            -3.0
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "living_room_001",
+            "living_room_005"
+          ],
+          "categories": [
+            "sofa",
+            "plant"
+          ],
+          "labels": [
+            "沙发",
+            "绿植"
+          ],
+          "clearance_m": 2.455,
+          "delta_xy_m": [
+            3.93,
+            -0.69
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "living_room_004",
+            "living_room_005"
+          ],
+          "categories": [
+            "tv_stand",
+            "plant"
+          ],
+          "labels": [
+            "电视柜",
+            "绿植"
+          ],
+          "clearance_m": 2.9,
+          "delta_xy_m": [
+            3.48,
+            2.31
+          ],
+          "relation": "separated"
+        }
+      ],
+      "doorways": [
+        {
+          "id": "door_0",
+          "nominal_width_m": 0.9,
+          "inspection_depth_m": 1.0,
+          "area_m2": 0.88,
+          "occupied_area_m2": 0.051,
+          "free_area_m2": 0.829
+        }
+      ],
+      "routes": [
+        {
+          "door_id": "door_0",
+          "status": "derived",
+          "reason": null,
+          "target_xy": [
+            3.7,
+            2.0
+          ],
+          "target_source": "explicit_demo_activity_anchor",
+          "minimum_width_m": 0.64,
+          "path_xy": [
+            [
+              5.78,
+              2.02
+            ],
+            [
+              5.74,
+              2.02
+            ],
+            [
+              5.7,
+              2.02
+            ],
+            [
+              5.66,
+              2.02
+            ],
+            [
+              5.62,
+              2.02
+            ],
+            [
+              5.58,
+              2.02
+            ],
+            [
+              5.54,
+              2.02
+            ],
+            [
+              5.5,
+              2.02
+            ],
+            [
+              5.46,
+              2.02
+            ],
+            [
+              5.42,
+              2.02
+            ],
+            [
+              5.38,
+              2.02
+            ],
+            [
+              5.34,
+              2.02
+            ],
+            [
+              5.3,
+              2.02
+            ],
+            [
+              5.26,
+              2.02
+            ],
+            [
+              5.22,
+              2.02
+            ],
+            [
+              5.18,
+              2.02
+            ],
+            [
+              5.14,
+              2.02
+            ],
+            [
+              5.1,
+              2.02
+            ],
+            [
+              5.06,
+              2.02
+            ],
+            [
+              5.02,
+              2.02
+            ],
+            [
+              4.98,
+              2.02
+            ],
+            [
+              4.94,
+              2.02
+            ],
+            [
+              4.9,
+              2.02
+            ],
+            [
+              4.86,
+              2.02
+            ],
+            [
+              4.82,
+              2.02
+            ],
+            [
+              4.78,
+              2.02
+            ],
+            [
+              4.74,
+              2.02
+            ],
+            [
+              4.7,
+              2.02
+            ],
+            [
+              4.66,
+              2.02
+            ],
+            [
+              4.62,
+              2.02
+            ],
+            [
+              4.58,
+              2.02
+            ],
+            [
+              4.54,
+              2.02
+            ],
+            [
+              4.5,
+              2.02
+            ],
+            [
+              4.46,
+              2.02
+            ],
+            [
+              4.42,
+              2.02
+            ],
+            [
+              4.38,
+              2.02
+            ],
+            [
+              4.34,
+              2.02
+            ],
+            [
+              4.3,
+              2.02
+            ],
+            [
+              4.26,
+              2.02
+            ],
+            [
+              4.22,
+              2.02
+            ],
+            [
+              4.18,
+              2.02
+            ],
+            [
+              4.14,
+              2.02
+            ],
+            [
+              4.1,
+              2.02
+            ],
+            [
+              4.06,
+              2.02
+            ],
+            [
+              4.02,
+              2.02
+            ],
+            [
+              3.98,
+              2.02
+            ],
+            [
+              3.94,
+              2.02
+            ],
+            [
+              3.9,
+              2.02
+            ],
+            [
+              3.86,
+              2.02
+            ],
+            [
+              3.82,
+              2.02
+            ],
+            [
+              3.78,
+              2.02
+            ],
+            [
+              3.74,
+              2.02
+            ],
+            [
+              3.7,
+              2.02
+            ]
+          ],
+          "method": "2x_distance_to_obstacles_along_computed_route",
+          "limitation": "one_route_estimate_not_global_passage_width_or_safety_certification"
+        }
+      ],
+      "advice": [
+        {
+          "rule": "near_furniture_demo",
+          "object_ids": [
+            "living_room_001",
+            "living_room_002"
+          ],
+          "value_m": 0.08,
+          "demo_threshold_m": 0.3,
+          "text": "沙发与桌子的平面间距约 0.08 m，建议复核活动空间并调整位置；此间距不等同于主通道宽度。"
+        },
+        {
+          "rule": "route_width_demo",
+          "door_id": "door_0",
+          "object_ids": [
+            "living_room_008",
+            "living_room_005"
+          ],
+          "value_m": 0.64,
+          "demo_threshold_m": 0.65,
+          "text": "门口到设定活动点的路线局部净空约 0.64 m，建议复核附近的小桌、绿植摆放。仅为栅格几何估计，需结合实际通行需求复核。"
+        },
+        {
+          "rule": "entrance_occupancy_demo",
+          "door_id": "door_0",
+          "value_m2": 0.051,
+          "text": "门内 1 m 检查区约 0.05 m² 被家具占用，建议确认是否影响开门和进出。未模拟门扇开启轨迹。"
+        }
+      ],
+      "major_object_count": 8,
+      "detail_object_count": 2,
+      "safety_status": "not_assessed"
+    },
+    "bedroom": {
+      "room_id": "bedroom",
+      "source": "synthetic_ground_truth",
+      "unit": "m",
+      "resolution_m": 0.04,
+      "uncertainty": "synthetic_geometry_not_real_scan",
+      "status": "derived",
+      "pairs": [
+        {
+          "between": [
+            "bedroom_001",
+            "bedroom_003"
+          ],
+          "categories": [
+            "bed",
+            "nightstand"
+          ],
+          "labels": [
+            "床",
+            "床头柜"
+          ],
+          "clearance_m": 0.125,
+          "delta_xy_m": [
+            1.3,
+            0.71
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bedroom_001",
+            "bedroom_005"
+          ],
+          "categories": [
+            "bed",
+            "chair"
+          ],
+          "labels": [
+            "床",
+            "椅子"
+          ],
+          "clearance_m": 0.203,
+          "delta_xy_m": [
+            1.38,
+            -0.92
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bedroom_004",
+            "bedroom_005"
+          ],
+          "categories": [
+            "desk",
+            "chair"
+          ],
+          "labels": [
+            "书桌",
+            "椅子"
+          ],
+          "clearance_m": 0.411,
+          "delta_xy_m": [
+            -0.02,
+            1.03
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bedroom_002",
+            "bedroom_003"
+          ],
+          "categories": [
+            "wardrobe",
+            "nightstand"
+          ],
+          "labels": [
+            "衣柜",
+            "床头柜"
+          ],
+          "clearance_m": 0.525,
+          "delta_xy_m": [
+            -1.1,
+            0.21
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bedroom_001",
+            "bedroom_004"
+          ],
+          "categories": [
+            "bed",
+            "desk"
+          ],
+          "labels": [
+            "床",
+            "书桌"
+          ],
+          "clearance_m": 0.625,
+          "delta_xy_m": [
+            1.4,
+            -1.95
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bedroom_002",
+            "bedroom_005"
+          ],
+          "categories": [
+            "wardrobe",
+            "chair"
+          ],
+          "labels": [
+            "衣柜",
+            "椅子"
+          ],
+          "clearance_m": 0.777,
+          "delta_xy_m": [
+            -1.02,
+            -1.42
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bedroom_003",
+            "bedroom_005"
+          ],
+          "categories": [
+            "nightstand",
+            "chair"
+          ],
+          "labels": [
+            "床头柜",
+            "椅子"
+          ],
+          "clearance_m": 1.036,
+          "delta_xy_m": [
+            0.08,
+            -1.63
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bedroom_001",
+            "bedroom_002"
+          ],
+          "categories": [
+            "bed",
+            "wardrobe"
+          ],
+          "labels": [
+            "床",
+            "衣柜"
+          ],
+          "clearance_m": 1.2,
+          "delta_xy_m": [
+            2.4,
+            0.5
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bedroom_002",
+            "bedroom_004"
+          ],
+          "categories": [
+            "wardrobe",
+            "desk"
+          ],
+          "labels": [
+            "衣柜",
+            "书桌"
+          ],
+          "clearance_m": 1.527,
+          "delta_xy_m": [
+            -1.0,
+            -2.45
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bedroom_003",
+            "bedroom_004"
+          ],
+          "categories": [
+            "nightstand",
+            "desk"
+          ],
+          "labels": [
+            "床头柜",
+            "书桌"
+          ],
+          "clearance_m": 2.035,
+          "delta_xy_m": [
+            0.1,
+            -2.66
+          ],
+          "relation": "separated"
+        }
+      ],
+      "doorways": [
+        {
+          "id": "door_0",
+          "nominal_width_m": 0.9,
+          "inspection_depth_m": 1.0,
+          "area_m2": 0.92,
+          "occupied_area_m2": 0.0,
+          "free_area_m2": 0.92
+        }
+      ],
+      "routes": [
+        {
+          "door_id": "door_0",
+          "status": "derived",
+          "reason": null,
+          "target_xy": [
+            4.7,
+            5.9
+          ],
+          "target_source": "explicit_demo_activity_anchor",
+          "minimum_width_m": 0.537,
+          "path_xy": [
+            [
+              5.82,
+              5.7
+            ],
+            [
+              5.78,
+              5.7
+            ],
+            [
+              5.74,
+              5.7
+            ],
+            [
+              5.7,
+              5.7
+            ],
+            [
+              5.66,
+              5.7
+            ],
+            [
+              5.62,
+              5.7
+            ],
+            [
+              5.58,
+              5.7
+            ],
+            [
+              5.54,
+              5.7
+            ],
+            [
+              5.5,
+              5.7
+            ],
+            [
+              5.46,
+              5.7
+            ],
+            [
+              5.42,
+              5.7
+            ],
+            [
+              5.38,
+              5.7
+            ],
+            [
+              5.34,
+              5.7
+            ],
+            [
+              5.3,
+              5.7
+            ],
+            [
+              5.26,
+              5.74
+            ],
+            [
+              5.22,
+              5.78
+            ],
+            [
+              5.18,
+              5.82
+            ],
+            [
+              5.14,
+              5.82
+            ],
+            [
+              5.1,
+              5.86
+            ],
+            [
+              5.06,
+              5.9
+            ],
+            [
+              5.02,
+              5.9
+            ],
+            [
+              4.98,
+              5.9
+            ],
+            [
+              4.94,
+              5.9
+            ],
+            [
+              4.9,
+              5.9
+            ],
+            [
+              4.86,
+              5.9
+            ],
+            [
+              4.82,
+              5.9
+            ],
+            [
+              4.78,
+              5.9
+            ],
+            [
+              4.74,
+              5.9
+            ],
+            [
+              4.7,
+              5.9
+            ]
+          ],
+          "method": "2x_distance_to_obstacles_along_computed_route",
+          "limitation": "one_route_estimate_not_global_passage_width_or_safety_certification"
+        }
+      ],
+      "advice": [
+        {
+          "rule": "near_furniture_demo",
+          "object_ids": [
+            "bedroom_001",
+            "bedroom_003"
+          ],
+          "value_m": 0.125,
+          "demo_threshold_m": 0.3,
+          "text": "床与床头柜的平面间距约 0.12 m，建议复核活动空间并调整位置；此间距不等同于主通道宽度。"
+        },
+        {
+          "rule": "near_furniture_demo",
+          "object_ids": [
+            "bedroom_001",
+            "bedroom_005"
+          ],
+          "value_m": 0.203,
+          "demo_threshold_m": 0.3,
+          "text": "床与椅子的平面间距约 0.20 m，建议复核活动空间并调整位置；此间距不等同于主通道宽度。"
+        },
+        {
+          "rule": "route_width_demo",
+          "door_id": "door_0",
+          "object_ids": [
+            "bedroom_005",
+            "bedroom_001"
+          ],
+          "value_m": 0.537,
+          "demo_threshold_m": 0.65,
+          "text": "门口到设定活动点的路线局部净空约 0.54 m，建议复核附近的椅子、床摆放。仅为栅格几何估计，需结合实际通行需求复核。"
+        }
+      ],
+      "major_object_count": 8,
+      "detail_object_count": 2,
+      "safety_status": "not_assessed"
+    },
+    "kitchen": {
+      "room_id": "kitchen",
+      "source": "synthetic_ground_truth",
+      "unit": "m",
+      "resolution_m": 0.04,
+      "uncertainty": "synthetic_geometry_not_real_scan",
+      "status": "derived",
+      "pairs": [
+        {
+          "between": [
+            "kitchen_001",
+            "kitchen_005"
+          ],
+          "categories": [
+            "cabinet",
+            "fridge"
+          ],
+          "labels": [
+            "橱柜",
+            "冰箱"
+          ],
+          "clearance_m": 0.025,
+          "delta_xy_m": [
+            1.45,
+            -0.05
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "kitchen_002",
+            "kitchen_003"
+          ],
+          "categories": [
+            "table",
+            "chair"
+          ],
+          "labels": [
+            "桌子",
+            "椅子"
+          ],
+          "clearance_m": 0.215,
+          "delta_xy_m": [
+            -0.74,
+            -0.7
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "kitchen_002",
+            "kitchen_005"
+          ],
+          "categories": [
+            "table",
+            "fridge"
+          ],
+          "labels": [
+            "桌子",
+            "冰箱"
+          ],
+          "clearance_m": 0.224,
+          "delta_xy_m": [
+            0.63,
+            0.95
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "kitchen_001",
+            "kitchen_002"
+          ],
+          "categories": [
+            "cabinet",
+            "table"
+          ],
+          "labels": [
+            "橱柜",
+            "桌子"
+          ],
+          "clearance_m": 0.334,
+          "delta_xy_m": [
+            0.82,
+            -1.0
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "kitchen_001",
+            "kitchen_003"
+          ],
+          "categories": [
+            "cabinet",
+            "chair"
+          ],
+          "labels": [
+            "橱柜",
+            "椅子"
+          ],
+          "clearance_m": 1.143,
+          "delta_xy_m": [
+            0.08,
+            -1.7
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "kitchen_003",
+            "kitchen_005"
+          ],
+          "categories": [
+            "chair",
+            "fridge"
+          ],
+          "labels": [
+            "椅子",
+            "冰箱"
+          ],
+          "clearance_m": 1.395,
+          "delta_xy_m": [
+            1.37,
+            1.65
+          ],
+          "relation": "separated"
+        }
+      ],
+      "doorways": [
+        {
+          "id": "door_0",
+          "nominal_width_m": 0.9,
+          "inspection_depth_m": 1.0,
+          "area_m2": 0.92,
+          "occupied_area_m2": 0.0,
+          "free_area_m2": 0.92
+        }
+      ],
+      "routes": [
+        {
+          "door_id": "door_0",
+          "status": "derived",
+          "reason": null,
+          "target_xy": [
+            8.65,
+            5.5
+          ],
+          "target_source": "explicit_demo_activity_anchor",
+          "minimum_width_m": 0.64,
+          "path_xy": [
+            [
+              7.68,
+              5.5
+            ],
+            [
+              7.72,
+              5.5
+            ],
+            [
+              7.76,
+              5.5
+            ],
+            [
+              7.8,
+              5.5
+            ],
+            [
+              7.84,
+              5.5
+            ],
+            [
+              7.88,
+              5.5
+            ],
+            [
+              7.92,
+              5.5
+            ],
+            [
+              7.96,
+              5.5
+            ],
+            [
+              8.0,
+              5.5
+            ],
+            [
+              8.04,
+              5.5
+            ],
+            [
+              8.08,
+              5.5
+            ],
+            [
+              8.12,
+              5.5
+            ],
+            [
+              8.16,
+              5.5
+            ],
+            [
+              8.2,
+              5.5
+            ],
+            [
+              8.24,
+              5.5
+            ],
+            [
+              8.28,
+              5.5
+            ],
+            [
+              8.32,
+              5.5
+            ],
+            [
+              8.36,
+              5.5
+            ],
+            [
+              8.4,
+              5.5
+            ],
+            [
+              8.44,
+              5.5
+            ],
+            [
+              8.48,
+              5.5
+            ],
+            [
+              8.52,
+              5.5
+            ],
+            [
+              8.56,
+              5.5
+            ],
+            [
+              8.6,
+              5.5
+            ],
+            [
+              8.64,
+              5.5
+            ]
+          ],
+          "method": "2x_distance_to_obstacles_along_computed_route",
+          "limitation": "one_route_estimate_not_global_passage_width_or_safety_certification"
+        }
+      ],
+      "advice": [
+        {
+          "rule": "route_width_demo",
+          "door_id": "door_0",
+          "object_ids": [
+            "kitchen_003",
+            "kitchen_002"
+          ],
+          "value_m": 0.64,
+          "demo_threshold_m": 0.65,
+          "text": "门口到设定活动点的路线局部净空约 0.64 m，建议复核附近的椅子、桌子摆放。仅为栅格几何估计，需结合实际通行需求复核。"
+        }
+      ],
+      "major_object_count": 8,
+      "detail_object_count": 1,
+      "safety_status": "not_assessed"
+    },
+    "bathroom": {
+      "room_id": "bathroom",
+      "source": "synthetic_ground_truth",
+      "unit": "m",
+      "resolution_m": 0.04,
+      "uncertainty": "synthetic_geometry_not_real_scan",
+      "status": "derived",
+      "pairs": [
+        {
+          "between": [
+            "bathroom_004",
+            "bathroom_008"
+          ],
+          "categories": [
+            "shower",
+            "storage_cabinet"
+          ],
+          "labels": [
+            "淋浴区域",
+            "储物柜"
+          ],
+          "clearance_m": 0.185,
+          "delta_xy_m": [
+            -0.81,
+            -0.07
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bathroom_007",
+            "bathroom_008"
+          ],
+          "categories": [
+            "washing_machine",
+            "storage_cabinet"
+          ],
+          "labels": [
+            "洗衣机",
+            "储物柜"
+          ],
+          "clearance_m": 0.265,
+          "delta_xy_m": [
+            0.74,
+            -0.21
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bathroom_002",
+            "bathroom_007"
+          ],
+          "categories": [
+            "toilet",
+            "washing_machine"
+          ],
+          "labels": [
+            "马桶",
+            "洗衣机"
+          ],
+          "clearance_m": 0.375,
+          "delta_xy_m": [
+            -0.15,
+            -0.99
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bathroom_001",
+            "bathroom_002"
+          ],
+          "categories": [
+            "vanity",
+            "toilet"
+          ],
+          "labels": [
+            "洗手台",
+            "马桶"
+          ],
+          "clearance_m": 0.41,
+          "delta_xy_m": [
+            -0.91,
+            -0.1
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bathroom_001",
+            "bathroom_004"
+          ],
+          "categories": [
+            "vanity",
+            "shower"
+          ],
+          "labels": [
+            "洗手台",
+            "淋浴区域"
+          ],
+          "clearance_m": 0.53,
+          "delta_xy_m": [
+            0.49,
+            -1.23
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bathroom_002",
+            "bathroom_008"
+          ],
+          "categories": [
+            "toilet",
+            "storage_cabinet"
+          ],
+          "labels": [
+            "马桶",
+            "储物柜"
+          ],
+          "clearance_m": 0.677,
+          "delta_xy_m": [
+            0.59,
+            -1.2
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bathroom_001",
+            "bathroom_007"
+          ],
+          "categories": [
+            "vanity",
+            "washing_machine"
+          ],
+          "labels": [
+            "洗手台",
+            "洗衣机"
+          ],
+          "clearance_m": 0.745,
+          "delta_xy_m": [
+            -1.06,
+            -1.09
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bathroom_001",
+            "bathroom_008"
+          ],
+          "categories": [
+            "vanity",
+            "storage_cabinet"
+          ],
+          "labels": [
+            "洗手台",
+            "储物柜"
+          ],
+          "clearance_m": 0.84,
+          "delta_xy_m": [
+            -0.32,
+            -1.3
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bathroom_002",
+            "bathroom_004"
+          ],
+          "categories": [
+            "toilet",
+            "shower"
+          ],
+          "labels": [
+            "马桶",
+            "淋浴区域"
+          ],
+          "clearance_m": 0.846,
+          "delta_xy_m": [
+            1.4,
+            -1.13
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "bathroom_004",
+            "bathroom_007"
+          ],
+          "categories": [
+            "shower",
+            "washing_machine"
+          ],
+          "labels": [
+            "淋浴区域",
+            "洗衣机"
+          ],
+          "clearance_m": 0.85,
+          "delta_xy_m": [
+            -1.55,
+            0.14
+          ],
+          "relation": "separated"
+        }
+      ],
+      "doorways": [
+        {
+          "id": "door_0",
+          "nominal_width_m": 0.9,
+          "inspection_depth_m": 1.0,
+          "area_m2": 0.88,
+          "occupied_area_m2": 0.266,
+          "free_area_m2": 0.614
+        }
+      ],
+      "routes": [
+        {
+          "door_id": "door_0",
+          "status": "derived",
+          "reason": null,
+          "target_xy": [
+            8.7,
+            1.05
+          ],
+          "target_source": "explicit_demo_activity_anchor",
+          "minimum_width_m": 0.253,
+          "path_xy": [
+            [
+              7.68,
+              1.02
+            ],
+            [
+              7.72,
+              1.06
+            ],
+            [
+              7.76,
+              1.06
+            ],
+            [
+              7.8,
+              1.06
+            ],
+            [
+              7.84,
+              1.06
+            ],
+            [
+              7.88,
+              1.06
+            ],
+            [
+              7.92,
+              1.06
+            ],
+            [
+              7.96,
+              1.06
+            ],
+            [
+              8.0,
+              1.06
+            ],
+            [
+              8.04,
+              1.06
+            ],
+            [
+              8.08,
+              1.06
+            ],
+            [
+              8.12,
+              1.06
+            ],
+            [
+              8.16,
+              1.06
+            ],
+            [
+              8.2,
+              1.06
+            ],
+            [
+              8.24,
+              1.06
+            ],
+            [
+              8.28,
+              1.06
+            ],
+            [
+              8.32,
+              1.06
+            ],
+            [
+              8.36,
+              1.06
+            ],
+            [
+              8.4,
+              1.06
+            ],
+            [
+              8.44,
+              1.06
+            ],
+            [
+              8.48,
+              1.06
+            ],
+            [
+              8.52,
+              1.06
+            ],
+            [
+              8.56,
+              1.06
+            ],
+            [
+              8.6,
+              1.06
+            ],
+            [
+              8.64,
+              1.06
+            ],
+            [
+              8.68,
+              1.06
+            ]
+          ],
+          "method": "2x_distance_to_obstacles_along_computed_route",
+          "limitation": "one_route_estimate_not_global_passage_width_or_safety_certification"
+        }
+      ],
+      "advice": [
+        {
+          "rule": "route_width_demo",
+          "door_id": "door_0",
+          "object_ids": [
+            "bathroom_007",
+            "bathroom_002"
+          ],
+          "value_m": 0.253,
+          "demo_threshold_m": 0.65,
+          "text": "门口到设定活动点的路线局部净空约 0.25 m，建议复核附近的洗衣机、马桶摆放。仅为栅格几何估计，需结合实际通行需求复核。"
+        },
+        {
+          "rule": "entrance_occupancy_demo",
+          "door_id": "door_0",
+          "value_m2": 0.266,
+          "text": "门内 1 m 检查区约 0.27 m² 被家具占用，建议确认是否影响开门和进出。未模拟门扇开启轨迹。"
+        }
+      ],
+      "major_object_count": 8,
+      "detail_object_count": 0,
+      "safety_status": "not_assessed"
+    },
+    "corridor": {
+      "room_id": "corridor",
+      "source": "synthetic_ground_truth",
+      "unit": "m",
+      "resolution_m": 0.04,
+      "uncertainty": "synthetic_geometry_not_real_scan",
+      "status": "derived",
+      "pairs": [
+        {
+          "between": [
+            "corridor_001",
+            "corridor_006"
+          ],
+          "categories": [
+            "shoe_cabinet",
+            "storage_box"
+          ],
+          "labels": [
+            "鞋柜",
+            "收纳箱"
+          ],
+          "clearance_m": 0.283,
+          "delta_xy_m": [
+            0.14,
+            1.1
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_005",
+            "corridor_008"
+          ],
+          "categories": [
+            "umbrella_stand",
+            "storage_cabinet"
+          ],
+          "labels": [
+            "伞架",
+            "储物柜"
+          ],
+          "clearance_m": 0.345,
+          "delta_xy_m": [
+            -0.05,
+            -0.8
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_001",
+            "corridor_007"
+          ],
+          "categories": [
+            "shoe_cabinet",
+            "plant"
+          ],
+          "labels": [
+            "鞋柜",
+            "绿植"
+          ],
+          "clearance_m": 0.42,
+          "delta_xy_m": [
+            -0.82,
+            -0.05
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_004",
+            "corridor_006"
+          ],
+          "categories": [
+            "coat_rack",
+            "storage_box"
+          ],
+          "labels": [
+            "衣帽架",
+            "收纳箱"
+          ],
+          "clearance_m": 0.643,
+          "delta_xy_m": [
+            1.02,
+            -0.2
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_001",
+            "corridor_004"
+          ],
+          "categories": [
+            "shoe_cabinet",
+            "coat_rack"
+          ],
+          "labels": [
+            "鞋柜",
+            "衣帽架"
+          ],
+          "clearance_m": 0.757,
+          "delta_xy_m": [
+            -0.88,
+            1.3
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_006",
+            "corridor_007"
+          ],
+          "categories": [
+            "storage_box",
+            "plant"
+          ],
+          "labels": [
+            "收纳箱",
+            "绿植"
+          ],
+          "clearance_m": 0.92,
+          "delta_xy_m": [
+            -0.96,
+            -1.15
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_004",
+            "corridor_007"
+          ],
+          "categories": [
+            "coat_rack",
+            "plant"
+          ],
+          "labels": [
+            "衣帽架",
+            "绿植"
+          ],
+          "clearance_m": 0.98,
+          "delta_xy_m": [
+            0.06,
+            -1.35
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_006",
+            "corridor_008"
+          ],
+          "categories": [
+            "storage_box",
+            "storage_cabinet"
+          ],
+          "labels": [
+            "收纳箱",
+            "储物柜"
+          ],
+          "clearance_m": 1.358,
+          "delta_xy_m": [
+            0.01,
+            1.9
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_004",
+            "corridor_008"
+          ],
+          "categories": [
+            "coat_rack",
+            "storage_cabinet"
+          ],
+          "labels": [
+            "衣帽架",
+            "储物柜"
+          ],
+          "clearance_m": 1.387,
+          "delta_xy_m": [
+            1.03,
+            1.7
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_001",
+            "corridor_008"
+          ],
+          "categories": [
+            "shoe_cabinet",
+            "storage_cabinet"
+          ],
+          "labels": [
+            "鞋柜",
+            "储物柜"
+          ],
+          "clearance_m": 2.075,
+          "delta_xy_m": [
+            0.15,
+            3.0
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_004",
+            "corridor_005"
+          ],
+          "categories": [
+            "coat_rack",
+            "umbrella_stand"
+          ],
+          "labels": [
+            "衣帽架",
+            "伞架"
+          ],
+          "clearance_m": 2.347,
+          "delta_xy_m": [
+            1.08,
+            2.5
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_005",
+            "corridor_006"
+          ],
+          "categories": [
+            "umbrella_stand",
+            "storage_box"
+          ],
+          "labels": [
+            "伞架",
+            "收纳箱"
+          ],
+          "clearance_m": 2.353,
+          "delta_xy_m": [
+            -0.06,
+            -2.7
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_007",
+            "corridor_008"
+          ],
+          "categories": [
+            "plant",
+            "storage_cabinet"
+          ],
+          "labels": [
+            "绿植",
+            "储物柜"
+          ],
+          "clearance_m": 2.577,
+          "delta_xy_m": [
+            0.97,
+            3.05
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_001",
+            "corridor_005"
+          ],
+          "categories": [
+            "shoe_cabinet",
+            "umbrella_stand"
+          ],
+          "labels": [
+            "鞋柜",
+            "伞架"
+          ],
+          "clearance_m": 3.07,
+          "delta_xy_m": [
+            0.2,
+            3.8
+          ],
+          "relation": "separated"
+        },
+        {
+          "between": [
+            "corridor_005",
+            "corridor_007"
+          ],
+          "categories": [
+            "umbrella_stand",
+            "plant"
+          ],
+          "labels": [
+            "伞架",
+            "绿植"
+          ],
+          "clearance_m": 3.575,
+          "delta_xy_m": [
+            -1.02,
+            -3.85
+          ],
+          "relation": "separated"
+        }
+      ],
+      "doorways": [
+        {
+          "id": "door_0",
+          "nominal_width_m": 0.9,
+          "inspection_depth_m": 1.0,
+          "area_m2": 0.88,
+          "occupied_area_m2": 0.003,
+          "free_area_m2": 0.877
+        },
+        {
+          "id": "door_1",
+          "nominal_width_m": 0.9,
+          "inspection_depth_m": 1.0,
+          "area_m2": 0.92,
+          "occupied_area_m2": 0.0,
+          "free_area_m2": 0.92
+        },
+        {
+          "id": "door_2",
+          "nominal_width_m": 0.9,
+          "inspection_depth_m": 1.0,
+          "area_m2": 0.883,
+          "occupied_area_m2": 0.112,
+          "free_area_m2": 0.771
+        },
+        {
+          "id": "door_3",
+          "nominal_width_m": 0.9,
+          "inspection_depth_m": 1.0,
+          "area_m2": 0.845,
+          "occupied_area_m2": 0.0,
+          "free_area_m2": 0.845
+        }
+      ],
+      "routes": [
+        {
+          "door_id": "door_0",
+          "status": "derived",
+          "reason": null,
+          "target_xy": [
+            6.75,
+            3.8
+          ],
+          "target_source": "explicit_demo_activity_anchor",
+          "minimum_width_m": 0.48,
+          "path_xy": [
+            [
+              6.18,
+              2.02
+            ],
+            [
+              6.22,
+              2.06
+            ],
+            [
+              6.26,
+              2.1
+            ],
+            [
+              6.3,
+              2.14
+            ],
+            [
+              6.34,
+              2.18
+            ],
+            [
+              6.38,
+              2.22
+            ],
+            [
+              6.42,
+              2.26
+            ],
+            [
+              6.46,
+              2.3
+            ],
+            [
+              6.5,
+              2.34
+            ],
+            [
+              6.54,
+              2.38
+            ],
+            [
+              6.54,
+              2.42
+            ],
+            [
+              6.58,
+              2.46
+            ],
+            [
+              6.62,
+              2.5
+            ],
+            [
+              6.62,
+              2.54
+            ],
+            [
+              6.66,
+              2.58
+            ],
+            [
+              6.66,
+              2.62
+            ],
+            [
+              6.7,
+              2.66
+            ],
+            [
+              6.7,
+              2.7
+            ],
+            [
+              6.7,
+              2.74
+            ],
+            [
+              6.7,
+              2.78
+            ],
+            [
+              6.7,
+              2.82
+            ],
+            [
+              6.7,
+              2.86
+            ],
+            [
+              6.7,
+              2.9
+            ],
+            [
+              6.7,
+              2.94
+            ],
+            [
+              6.7,
+              2.98
+            ],
+            [
+              6.7,
+              3.02
+            ],
+            [
+              6.7,
+              3.06
+            ],
+            [
+              6.7,
+              3.1
+            ],
+            [
+              6.7,
+              3.14
+            ],
+            [
+              6.7,
+              3.18
+            ],
+            [
+              6.7,
+              3.22
+            ],
+            [
+              6.7,
+              3.26
+            ],
+            [
+              6.7,
+              3.3
+            ],
+            [
+              6.7,
+              3.34
+            ],
+            [
+              6.7,
+              3.38
+            ],
+            [
+              6.7,
+              3.42
+            ],
+            [
+              6.7,
+              3.46
+            ],
+            [
+              6.7,
+              3.5
+            ],
+            [
+              6.7,
+              3.54
+            ],
+            [
+              6.7,
+              3.58
+            ],
+            [
+              6.7,
+              3.62
+            ],
+            [
+              6.7,
+              3.66
+            ],
+            [
+              6.7,
+              3.7
+            ],
+            [
+              6.7,
+              3.74
+            ],
+            [
+              6.74,
+              3.78
+            ]
+          ],
+          "method": "2x_distance_to_obstacles_along_computed_route",
+          "limitation": "one_route_estimate_not_global_passage_width_or_safety_certification"
+        },
+        {
+          "door_id": "door_1",
+          "status": "derived",
+          "reason": null,
+          "target_xy": [
+            6.75,
+            3.8
+          ],
+          "target_source": "explicit_demo_activity_anchor",
+          "minimum_width_m": 0.566,
+          "path_xy": [
+            [
+              6.18,
+              5.7
+            ],
+            [
+              6.22,
+              5.66
+            ],
+            [
+              6.26,
+              5.62
+            ],
+            [
+              6.3,
+              5.58
+            ],
+            [
+              6.34,
+              5.54
+            ],
+            [
+              6.38,
+              5.5
+            ],
+            [
+              6.42,
+              5.46
+            ],
+            [
+              6.46,
+              5.42
+            ],
+            [
+              6.5,
+              5.38
+            ],
+            [
+              6.54,
+              5.34
+            ],
+            [
+              6.58,
+              5.3
+            ],
+            [
+              6.62,
+              5.26
+            ],
+            [
+              6.62,
+              5.22
+            ],
+            [
+              6.66,
+              5.18
+            ],
+            [
+              6.66,
+              5.14
+            ],
+            [
+              6.7,
+              5.1
+            ],
+            [
+              6.7,
+              5.06
+            ],
+            [
+              6.7,
+              5.02
+            ],
+            [
+              6.7,
+              4.98
+            ],
+            [
+              6.7,
+              4.94
+            ],
+            [
+              6.7,
+              4.9
+            ],
+            [
+              6.7,
+              4.86
+            ],
+            [
+              6.7,
+              4.82
+            ],
+            [
+              6.7,
+              4.78
+            ],
+            [
+              6.7,
+              4.74
+            ],
+            [
+              6.7,
+              4.7
+            ],
+            [
+              6.7,
+              4.66
+            ],
+            [
+              6.7,
+              4.62
+            ],
+            [
+              6.7,
+              4.58
+            ],
+            [
+              6.7,
+              4.54
+            ],
+            [
+              6.7,
+              4.5
+            ],
+            [
+              6.7,
+              4.46
+            ],
+            [
+              6.7,
+              4.42
+            ],
+            [
+              6.7,
+              4.38
+            ],
+            [
+              6.7,
+              4.34
+            ],
+            [
+              6.7,
+              4.3
+            ],
+            [
+              6.7,
+              4.26
+            ],
+            [
+              6.7,
+              4.22
+            ],
+            [
+              6.7,
+              4.18
+            ],
+            [
+              6.7,
+              4.14
+            ],
+            [
+              6.7,
+              4.1
+            ],
+            [
+              6.7,
+              4.06
+            ],
+            [
+              6.7,
+              4.02
+            ],
+            [
+              6.7,
+              3.98
+            ],
+            [
+              6.7,
+              3.94
+            ],
+            [
+              6.7,
+              3.9
+            ],
+            [
+              6.7,
+              3.86
+            ],
+            [
+              6.7,
+              3.82
+            ],
+            [
+              6.74,
+              3.78
+            ]
+          ],
+          "method": "2x_distance_to_obstacles_along_computed_route",
+          "limitation": "one_route_estimate_not_global_passage_width_or_safety_certification"
+        },
+        {
+          "door_id": "door_2",
+          "status": "derived",
+          "reason": null,
+          "target_xy": [
+            6.75,
+            3.8
+          ],
+          "target_source": "explicit_demo_activity_anchor",
+          "minimum_width_m": 0.4,
+          "path_xy": [
+            [
+              7.3,
+              5.5
+            ],
+            [
+              7.3,
+              5.46
+            ],
+            [
+              7.26,
+              5.42
+            ],
+            [
+              7.22,
+              5.38
+            ],
+            [
+              7.18,
+              5.34
+            ],
+            [
+              7.14,
+              5.3
+            ],
+            [
+              7.1,
+              5.26
+            ],
+            [
+              7.06,
+              5.22
+            ],
+            [
+              7.02,
+              5.18
+            ],
+            [
+              6.98,
+              5.14
+            ],
+            [
+              6.94,
+              5.1
+            ],
+            [
+              6.9,
+              5.06
+            ],
+            [
+              6.86,
+              5.02
+            ],
+            [
+              6.82,
+              4.98
+            ],
+            [
+              6.82,
+              4.94
+            ],
+            [
+              6.82,
+              4.9
+            ],
+            [
+              6.82,
+              4.86
+            ],
+            [
+              6.82,
+              4.82
+            ],
+            [
+              6.78,
+              4.78
+            ],
+            [
+              6.78,
+              4.74
+            ],
+            [
+              6.78,
+              4.7
+            ],
+            [
+              6.78,
+              4.66
+            ],
+            [
+              6.78,
+              4.62
+            ],
+            [
+              6.74,
+              4.58
+            ],
+            [
+              6.74,
+              4.54
+            ],
+            [
+              6.74,
+              4.5
+            ],
+            [
+              6.74,
+              4.46
+            ],
+            [
+              6.74,
+              4.42
+            ],
+            [
+              6.74,
+              4.38
+            ],
+            [
+              6.74,
+              4.34
+            ],
+            [
+              6.74,
+              4.3
+            ],
+            [
+              6.74,
+              4.26
+            ],
+            [
+              6.74,
+              4.22
+            ],
+            [
+              6.74,
+              4.18
+            ],
+            [
+              6.74,
+              4.14
+            ],
+            [
+              6.74,
+              4.1
+            ],
+            [
+              6.74,
+              4.06
+            ],
+            [
+              6.74,
+              4.02
+            ],
+            [
+              6.74,
+              3.98
+            ],
+            [
+              6.74,
+              3.94
+            ],
+            [
+              6.74,
+              3.9
+            ],
+            [
+              6.74,
+              3.86
+            ],
+            [
+              6.74,
+              3.82
+            ],
+            [
+              6.74,
+              3.78
+            ]
+          ],
+          "method": "2x_distance_to_obstacles_along_computed_route",
+          "limitation": "one_route_estimate_not_global_passage_width_or_safety_certification"
+        },
+        {
+          "door_id": "door_3",
+          "status": "derived",
+          "reason": null,
+          "target_xy": [
+            6.75,
+            3.8
+          ],
+          "target_source": "explicit_demo_activity_anchor",
+          "minimum_width_m": 0.48,
+          "path_xy": [
+            [
+              7.3,
+              1.02
+            ],
+            [
+              7.26,
+              1.06
+            ],
+            [
+              7.22,
+              1.1
+            ],
+            [
+              7.18,
+              1.14
+            ],
+            [
+              7.14,
+              1.18
+            ],
+            [
+              7.1,
+              1.22
+            ],
+            [
+              7.06,
+              1.26
+            ],
+            [
+              7.02,
+              1.3
+            ],
+            [
+              6.98,
+              1.34
+            ],
+            [
+              6.94,
+              1.38
+            ],
+            [
+              6.9,
+              1.42
+            ],
+            [
+              6.86,
+              1.46
+            ],
+            [
+              6.82,
+              1.5
+            ],
+            [
+              6.78,
+              1.54
+            ],
+            [
+              6.74,
+              1.58
+            ],
+            [
+              6.74,
+              1.62
+            ],
+            [
+              6.74,
+              1.66
+            ],
+            [
+              6.74,
+              1.7
+            ],
+            [
+              6.7,
+              1.74
+            ],
+            [
+              6.7,
+              1.78
+            ],
+            [
+              6.7,
+              1.82
+            ],
+            [
+              6.7,
+              1.86
+            ],
+            [
+              6.7,
+              1.9
+            ],
+            [
+              6.7,
+              1.94
+            ],
+            [
+              6.7,
+              1.98
+            ],
+            [
+              6.7,
+              2.02
+            ],
+            [
+              6.7,
+              2.06
+            ],
+            [
+              6.7,
+              2.1
+            ],
+            [
+              6.7,
+              2.14
+            ],
+            [
+              6.7,
+              2.18
+            ],
+            [
+              6.7,
+              2.22
+            ],
+            [
+              6.7,
+              2.26
+            ],
+            [
+              6.7,
+              2.3
+            ],
+            [
+              6.7,
+              2.34
+            ],
+            [
+              6.7,
+              2.38
+            ],
+            [
+              6.7,
+              2.42
+            ],
+            [
+              6.7,
+              2.46
+            ],
+            [
+              6.7,
+              2.5
+            ],
+            [
+              6.7,
+              2.54
+            ],
+            [
+              6.7,
+              2.58
+            ],
+            [
+              6.7,
+              2.62
+            ],
+            [
+              6.7,
+              2.66
+            ],
+            [
+              6.7,
+              2.7
+            ],
+            [
+              6.7,
+              2.74
+            ],
+            [
+              6.7,
+              2.78
+            ],
+            [
+              6.7,
+              2.82
+            ],
+            [
+              6.7,
+              2.86
+            ],
+            [
+              6.7,
+              2.9
+            ],
+            [
+              6.7,
+              2.94
+            ],
+            [
+              6.7,
+              2.98
+            ],
+            [
+              6.7,
+              3.02
+            ],
+            [
+              6.7,
+              3.06
+            ],
+            [
+              6.7,
+              3.1
+            ],
+            [
+              6.7,
+              3.14
+            ],
+            [
+              6.7,
+              3.18
+            ],
+            [
+              6.7,
+              3.22
+            ],
+            [
+              6.7,
+              3.26
+            ],
+            [
+              6.7,
+              3.3
+            ],
+            [
+              6.7,
+              3.34
+            ],
+            [
+              6.7,
+              3.38
+            ],
+            [
+              6.7,
+              3.42
+            ],
+            [
+              6.7,
+              3.46
+            ],
+            [
+              6.7,
+              3.5
+            ],
+            [
+              6.7,
+              3.54
+            ],
+            [
+              6.7,
+              3.58
+            ],
+            [
+              6.7,
+              3.62
+            ],
+            [
+              6.7,
+              3.66
+            ],
+            [
+              6.7,
+              3.7
+            ],
+            [
+              6.7,
+              3.74
+            ],
+            [
+              6.74,
+              3.78
+            ]
+          ],
+          "method": "2x_distance_to_obstacles_along_computed_route",
+          "limitation": "one_route_estimate_not_global_passage_width_or_safety_certification"
+        }
+      ],
+      "advice": [
+        {
+          "rule": "route_width_demo",
+          "door_id": "door_0",
+          "object_ids": [
+            "corridor_001",
+            "corridor_007"
+          ],
+          "value_m": 0.48,
+          "demo_threshold_m": 0.65,
+          "text": "门口到设定活动点的路线局部净空约 0.48 m，建议复核附近的鞋柜、绿植摆放。仅为栅格几何估计，需结合实际通行需求复核。"
+        },
+        {
+          "rule": "route_width_demo",
+          "door_id": "door_1",
+          "object_ids": [
+            "corridor_001",
+            "corridor_006"
+          ],
+          "value_m": 0.566,
+          "demo_threshold_m": 0.65,
+          "text": "门口到设定活动点的路线局部净空约 0.57 m，建议复核附近的鞋柜、收纳箱摆放。仅为栅格几何估计，需结合实际通行需求复核。"
+        },
+        {
+          "rule": "route_width_demo",
+          "door_id": "door_2",
+          "object_ids": [
+            "corridor_008",
+            "corridor_005"
+          ],
+          "value_m": 0.4,
+          "demo_threshold_m": 0.65,
+          "text": "门口到设定活动点的路线局部净空约 0.40 m，建议复核附近的储物柜、伞架摆放。仅为栅格几何估计，需结合实际通行需求复核。"
+        },
+        {
+          "rule": "entrance_occupancy_demo",
+          "door_id": "door_2",
+          "value_m2": 0.112,
+          "text": "门内 1 m 检查区约 0.11 m² 被家具占用，建议确认是否影响开门和进出。未模拟门扇开启轨迹。"
+        },
+        {
+          "rule": "route_width_demo",
+          "door_id": "door_3",
+          "object_ids": [
+            "corridor_001",
+            "corridor_007"
+          ],
+          "value_m": 0.48,
+          "demo_threshold_m": 0.65,
+          "text": "门口到设定活动点的路线局部净空约 0.48 m，建议复核附近的鞋柜、绿植摆放。仅为栅格几何估计，需结合实际通行需求复核。"
+        }
+      ],
+      "major_object_count": 8,
+      "detail_object_count": 0,
+      "safety_status": "not_assessed"
+    }
+  }
+}
