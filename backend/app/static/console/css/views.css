@@ -120,7 +120,11 @@
 /* ---- 侧边栏折叠（工作台外壳；折叠态只保留图标） ---- */
 .rail-brand { padding: 4px 10px 10px; }
 .rail-toggle-row { display: flex; justify-content: flex-end; padding: 0 6px 12px 0; }
-.rail-toggle { flex: none; }
+.rail-toggle {
+  flex: none;
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--panel-solid) 45%, transparent);
+}
 .rail-toggle .icon { transition: transform 340ms var(--ease-soft); transform: rotate(180deg); }
 
 .app-root.rail-collapsed .rail { width: 74px; padding: 24px 12px 18px; }
