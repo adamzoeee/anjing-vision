@@ -1,0 +1,184 @@
+{
+  "synthetic": true,
+  "unit": "m",
+  "up_axis": "z",
+  "spacing_m": 0.05,
+  "scene_version": "risk-v4",
+  "portal_clear_size_m": [
+    0.9,
+    2.1
+  ],
+  "portals": [
+    {
+      "rooms": [
+        "living_room",
+        "corridor"
+      ],
+      "axis": "x",
+      "plane": 6,
+      "center": 2,
+      "width": 0.9,
+      "height": 2.1
+    },
+    {
+      "rooms": [
+        "bedroom",
+        "corridor"
+      ],
+      "axis": "x",
+      "plane": 6,
+      "center": 5.7,
+      "width": 0.9,
+      "height": 2.1
+    },
+    {
+      "rooms": [
+        "kitchen",
+        "corridor"
+      ],
+      "axis": "x",
+      "plane": 7.5,
+      "center": 5.5,
+      "width": 0.9,
+      "height": 2.1
+    },
+    {
+      "rooms": [
+        "bathroom",
+        "corridor"
+      ],
+      "axis": "x",
+      "plane": 7.5,
+      "center": 1,
+      "width": 0.9,
+      "height": 2.1
+    }
+  ],
+  "rooms": [
+    {
+      "id": "living_room",
+      "label": "客厅",
+      "origin": [
+        0,
+        0,
+        0
+      ],
+      "size": [
+        6,
+        4,
+        3
+      ],
+      "color": [
+        0.79,
+        0.65,
+        0.48
+      ],
+      "points": 64499,
+      "pcd": "living_room.pcd",
+      "ply": "living_room.ply",
+      "buffer": "living_room.bin",
+      "layers": "living_room.layers.bin"
+    },
+    {
+      "id": "bedroom",
+      "label": "卧室",
+      "origin": [
+        2,
+        4,
+        0
+      ],
+      "size": [
+        4,
+        3.5,
+        3
+      ],
+      "color": [
+        0.52,
+        0.7,
+        0.85
+      ],
+      "points": 60058,
+      "pcd": "bedroom.pcd",
+      "ply": "bedroom.ply",
+      "buffer": "bedroom.bin",
+      "layers": "bedroom.layers.bin"
+    },
+    {
+      "id": "kitchen",
+      "label": "厨房",
+      "origin": [
+        7.5,
+        4,
+        0
+      ],
+      "size": [
+        3,
+        3,
+        3
+      ],
+      "color": [
+        0.61,
+        0.8,
+        0.61
+      ],
+      "points": 36002,
+      "pcd": "kitchen.pcd",
+      "ply": "kitchen.ply",
+      "buffer": "kitchen.bin",
+      "layers": "kitchen.layers.bin"
+    },
+    {
+      "id": "bathroom",
+      "label": "卫生间",
+      "origin": [
+        7.5,
+        0,
+        0
+      ],
+      "size": [
+        2.5,
+        2,
+        3
+      ],
+      "color": [
+        0.69,
+        0.64,
+        0.83
+      ],
+      "points": 23616,
+      "pcd": "bathroom.pcd",
+      "ply": "bathroom.ply",
+      "buffer": "bathroom.bin",
+      "layers": "bathroom.layers.bin"
+    },
+    {
+      "id": "corridor",
+      "label": "走廊",
+      "origin": [
+        6,
+        0,
+        0
+      ],
+      "size": [
+        1.5,
+        7.5,
+        3
+      ],
+      "color": [
+        0.77,
+        0.77,
+        0.73
+      ],
+      "points": 40216,
+      "pcd": "corridor.pcd",
+      "ply": "corridor.ply",
+      "buffer": "corridor.bin",
+      "layers": "corridor.layers.bin"
+    }
+  ],
+  "predictions": "predictions.json",
+  "layout_analysis": "layout_analysis.json",
+  "model_layout_analysis": "model_layout_analysis.json",
+  "complete_points": 202306,
+  "ground_truth": "ground_truth.json"
+}
