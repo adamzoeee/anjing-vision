@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>安龄智境 · 家庭点云 Demo</title>
+<style>
+body{margin:0;background:#101823;color:#edf3f6;font:15px system-ui}header{padding:16px 22px;background:#182532}h1{font-size:21px;margin:0 0 6px}.notice{color:#f6cc78;font-size:13px}main{display:flex;height:calc(100vh - 92px)}aside{width:280px;padding:20px;overflow:auto;background:#16212b;flex-shrink:0}#view{flex:1;min-width:0;position:relative}canvas{display:block}label,select,button{display:block;margin:12px 0}select,button{background:#253849;color:white;padding:9px;border:1px solid #527080;border-radius:6px;width:100%}#status{white-space:pre-wrap;line-height:1.7;color:#b8d3df}.key{font-size:13px;color:#9ab6c4}#error{color:#ffb0a0}a{color:#93dccc}@media(max-width:700px){aside{width:195px;padding:10px}}
+</style></head><body>
+<header><h1>家庭室内点云 · 结构与家具解析展示</h1><div class="notice">合成场景演示 · 非手机实拍重建 · 生成真值不等于模型识别结果</div></header>
+<main><aside><strong>1 / 房屋与房间</strong><select id="room"><option value="all">完整家庭空间</option></select>
+<label><input id="colors" type="checkbox" checked> 按房间着色</label>
+<label><input id="object-colors" type="checkbox"> 物体分类着色（生成真值）</label>
+<label><input id="ceiling" type="checkbox"> 显示天花板</label>
+<label><input id="walls" type="checkbox" checked> 显示完整墙体与地面</label>
+<label><input id="cutaway" type="checkbox" checked> 半墙观察（仅显示裁切）</label>
+<label><input id="labels" type="checkbox" checked> 显示家具名称</label>
+<button id="reset">重置观察视角</button><p class="key">点击房间名称或地面进入房间<br>拖动旋转 · 滚轮缩放 · 右键平移<br>房间名称来自生成布局，非模型判断<br>坐标：米，Z 轴向上<br>门洞：0.90 × 2.10 m</p>
+<strong>2 / 家具解析</strong><select id="mode"><option value="model">SpatialLM 模型结果</option><option value="truth">生成真值（非识别结果）</option><option value="none">仅点云</option></select>
+<button id="refresh">刷新模型结果</button><div id="status">加载中…</div><div id="objects" class="key" style="white-space:pre-wrap;margin-top:16px"></div><p id="error"></p>
+<section id="assistant-panel" hidden><h3>小助手 · 几何规则演示</h3>
+<select id="assistant-source"><option value="model">依据 SpatialLM 结果（可能漏检）</option><option value="truth">依据生成场景几何（非识别结果）</option></select>
+<p class="key">路线通向预设活动点；数值是几何估计，不是正式安全评估。没有建议不代表安全。</p>
+<div id="assistant" style="white-space:pre-wrap;line-height:1.8"></div></section>
+<a href="house_complete.pcd" download>下载整屋 PCD</a><p><a href="predictions.json" target="_blank" rel="noopener">模型输出 JSON</a></p>
+</aside><section id="view" aria-label="家庭点云三维场景"></section></main>
+<script src="three.min.js"></script><script src="OrbitControls.js"></script><script src="demo.js"></script>
+</body></html>

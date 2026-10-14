@@ -1,0 +1,195 @@
+{
+  "backend": "spatiallm1.1-qwen-0.5b",
+  "detect_type": "all",
+  "categories": [],
+  "coordinate_unit": "meters",
+  "z_up": true,
+  "seconds": 20.0,
+  "counts": {
+    "walls": 4,
+    "doors": 2,
+    "windows": 0,
+    "objects": 5
+  },
+  "walls": [
+    {
+      "id": 1,
+      "center": [
+        7.51,
+        5.4875,
+        1.54
+      ],
+      "size": [
+        2.9749999999999996,
+        0.05,
+        3.08
+      ],
+      "rotation_z_deg": 90.0,
+      "height": 3.08,
+      "thickness": 0.0
+    },
+    {
+      "id": 0,
+      "center": [
+        8.997499999999999,
+        4.0,
+        1.54
+      ],
+      "size": [
+        2.9749999999999996,
+        0.05,
+        3.08
+      ],
+      "rotation_z_deg": 0.0,
+      "height": 3.08,
+      "thickness": 0.0
+    },
+    {
+      "id": 3,
+      "center": [
+        8.997499999999999,
+        6.975,
+        1.54
+      ],
+      "size": [
+        2.9749999999999996,
+        0.05,
+        3.08
+      ],
+      "rotation_z_deg": 0.0,
+      "height": 3.08,
+      "thickness": 0.0
+    },
+    {
+      "id": 2,
+      "center": [
+        10.485,
+        5.4875,
+        1.54
+      ],
+      "size": [
+        2.9749999999999996,
+        0.05,
+        3.08
+      ],
+      "rotation_z_deg": 90.0,
+      "height": 3.08,
+      "thickness": 0.0
+    }
+  ],
+  "doors": [
+    {
+      "kind": "door",
+      "center": [
+        7.51,
+        5.475,
+        1.075
+      ],
+      "size": [
+        1.02,
+        0.15,
+        2.2399999999999998
+      ],
+      "rotation_z_deg": 90.0,
+      "wall_id": 1
+    },
+    {
+      "kind": "door",
+      "center": [
+        10.485,
+        6.575,
+        0.975
+      ],
+      "size": [
+        0.78,
+        0.15,
+        2.2399999999999998
+      ],
+      "rotation_z_deg": 90.0,
+      "wall_id": 2
+    }
+  ],
+  "windows": [],
+  "objects": [
+    {
+      "kind": "object",
+      "category": "chair",
+      "center": [
+        8.735,
+        4.95,
+        0.425
+      ],
+      "size": [
+        0.4375,
+        0.5,
+        0.78125
+      ],
+      "rotation_z_deg": -0.36324749999999995,
+      "support_points": 610
+    },
+    {
+      "kind": "object",
+      "category": "cupboard",
+      "center": [
+        8.735,
+        6.65,
+        0.575
+      ],
+      "size": [
+        2.21875,
+        0.65625,
+        1.09375
+      ],
+      "rotation_z_deg": -3.1416,
+      "support_points": 5442
+    },
+    {
+      "kind": "object",
+      "category": "side_table",
+      "center": [
+        9.46,
+        5.625,
+        0.35
+      ],
+      "size": [
+        0.828125,
+        0.578125,
+        0.640625
+      ],
+      "rotation_z_deg": -3.1416,
+      "support_points": 326
+    },
+    {
+      "kind": "object",
+      "category": "refrigerator",
+      "center": [
+        10.135,
+        6.625,
+        0.975
+      ],
+      "size": [
+        0.671875,
+        0.671875,
+        1.84375
+      ],
+      "rotation_z_deg": -3.1416,
+      "support_points": 1303
+    },
+    {
+      "kind": "object",
+      "category": "painting",
+      "center": [
+        10.46,
+        5.375,
+        1.725
+      ],
+      "size": [
+        1.328125,
+        0.109375,
+        1.21875
+      ],
+      "rotation_z_deg": -1.5708000000000002,
+      "support_points": 266
+    }
+  ]
+}
