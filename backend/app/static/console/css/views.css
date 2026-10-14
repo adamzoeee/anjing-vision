@@ -17,7 +17,7 @@
   border-right: 1px solid var(--hairline);
   backdrop-filter: blur(26px);
   z-index: 10;
-  transition: background 700ms var(--ease-glide);
+  transition: width 340ms var(--ease-soft), padding 340ms var(--ease-soft), background 700ms var(--ease-glide);
 }
 .rail-brand { display: flex; align-items: center; gap: 13px; padding: 4px 10px 26px; }
 .brand-mark {
@@ -116,6 +116,45 @@
 }
 .rail-user .u-name { font-size: 13px; font-weight: 600; }
 .rail-user .u-org { font-size: 11.5px; color: var(--text-3); }
+
+/* ---- 侧边栏折叠（工作台外壳；折叠态只保留图标） ---- */
+.rail-brand { padding: 4px 10px 10px; }
+.rail-toggle-row { display: flex; justify-content: flex-end; padding: 0 6px 12px 0; }
+.rail-toggle { flex: none; }
+.rail-toggle .icon { transition: transform 340ms var(--ease-soft); transform: rotate(180deg); }
+
+.app-root.rail-collapsed .rail { width: 74px; padding: 24px 12px 18px; }
+.app-root.rail-collapsed .brand-text,
+.app-root.rail-collapsed .nav-section,
+.app-root.rail-collapsed .nav-item > span,
+.app-root.rail-collapsed .rail-tools .tool-label,
+.app-root.rail-collapsed .rail-user .grow { display: none; }
+
+.app-root.rail-collapsed .rail-brand { justify-content: center; padding: 4px 0 8px; }
+.app-root.rail-collapsed .rail-toggle-row { justify-content: center; padding: 0 0 14px; }
+.app-root.rail-collapsed .rail-toggle .icon { transform: rotate(0deg); }
+
+.app-root.rail-collapsed .rail-nav { gap: 9px; }
+.app-root.rail-collapsed .nav-item { justify-content: center; padding: 0; }
+.app-root.rail-collapsed .nav-item:hover { transform: none; }
+
+.app-root.rail-collapsed .rail-tools { padding: 12px 8px; gap: 10px; }
+.app-root.rail-collapsed .rail-tools .tool-row { justify-content: center; gap: 0; }
+.app-root.rail-collapsed .rail-tools .tool-row .skin-dots,
+.app-root.rail-collapsed .rail-tools .tool-row .switch { margin-left: 0; }
+
+.app-root.rail-collapsed .rail-user { flex-direction: column; gap: 10px; padding: 10px 8px; }
+
+/* 折叠态：气泡改到右侧弹出（贴屏幕左缘也不会被裁切） */
+.app-root.rail-collapsed [data-tip]::after {
+  left: calc(100% + 12px);
+  top: 50%;
+  bottom: auto;
+  transform: translateY(-50%) translateX(-6px);
+}
+.app-root.rail-collapsed [data-tip]:hover::after {
+  transform: translateY(-50%) translateX(0);
+}
 
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .topbar {
