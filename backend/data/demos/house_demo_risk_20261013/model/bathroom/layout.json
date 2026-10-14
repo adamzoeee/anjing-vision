@@ -1,0 +1,164 @@
+{
+  "backend": "spatiallm1.1-qwen-0.5b",
+  "detect_type": "all",
+  "categories": [],
+  "coordinate_unit": "meters",
+  "z_up": true,
+  "seconds": 46.5,
+  "counts": {
+    "walls": 4,
+    "doors": 1,
+    "windows": 0,
+    "objects": 4
+  },
+  "walls": [
+    {
+      "id": 1,
+      "center": [
+        7.51,
+        1.0125,
+        1.54
+      ],
+      "size": [
+        2.025,
+        0.05,
+        3.08
+      ],
+      "rotation_z_deg": 90.0,
+      "height": 3.08,
+      "thickness": 0.0
+    },
+    {
+      "id": 0,
+      "center": [
+        8.747499999999999,
+        0.0,
+        1.54
+      ],
+      "size": [
+        2.4749999999999996,
+        0.05,
+        3.08
+      ],
+      "rotation_z_deg": 0.0,
+      "height": 3.08,
+      "thickness": 0.0
+    },
+    {
+      "id": 3,
+      "center": [
+        8.747499999999999,
+        2.025,
+        1.54
+      ],
+      "size": [
+        2.4749999999999996,
+        0.05,
+        3.08
+      ],
+      "rotation_z_deg": 0.0,
+      "height": 3.08,
+      "thickness": 0.0
+    },
+    {
+      "id": 2,
+      "center": [
+        9.985,
+        1.0125,
+        1.54
+      ],
+      "size": [
+        2.025,
+        0.05,
+        3.08
+      ],
+      "rotation_z_deg": 90.0,
+      "height": 3.08,
+      "thickness": 0.0
+    }
+  ],
+  "doors": [
+    {
+      "kind": "door",
+      "center": [
+        7.51,
+        1.0,
+        1.1
+      ],
+      "size": [
+        0.96,
+        0.15,
+        2.2
+      ],
+      "rotation_z_deg": 90.0,
+      "wall_id": 1
+    }
+  ],
+  "windows": [],
+  "objects": [
+    {
+      "kind": "object",
+      "category": "washing_machine",
+      "center": [
+        7.985,
+        0.625,
+        0.425
+      ],
+      "size": [
+        0.5625,
+        0.5625,
+        0.8125
+      ],
+      "rotation_z_deg": -3.1416,
+      "support_points": 875
+    },
+    {
+      "kind": "object",
+      "category": "toilet",
+      "center": [
+        8.11,
+        1.7,
+        0.425
+      ],
+      "size": [
+        0.40625,
+        0.640625,
+        0.8125
+      ],
+      "rotation_z_deg": -0.009817500000000479,
+      "support_points": 1396
+    },
+    {
+      "kind": "object",
+      "category": "hand_sink",
+      "center": [
+        9.035,
+        1.775,
+        0.85
+      ],
+      "size": [
+        0.5625,
+        0.484375,
+        2.15625
+      ],
+      "rotation_z_deg": -0.009817500000000479,
+      "support_points": 1820
+    },
+    {
+      "kind": "object",
+      "category": "shower_room",
+      "center": [
+        9.56,
+        0.625,
+        1.025
+      ],
+      "size": [
+        0.828125,
+        0.828125,
+        2.0
+      ],
+      "rotation_z_deg": -1.5708000000000002,
+      "support_points": 440
+    }
+  ]
+}
