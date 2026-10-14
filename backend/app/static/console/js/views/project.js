@@ -1,6 +1,6 @@
 /* 项目详情：房间/扫描管理 + 视频上传 + 管道进度 */
 
-import { api } from '../api.js';
+import { api } from '../api.js?v=house-scan-1';
 import { icon } from '../icons.js';
 import {
   esc, toast, fmtScore, timeAgo, scoreTone, emptyState, openModal,
@@ -32,6 +32,25 @@ export async function projectView(ctx, projectId) {
   newScanBtn.addEventListener('click', () => createRoom(ctx, projectId, refresh));
   ctx.actions.appendChild(newScanBtn);
 
+  const importHouseBtn = document.createElement('button');
+  importHouseBtn.className = 'btn';
+  importHouseBtn.innerHTML = `${icon('home', 16)} 导入整屋演示`;
+  importHouseBtn.addEventListener('click', async () => {
+    importHouseBtn.disabled = true;
+    importHouseBtn.textContent = '正在导入整屋点云…';
+    try {
+      const scan = await api.importHouseDemo(projectId);
+      setLastScan(scan.id, 'house_demo');
+      toast('ok', '整屋 Scan 已就绪', '五个空间已按门连接');
+      navigate(`#/house/${scan.id}`);
+    } catch (error) {
+      toast('error', '整屋导入失败', error?.message || '');
+      importHouseBtn.disabled = false;
+      importHouseBtn.innerHTML = `${icon('home', 16)} 导入整屋演示`;
+    }
+  });
+  ctx.actions.appendChild(importHouseBtn);
+
   ctx.host.innerHTML = `<div class="glass panel" style="height:100%">${'<div class="skeleton-line shimmer" style="width:40%"></div><div class="skeleton-line shimmer" style="width:70%"></div><div class="skeleton-block shimmer" style="flex:1;margin-top:12px"></div>'}</div>`;
 
   ctx.cleanup(() => clearInterval(pollTimer));
@@ -51,7 +70,7 @@ export async function projectView(ctx, projectId) {
 
   async function refresh() {
     scans = await api.listScans(projectId);
-    await Promise.all(scans.filter((scan) => scan.status === 'done' && !reportScores.has(scan.id)).map(async (scan) => {
+    await Promise.all(scans.filter((scan) => scan.status === 'done' && scan.capture_type !== 'house_demo' && !reportScores.has(scan.id)).map(async (scan) => {
       try { reportScores.set(scan.id, (await api.getReport(scan.id))?.score ?? null); }
       catch { reportScores.set(scan.id, null); }
     }));
@@ -72,7 +91,7 @@ export async function projectView(ctx, projectId) {
             <div class="ph-sub">${icon('building', 13)} ${esc(project.address || '未填写地址')} · 项目编号 P${String(project.id).padStart(3, '0')}</div>
           </div>
           <div class="ph-stats">
-            <div class="ph-stat"><div class="ps-value">${scans.length}</div><div class="ps-name">房间</div></div>
+            <div class="ph-stat"><div class="ps-value">${scans.length}</div><div class="ps-name">扫描</div></div>
             <div class="ph-stat"><div class="ps-value">${doneCount}</div><div class="ps-name">已完成</div></div>
             <div class="ph-stat"><div class="ps-value">${activeCount}</div><div class="ps-name">处理中</div></div>
             <div class="ph-stat"><div class="ps-value" style="color:${avg === null ? 'var(--text-3)' : `var(--${scoreTone(avg) === 'ok' ? 'ok' : scoreTone(avg) === 'warn' ? 'warn' : 'bad'})`}">${avg === null ? '—' : fmtScore(avg)}</div><div class="ps-name">平均评分</div></div>
@@ -98,15 +117,24 @@ export async function projectView(ctx, projectId) {
       const scanId = Number(row.dataset.id);
       row.addEventListener('click', (event) => {
         if (event.target.closest('button')) return;
-        setLastScan(scanId);
-        navigate(`#/scans/${scanId}`);
+        const isHouse = scans.find((scan) => scan.id === scanId)?.capture_type === 'house_demo';
+        setLastScan(scanId, isHouse ? 'house_demo' : 'video');
+        navigate(`${isHouse ? '#/house' : '#/scans'}/${scanId}`);
+      });
+      row.addEventListener('keydown', (event) => {
+        if (event.target !== row || !['Enter', ' '].includes(event.key)) return;
+        event.preventDefault();
+        const isHouse = scans.find((scan) => scan.id === scanId)?.capture_type === 'house_demo';
+        setLastScan(scanId, isHouse ? 'house_demo' : 'video');
+        navigate(`${isHouse ? '#/house' : '#/scans'}/${scanId}`);
       });
     });
     list.querySelectorAll('[data-action="open"]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const scanId = Number(btn.dataset.id);
-        setLastScan(scanId);
-        navigate(`#/scans/${scanId}`);
+        const isHouse = scans.find((scan) => scan.id === scanId)?.capture_type === 'house_demo';
+        setLastScan(scanId, isHouse ? 'house_demo' : 'video');
+        navigate(`${isHouse ? '#/house' : '#/scans'}/${scanId}`);
       });
     });
     list.querySelectorAll('[data-action="screen"]').forEach((btn) => {
@@ -134,6 +162,7 @@ export async function projectView(ctx, projectId) {
   }
 
   function scanRow(scan, index) {
+    const house = scan.capture_type === 'house_demo';
     const active = ACTIVE_STATUSES.has(scan.status);
     const done = scan.status === 'done';
     const failed = scan.status === 'failed';
@@ -145,17 +174,17 @@ export async function projectView(ctx, projectId) {
         <div class="scan-thumb">${icon(done ? 'home' : failed ? 'alert' : 'video', 24)}</div>
         <div class="grow" style="min-width:0">
           <div class="scan-name">
-            房间 ${index + 1}
+            ${house ? '整屋演示' : `房间 ${index + 1}`}
             <span class="faint mono" style="font-size:12px">#${scan.id}</span>
             ${done ? '<span class="badge ok"><span class="dot"></span>已完成</span>'
               : failed ? '<span class="badge bad"><span class="dot"></span>失败</span>'
               : `<span class="badge info"><span class="dot"></span>${esc(stage)}</span>`}
           </div>
           <div class="scan-sub">
-            <span>${icon('video', 12)} 视频扫描</span>
+            <span>${icon(house ? 'home' : 'video', 12)} ${house ? '合成家庭点云' : '视频扫描'}</span>
             ${scan.created_at ? `<span>${esc(timeAgo(scan.created_at))}</span>` : ''}
             ${scan.message ? `<span>${esc(scan.message)}</span>` : ''}
-            ${done ? '<span>评估报告已生成</span>' : ''}
+            ${done && !house ? '<span>评估报告已生成</span>' : ''}
           </div>
         </div>
         <div class="scan-progress">
@@ -163,20 +192,20 @@ export async function projectView(ctx, projectId) {
             <div class="sp-meta"><span>${esc(stage)}</span><span class="num">${progress}%</span></div>
             <div class="progress thin"><div class="p-fill" style="width:${failed ? 100 : progress}%;${failed ? 'background:linear-gradient(90deg,#e23a52,#ff8fa3);box-shadow:none' : ''}"></div></div>
           ` : `
-            <div class="sp-meta"><span>评估完成</span><span class="num">100%</span></div>
+            <div class="sp-meta"><span>${house ? '空间拼接完成' : '评估完成'}</span><span class="num">100%</span></div>
             <div class="progress thin"><div class="p-fill" style="width:100%"></div></div>
           `}
         </div>
         <div>
-          ${done ? `<span class="badge ${scoreTone(score) === 'ok' ? 'ok' : scoreTone(score) === 'warn' ? 'warn' : scoreTone(score) === 'bad' ? 'bad' : ''}">综合评分 ${score === null || score === undefined ? '—' : fmtScore(score)}</span>` : `<span class="faint" style="font-size:12px">${scan.status === 'uploading' ? '等待视频上传' : '处理中…'}</span>`}
+          ${done ? house ? '<span class="badge info">整屋模型 · 未评分</span>' : `<span class="badge ${scoreTone(score) === 'ok' ? 'ok' : scoreTone(score) === 'warn' ? 'warn' : scoreTone(score) === 'bad' ? 'bad' : ''}">综合评分 ${score === null || score === undefined ? '—' : fmtScore(score)}</span>` : `<span class="faint" style="font-size:12px">${scan.status === 'uploading' ? '等待视频上传' : '处理中…'}</span>`}
         </div>
         <div class="scan-actions">
           ${scan.status === 'uploading' ? `<button class="btn btn-sm btn-primary" data-action="upload" data-id="${scan.id}">${icon('upload', 14)} 上传视频</button>` : ''}
-          ${failed ? `<button class="btn btn-sm" data-action="upload" data-id="${scan.id}">${icon('refresh', 14)} 重新上传</button>` : ''}
+          ${failed && !house ? `<button class="btn btn-sm" data-action="upload" data-id="${scan.id}">${icon('refresh', 14)} 重新上传</button>` : ''}
           ${done ? `
-            <button class="btn btn-sm btn-primary" data-action="open" data-id="${scan.id}">${icon('home', 14)} 房间工作台</button>
-            <button class="btn btn-sm" data-action="screen" data-id="${scan.id}">${icon('monitor', 14)} 大屏</button>
-            <button class="icon-btn" data-action="pdf" data-id="${scan.id}" data-tip="报告 PDF" aria-label="报告 PDF">${icon('download', 16)}</button>
+            <button class="btn btn-sm btn-primary" data-action="open" data-id="${scan.id}">${icon('home', 14)} ${house ? '整屋工作台' : '房间工作台'}</button>
+            ${house ? '' : `<button class="btn btn-sm" data-action="screen" data-id="${scan.id}">${icon('monitor', 14)} 大屏</button>
+            <button class="icon-btn" data-action="pdf" data-id="${scan.id}" data-tip="报告 PDF" aria-label="报告 PDF">${icon('download', 16)}</button>`}
           ` : ''}
         </div>
       </div>`;

@@ -1,6 +1,6 @@
 /* 大屏演示模式：一屏驾驶舱（1920×1080 基准） */
 
-import { api } from '../api.js';
+import { api } from '../api.js?v=house-scan-1';
 import { icon } from '../icons.js';
 import {
   esc, fmtMeters, fmtPct, riskLevel, typeName,
@@ -19,6 +19,12 @@ const REFERENCE_LABEL = { door: '门', bed: '床', sofa: '沙发', table: '桌',
 const DIMENSION_LABEL = { width: '宽', height: '高', length: '长' };
 
 export async function screenView(ctx, scanId) {
+  const selectedScan = await api.getScan(scanId);
+  if (selectedScan.capture_type === 'house_demo') {
+    setLastScan(scanId, 'house_demo');
+    navigate(`#/house/${scanId}`, { replace: true });
+    return;
+  }
   setLastScan(scanId);
   let viewer = null;
   let clockTimer = null;
@@ -51,7 +57,7 @@ export async function screenView(ctx, scanId) {
   }
 
   const close = await api.listScans(data.scan.project_id).then((scans) =>
-    scans.filter((scan) => scan.status === 'done')).catch(() => []);
+    scans.filter((scan) => scan.status === 'done' && scan.capture_type !== 'house_demo')).catch(() => []);
 
   render();
 

@@ -2,11 +2,11 @@
  * 渐进式分块加载 + SpatialLM 结构框叠加 + 电影感镜头。
  * 依赖 /preview-static/three.min.js 与 OrbitControls.js（全局 THREE）。 */
 
-import { getToken } from '../api.js';
+import { getToken } from '../api.js?v=house-scan-1';
 import { typeName, measuredSizeMap, normalizeInstanceId } from '../ui.js';
 import { packUpAxis, resolveFrame, resolveCalibration, framePoint, framePointInto, percentile, envelope, modalPlane } from './frame.mjs';
 import { normalizeStructure } from './structure.mjs';
-import { layerVisibility } from './mode.mjs';
+import { layerVisibility } from './mode.mjs?v=house-scan-1';
 
 const PLY_TYPE_SIZES = {
   char: 1, uchar: 1, short: 2, ushort: 2,
@@ -344,6 +344,30 @@ export function createViewer(host, options = {}) {
     controls.update();
   }
 
+  function focusBounds(bounds) {
+    if (!controls || !state.ready || !bounds?.min || !bounds?.max) return;
+    const extent = {
+      x: [bounds.min[0], bounds.max[0]],
+      y: [bounds.min[1], bounds.max[1]],
+      z: [bounds.min[2], bounds.max[2]],
+    };
+    const fitted = fittedCamera(extent);
+    controls.target.copy(fitted.target);
+    camera.position.copy(fitted.position);
+    controls.update();
+  }
+
+  function highlightDoor(instanceId = null) {
+    if (!boxGroups.doors) return;
+    boxGroups.doors.children.forEach((group) => {
+      const selected = instanceId && group.userData.item?.instance_id === instanceId;
+      const edges = group.children.find((child) => child.isLineSegments);
+      if (!edges) return;
+      edges.material.color.setHex(selected ? 0xffffff : LAYER_STYLE.door.color);
+      edges.renderOrder = selected ? 5 : 2;
+    });
+  }
+
   /* 交付包竖直轴不是 z 时，用地板面给出竖直锚点（up=-Y→地板在最大 y；up=+Y→最小 y）。
    * 取竖直方向直方图里地板一侧的高密度平面，而不是极端分位数：地板面是真平面，
    * 分位数会落在“平面之外那几个离群点”上，让整包点云抬高十几厘米。 */
@@ -530,6 +554,7 @@ export function createViewer(host, options = {}) {
       new THREE.EdgesGeometry(geometry),
       new THREE.LineBasicMaterial({ color: style.color, transparent: true, opacity: 0.92 }),
     );
+    edges.renderOrder = 2;
     structureEdges.push(edges.material);
     group.add(fill, edges);
     group.position.set(item.center[0], item.center[1], item.center[2]);
@@ -722,18 +747,22 @@ export function createViewer(host, options = {}) {
 
   function applyMode() {
     const structure = state.mode === 'structure';
+    const overlay = state.mode === 'overlay';
     const view = layerVisibility(state.mode, state.layers, state.hasLayout);
-    if (structure) {
+    if (structure || overlay) {
       ensureGrid();
       structureFills.forEach((material) => {
-        material.opacity = Math.min(0.3, (material.userData.base || 0.05) * 3.4);
+        material.opacity = Math.min(overlay ? 0.1 : 0.3, (material.userData.base || 0.05) * (overlay ? 1.4 : 3.4));
       });
-      structureEdges.forEach((material) => { material.opacity = 1; });
+      structureEdges.forEach((material) => {
+        material.opacity = overlay ? 0.68 : 1;
+        material.depthTest = !overlay;
+      });
     } else {
       structureFills.forEach((material) => { material.opacity = material.userData.base || 0.05; });
-      structureEdges.forEach((material) => { material.opacity = 0.92; });
+      structureEdges.forEach((material) => { material.opacity = 0.92; material.depthTest = true; });
     }
-    // 真实场景保持纯点云：框架与标签只在“空间结构”里渲染（用户 2026-10-09 口径）
+    // 真实场景保持纯点云；整屋叠加模式才同时显示点云与框架。
     pcdGroup.visible = view.pcd;
     labelGroup.visible = view.labels;
     boxesGroup.visible = view.boxes;
@@ -744,7 +773,7 @@ export function createViewer(host, options = {}) {
   }
 
   function setMode(mode) {
-    state.mode = mode === 'structure' ? 'structure' : 'scene';
+    state.mode = ['scene', 'structure', 'overlay'].includes(mode) ? mode : 'scene';
     applyMode();
   }
 
@@ -937,6 +966,8 @@ export function createViewer(host, options = {}) {
     setPointScale,
     setAutoRotate,
     resetView,
+    focusBounds,
+    highlightDoor,
     screenshot,
     state,
   };

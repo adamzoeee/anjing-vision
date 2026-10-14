@@ -2,7 +2,7 @@
  * 固定在全屏最底层：缓慢旋转的房间结构线框 + 漂浮尘点 + 鼠标视差。
  * 数据来源：最近一次扫描的 layout.json（取不到时用程序化房间兜底）。 */
 
-import { getToken } from './api.js';
+import { getToken } from './api.js?v=house-scan-1';
 
 let instance = null;
 

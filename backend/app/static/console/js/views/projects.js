@@ -1,6 +1,6 @@
 /* 项目管理工作台：KPI 概览 + 项目卡片网格 */
 
-import { api } from '../api.js';
+import { api } from '../api.js?v=house-scan-1';
 import { icon } from '../icons.js';
 import {
   esc, toast, countUp, openModal, blueprintSVG, timeAgo, fmtScore, scoreTone,

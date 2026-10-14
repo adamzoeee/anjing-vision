@@ -1,18 +1,20 @@
 /* 安龄智境 · 大屏工作台外壳 v2：主题 / 动效 / 悬浮 3D / 页面转场 / 路由 */
 
-import { api, getSession, setSession, clearSession } from './api.js';
+import { api, getSession, setSession, clearSession } from './api.js?v=house-scan-1';
 import { icon } from './icons.js';
 import { toast, esc } from './ui.js';
 import { getBackground3D } from './background3d.js';
 import { loginView } from './views/login.js';
 import { projectsView } from './views/projects.js';
-import { projectView } from './views/project.js';
-import { roomView } from './views/room.js';
+import { projectView } from './views/project.js?v=house-scan-1';
+import { roomView } from './views/room.js?v=house-scan-1';
+import { houseView } from './views/house.js?v=house-scan-1';
 import { schemeView } from './views/scheme.js';
-import { screenView } from './views/screen.js';
+import { screenView } from './views/screen.js?v=house-scan-1';
 
 const root = document.getElementById('app');
 const LAST_SCAN_KEY = 'anjing.console.lastScan';
+const LAST_SCAN_TYPE_KEY = 'anjing.console.lastScanType';
 const SKIN_KEY = 'anjing.console.skin';
 const MOTION_KEY = 'anjing.console.motion';
 const RAIL_KEY = 'anjing.console.rail';
@@ -94,12 +96,16 @@ export function navigate(hash, { replace = false } = {}) {
     location.hash = hash;
   }
 }
-export function setLastScan(id) {
-  if (id) localStorage.setItem(LAST_SCAN_KEY, String(id));
+export function setLastScan(id, type = 'video') {
+  if (id) {
+    localStorage.setItem(LAST_SCAN_KEY, String(id));
+    localStorage.setItem(LAST_SCAN_TYPE_KEY, type);
+  }
 }
 export function getLastScan() {
   return localStorage.getItem(LAST_SCAN_KEY) || '';
 }
+function lastScanIsHouse() { return localStorage.getItem(LAST_SCAN_TYPE_KEY) === 'house_demo'; }
 export function logout() {
   clearSession();
   runCleanups();
@@ -119,7 +125,7 @@ function playSweep() {
 /* —— 宽度门帘 —— */
 function checkWidth() {
   const gate = document.getElementById('min-width-gate');
-  gate.hidden = window.innerWidth >= 1280;
+  gate.hidden = window.innerWidth >= 1280 || location.hash.startsWith('#/house/');
   const iconHost = document.getElementById('gate-icon');
   if (!iconHost.dataset.filled) {
     iconHost.innerHTML = icon('monitor', 44);
@@ -131,7 +137,9 @@ function checkWidth() {
 function buildShell() {
   const session = getSession() || {};
   const user = session.user || { name: '演示用户', org_name: '演示机构' };
-  const lastScan = getLastScan();
+  const currentHouse = /^#\/house\/(\d+)/.exec(location.hash);
+  const lastScan = currentHouse ? currentHouse[1] : getLastScan();
+  const houseScan = Boolean(currentHouse) || lastScanIsHouse();
   const hash = location.hash;
   const isActive = (prefix) => hash.startsWith(prefix);
   const initial = esc((user.name || '用').slice(0, 1));
@@ -157,12 +165,12 @@ function buildShell() {
         <a class="nav-item ${isActive('#/projects') ? 'active' : ''}" href="#/projects" data-rail-label="项目工作台">
           ${icon('folder', 18)}<span>项目工作台</span>
         </a>
-        <a class="nav-item ${isActive('#/scans') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="#/scans/${lastScan || '0'}" data-rail-label="房间工作台">
-          ${icon('home', 18)}<span>房间工作台</span>
+        <a class="nav-item ${isActive('#/scans') || isActive('#/house') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="${houseScan ? `#/house/${lastScan}` : `#/scans/${lastScan || '0'}`}" data-rail-label="${houseScan ? '整屋工作台' : '房间工作台'}">
+          ${icon('home', 18)}<span>${houseScan ? '整屋工作台' : '房间工作台'}</span>
         </a>
         <div class="nav-section eyebrow">演示</div>
-        <a class="nav-item ${isActive('#/screen') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="#/screen/${lastScan || '0'}" data-rail-label="大屏模式">
-          ${icon('monitor', 18)}<span>大屏模式</span>
+        <a class="nav-item ${isActive('#/screen') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="${houseScan ? `#/house/${lastScan}` : `#/screen/${lastScan || '0'}`}" data-rail-label="${houseScan ? '整屋展示' : '大屏模式'}">
+          ${icon('monitor', 18)}<span>${houseScan ? '整屋展示' : '大屏模式'}</span>
         </a>
       </nav>
       <div class="rail-tools">
@@ -238,6 +246,7 @@ const routes = [
   { re: /^#\/projects\/?$/, layout: 'shell', run: (ctx) => projectsView(ctx) },
   { re: /^#\/projects\/(\d+)\/?$/, layout: 'shell', run: (ctx, m) => projectView(ctx, Number(m[1])) },
   { re: /^#\/scans\/(\d+)\/?$/, layout: 'shell', run: (ctx, m) => roomView(ctx, Number(m[1])) },
+  { re: /^#\/house\/(\d+)\/?$/, layout: 'shell', run: (ctx, m) => houseView(ctx, Number(m[1])) },
   { re: /^#\/scans\/(\d+)\/schemes\/(\d+)\/?$/, layout: 'shell', run: (ctx, m) => schemeView(ctx, Number(m[1]), Number(m[2])) },
   { re: /^#\/screen\/(\d+)\/?$/, layout: 'bare', run: (ctx, m) => screenView(ctx, Number(m[1])) },
   { re: /^#\/login\/?$/, layout: 'bare', run: (ctx) => loginView(ctx) },
@@ -255,6 +264,7 @@ async function render() {
   checkWidth();
   runCleanups();
   const hash = location.hash || '';
+  root.classList.toggle('house-route', hash.startsWith('#/house/'));
   const session = getSession();
 
   if (!session && hash !== '#/login') {
@@ -265,7 +275,7 @@ async function render() {
   const matched = matchRoute(hash) || { route: routes[0], params: [] };
   if (!matched.route) return;
   const bare = matched.route.layout !== 'shell';
-  const isImmersive = hash.startsWith('#/screen') || hash.startsWith('#/scans');
+  const isImmersive = hash.startsWith('#/screen') || hash.startsWith('#/scans') || hash.startsWith('#/house');
 
   const mount = async () => {
     if (bare) {
