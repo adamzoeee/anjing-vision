@@ -1,6 +1,6 @@
 /* 登录页：品牌 3D 粒子视觉 + 玻璃登录卡 */
 
-import { api, getSession, setSession } from '../api.js';
+import { api, getSession, setSession } from '../api.js?v=house-scan-1';
 import { icon } from '../icons.js';
 import { toast, esc } from '../ui.js';
 

@@ -750,3 +750,65 @@
 /* 项目详情滚动区 */
 .view-project { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .scan-list { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* ---- 整屋 Scan ---- */
+.house-view { height: 100%; display: flex; flex-direction: column; min-height: 0; gap: 16px; }
+.house-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.house-heading h1 { font-size: 23px; line-height: 1.25; }
+.house-heading p { margin: 7px 0 0; color: var(--text-2); font-size: 13px; }
+.house-summary { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.house-summary span { padding: 10px 13px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--panel); color: var(--text-2); font-size: 12px; white-space: nowrap; }
+.house-summary strong { color: var(--text-1); font-size: 16px; margin-right: 4px; }
+.house-content { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(275px, 320px) minmax(0, 1fr); gap: 16px; }
+.house-sidebar { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 3px; }
+.house-panel { padding: 16px; }
+.house-panel-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.house-panel-title h2 { font-size: 15px; font-weight: 700; }
+.house-panel-title span { color: var(--text-3); font-size: 11px; }
+.house-room-list, .house-connection-list { display: flex; flex-direction: column; gap: 5px; }
+.house-room, .house-connection { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; border: 1px solid transparent; border-radius: var(--r-md); background: transparent; color: var(--text-1); padding: 11px 9px; cursor: pointer; }
+.house-room:hover, .house-connection:hover { border-color: var(--border-strong); background: var(--panel-strong); }
+.house-room:focus-visible, .house-connection:focus-visible, .house-mode-switch button:focus-visible, .house-layer:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.house-room-mark { flex: none; width: 10px; height: 28px; border-radius: 8px; background: var(--room-color); box-shadow: 0 0 12px var(--room-color); }
+.house-room strong, .house-connection strong { display: block; font-size: 13px; font-weight: 650; }
+.house-room small, .house-connection small { display: block; margin-top: 3px; color: var(--text-3); font-size: 11px; overflow-wrap: anywhere; }
+.house-room-doors, .house-door-width { flex: none; color: var(--text-2); font-size: 11px; }
+.house-door-id { flex: none; display: grid; place-items: center; min-width: 40px; height: 30px; border-radius: 9px; color: var(--door); background: color-mix(in srgb, var(--door) 13%, transparent); border: 1px solid color-mix(in srgb, var(--door) 32%, transparent); font-size: 11px; font-weight: 700; }
+.house-provenance { margin: 2px 5px 10px; color: var(--text-2); font-size: 11px; line-height: 1.55; }
+.house-stage { min-height: 550px; }
+#house-stage-host { position: absolute; inset: 0; }
+.house-stage-head { position: absolute; z-index: 7; top: 16px; left: 16px; right: 16px; display: flex; justify-content: space-between; gap: 12px; pointer-events: none; }
+.house-stage-head > * { pointer-events: auto; }
+.house-mode-switch, .house-stage-actions, .house-layer-bar { display: flex; align-items: center; gap: 5px; padding: 5px; border: 1px solid var(--border-strong); border-radius: var(--r-full); background: color-mix(in srgb, var(--panel-solid) 83%, transparent); backdrop-filter: blur(18px); }
+.house-mode-switch button, .house-layer { min-height: 44px; border: 0; border-radius: var(--r-full); background: transparent; color: var(--text-2); padding: 9px 13px; font-size: 12px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.house-mode-switch button.active { background: var(--grad-accent); color: var(--on-accent); }
+.house-stage-actions .icon-btn { min-width: 44px; min-height: 44px; border: 0; }
+.house-layer-bar { position: absolute; z-index: 7; left: 16px; top: 73px; border-radius: var(--r-lg); }
+.house-layer { padding: 7px 11px; }
+.house-layer.active { color: var(--text-1); background: var(--panel-strong); }
+.house-stage-foot { position: absolute; z-index: 6; left: 16px; right: 16px; bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: var(--r-md); color: var(--text-2); font-size: 12px; pointer-events: none; }
+.house-stage-foot span:last-child { color: var(--text-1); font-variant-numeric: tabular-nums; }
+.house-selection { position: absolute; z-index: 6; left: 16px; bottom: 64px; max-width: calc(100% - 32px); padding: 9px 13px; border-radius: var(--r-md); color: var(--text-1); font-size: 12px; font-weight: 650; pointer-events: none; }
+.house-selection[hidden] { display: none; }
+@media (max-width: 1500px) { .house-content { grid-template-columns: 285px minmax(0, 1fr); } .house-summary span { padding: 8px 10px; } }
+@media (max-width: 1279px) {
+  .app-root.house-route .rail { display: none; }
+  .app-root.house-route .main { min-width: 0; width: 100%; }
+  .app-root.house-route .topbar { height: 54px; padding: 0 16px; }
+  .app-root.house-route .view { overflow-y: auto; padding: 16px; }
+  .house-view { height: auto; min-height: 100%; }
+  .house-heading { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .house-summary { justify-content: flex-start; }
+  .house-content { display: flex; flex-direction: column-reverse; gap: 16px; }
+  .house-stage { flex: none; height: min(65vh, 650px); min-height: 420px; }
+  .house-sidebar { overflow: visible; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .house-provenance { grid-column: 1 / -1; }
+}
+@media (max-width: 690px) {
+  .house-sidebar { grid-template-columns: 1fr; }
+  .house-stage-head { top: 10px; left: 10px; right: 10px; }
+  .house-mode-switch button { padding: 8px 9px; font-size: 11px; }
+  .house-layer-bar { left: 10px; right: 10px; top: 62px; justify-content: space-between; }
+  .house-layer { padding: 7px 8px; font-size: 11px; }
+  .house-stage-foot { left: 10px; right: 10px; bottom: 10px; }
+}

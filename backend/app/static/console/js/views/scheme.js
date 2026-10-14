@@ -4,7 +4,7 @@
  * 图纸：改造后由服务端按派生状态渲染（/plan.png、/passage.png），改造前直接复用
  * 扫描自己的报告资源（structure_plan.png、passage_plan.png）——全部只读、不落盘。 */
 
-import { api, fetchAsset } from '../api.js';
+import { api, fetchAsset } from '../api.js?v=house-scan-1';
 import { icon } from '../icons.js';
 import { esc, toast, fmtScore, riskLevel, emptyState, lightbox } from '../ui.js';
 import { navigate } from '../app.js';

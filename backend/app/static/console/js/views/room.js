@@ -1,6 +1,6 @@
 /* 房间管理工作台：3D 点云 + 结构/尺寸 + 风险评估 + AI 改造模拟 + 方案库 */
 
-import { api } from '../api.js';
+import { api } from '../api.js?v=house-scan-1';
 import { icon } from '../icons.js';
 import {
   esc, toast, fmtMeters, fmtScore, fmtPct, riskLevel, scoreTone, typeName,
@@ -44,6 +44,11 @@ export async function loadRoomData(scanId) {
 }
 
 export async function roomView(ctx, scanId) {
+  const selectedScan = await api.getScan(scanId);
+  if (selectedScan.capture_type === 'house_demo') {
+    navigate(`#/house/${scanId}`, { replace: true });
+    return;
+  }
   setLastScan(scanId);
   let data = null;
   let viewer = null;

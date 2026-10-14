@@ -1,8 +1,6 @@
 const assert = require('node:assert/strict');
 
-/* 视图模式回归（用户 2026-10-09 口径）：真实场景只渲染点云与窗边展示层，
- * 结构框架（墙/门/窗/家具）与标签只在“空间结构”里渲染；结构模式下点云隐藏、
- * 框架按图层开关显示、背景网格启用。 */
+/* 房间与整屋视图模式回归：纯点云、纯框架、整屋叠加互不串扰。 */
 (async () => {
   const { layerVisibility } = await import('../app/static/console/js/viewer/mode.mjs');
   assert.equal(typeof layerVisibility, 'function', 'mode.mjs must export layerVisibility');
@@ -23,6 +21,13 @@ const assert = require('node:assert/strict');
   assert.equal(structure.labels, true, '标签开关打开时渲染标签');
   assert.equal(structure.grid, true, '空间结构启用网格');
   assert.equal(structure.walls && structure.doors && structure.windows && structure.objects, true);
+
+  // 整屋叠加：点云与框架同时出现，且没有遮挡场景的背景网格。
+  const overlay = layerVisibility('overlay', allOn, true);
+  assert.equal(overlay.pcd, true);
+  assert.equal(overlay.boxes, true);
+  assert.equal(overlay.labels, true);
+  assert.equal(overlay.grid, false);
 
   // 图层开关照常生效（结构视图的墙/门/窗/家具/标签过滤）
   const filtered = layerVisibility('structure', {
@@ -48,7 +53,7 @@ const assert = require('node:assert/strict');
   assert.equal(layerVisibility('structure', {}, true).walls, true);
   assert.equal(layerVisibility('scene', { pcd: false }, true).pcd, false);
 
-  console.log('PASS: scene mode renders the bare point cloud; frames and labels only in structure mode');
+  console.log('PASS: point cloud, framework and whole-house overlay modes');
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

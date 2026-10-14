@@ -88,6 +88,7 @@ def preview_manifest(
     calibrated_structure_json = work / "postprocess" / "structure_calibrated.json"
     measurements_json = work / "postprocess" / "measurements.json"
     frame_calibration_json = work / "postprocess" / "frame_calibration.json"
+    house_connections_json = work / "postprocess" / "house_connections.json"
     return {
         "scan_id": scan_id,
         "name": scan.project.name if scan.project else f"扫描 #{scan_id}",
@@ -109,6 +110,9 @@ def preview_manifest(
         "layout": f"/api/preview/{scan_id}/layout.json" if layout_json is not None else None,
         "structure": f"/api/preview/{scan_id}/structure.json" if (calibrated_structure_json.is_file() or structure_json.is_file()) else None,
         "measurements": f"/api/preview/{scan_id}/measurements.json" if measurements_json.is_file() else None,
+        "house_connections": (
+            f"/api/preview/{scan_id}/house-connections.json" if house_connections_json.is_file() else None
+        ),
         # 扫描级“整体框架校准”（手调参数固化）：点云保持原生尺寸，结构框架整体套矩阵
         "frame_calibration": (
             f"/api/preview/{scan_id}/frame_calibration.json"
@@ -118,6 +122,23 @@ def preview_manifest(
         "alignment": alignment,
         "status": scan.status,
     }
+
+
+@router.get("/{scan_id}/house-connections.json", response_class=FileResponse)
+def preview_house_connections(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    org_id: int = Depends(get_org_scope),
+    settings: Settings = Depends(get_settings),
+):
+    scan = db.get(Scan, scan_id)
+    if scan is None or scan.project.org_id != org_id:
+        raise HTTPException(404, "扫描任务不存在")
+    work = _work_dir(scan_id, settings)
+    path = (work / "postprocess" / "house_connections.json").resolve()
+    if not path.is_relative_to(work) or not path.is_file():
+        raise HTTPException(404, "整屋门连接数据不存在")
+    return FileResponse(path, media_type="application/json", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/{scan_id}/window-visual.json", response_class=FileResponse)

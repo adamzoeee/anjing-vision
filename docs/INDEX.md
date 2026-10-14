@@ -7,6 +7,7 @@
 | 目标 | 首选资料 / 入口 |
 |---|---|
 | 快速展示家庭点云和三维模型 | [两套 Demo 交付与启动](house-demo-delivery.md) |
+| 把家庭点云接入工作台并查看整屋门连接 | [整屋 Scan 工作台](house-scan-workbench.md) |
 | 展示存在空间问题的家具布局 | [风险布局 Demo](house-pointcloud-risk-demo.md) |
 | 导出 C4D 可编辑模型与渲染图 | [Blender / FBX / GLB 导出](house-render-export.md) |
 | 恢复 Scan46 当前接受结果 | [Scan46 精简交接](scan46-handoff-20261008.md) |
@@ -63,6 +64,7 @@
 | 文件 / 目录 | 用途 |
 |---|---|
 | [house_demo.py（生成模块）](../backend/pipeline/house_demo.py) | 房间、统一门洞、点云融合、真值和模型输出 |
+| [house_connectivity.py](../backend/pipeline/house_connectivity.py)、[house_scan.py](../backend/app/house_scan.py) | 门双侧配对、空间位姿求解、整屋 Scan 导入 |
 | [house_demo_assets.py](../backend/pipeline/house_demo_assets.py) | 家具及室内物体表面几何 |
 | [house_demo_lived.py](../backend/pipeline/house_demo_lived.py)、[house_demo_risk.py](../backend/pipeline/house_demo_risk.py) | 生活化 / 风险示例的独立布局配置 |
 | [house_demo_layout.py](../backend/pipeline/house_demo_layout.py) | 家具间距、局部路线净空、门内占用和几何规则建议 |
