@@ -36,6 +36,8 @@ def upload(
     org_id: int = Depends(get_org_scope),
 ):
     scan = _own_scan(scan_id, db, org_id)
+    if scan.capture_type not in ("video", "photos"):
+        raise HTTPException(409, "整屋 Scan 不能上传单房间素材")
     stored_paths: list[str] = []
     remaining = MAX_UPLOAD_BYTES
     try:
