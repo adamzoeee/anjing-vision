@@ -1,4 +1,5 @@
 .worktrees/
+.backups/
 backend/.venv/
 backend/data/
 data/
