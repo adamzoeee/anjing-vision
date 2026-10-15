@@ -145,4 +145,3 @@ def test_solver_never_reports_solved_for_not_evaluable_metric():
     assert result["shortfall"] == "该指标当前不可评估，无法给出达标方案。"
     assert result["edits"] == []
     assert result["score"]["after"] == result["score"]["before"], "不可评估时不得声称分数改善"
-
