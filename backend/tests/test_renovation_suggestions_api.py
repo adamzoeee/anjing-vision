@@ -69,4 +69,3 @@ def test_solve_rejects_not_evaluable_metric(client):
                     json={"metric_codes": ["door_width"]}, headers=headers)
     assert r.status_code == 422
     assert "不可评估" in r.json()["error"]["message"]
-
