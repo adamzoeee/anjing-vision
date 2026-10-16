@@ -833,3 +833,32 @@
   .house-layer { padding: 7px 8px; font-size: 11px; }
   .house-stage-foot { left: 10px; right: 10px; bottom: 10px; }
 }
+
+/* —— 用户管理（机构管理员） —— */
+.view-users { display: flex; flex-direction: column; min-height: 0; }
+.view-users > .panel { padding: var(--sp-5); }
+.view-users .k-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex: none;
+}
+.user-rows { display: flex; flex-direction: column; gap: 10px; margin-top: var(--sp-4); }
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.user-row .ur-main { flex: 1; min-width: 0; }
+.user-row .ur-name { font-weight: 600; }
+.user-row .ur-email { color: var(--text-3); font-size: 12.5px; overflow-wrap: anywhere; }
+.user-row .ur-badges { display: flex; gap: 8px; flex: none; }
+.user-row .ur-time { flex: none; font-size: 12.5px; }
+.user-row .ur-actions { display: flex; gap: 8px; flex: none; align-items: center; }

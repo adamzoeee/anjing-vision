@@ -28,6 +28,13 @@ export function clearSession() {
 export function getToken() {
   return getSession()?.token || '';
 }
+export function currentUser() {
+  return getSession()?.user || null;
+}
+/* 角色只用于隐藏/禁用入口，服务端 require_admin 才是最终边界 */
+export function isAdmin() {
+  return currentUser()?.role === 'admin';
+}
 
 function onUnauthorized() {
   clearSession();
@@ -143,8 +150,22 @@ export async function downloadAsset(path, filename) {
 /* —— 业务接口 —— */
 export const api = {
   login: (email, password) => request('/api/auth/login', { method: 'POST', json: { email, password } }),
-  demoLogin: () => request('/api/auth/demo-login', { method: 'POST', json: {} }),
   me: () => request('/api/auth/me'),
+  changePassword: (currentPassword, newPassword) => request('/api/auth/password', {
+    method: 'POST',
+    json: { current_password: currentPassword, new_password: newPassword },
+  }),
+
+  listUsers: () => request('/api/users'),
+  createUser: (name, email, password) => request('/api/users', {
+    method: 'POST',
+    json: { name, email, password },
+  }),
+  updateUser: (id, payload) => request(`/api/users/${id}`, { method: 'PATCH', json: payload }),
+  resetUserPassword: (id, password) => request(`/api/users/${id}/password`, {
+    method: 'POST',
+    json: { password },
+  }),
 
   listProjects: (limit = 60) => request(`/api/projects?limit=${limit}`),
   createProject: (name, address) => request('/api/projects', { method: 'POST', json: { name, address } }),

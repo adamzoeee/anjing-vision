@@ -6,7 +6,7 @@
 2. `scan46_最新结果补充包.zip`（之前的6.89MiB补充包）
 3. `scan46_窗户增量补充包.zip`（仅本次窗户组件、实拍展示层和选择配置）
 
-安装仓库要求的后端和 Flutter 依赖后，在仓库根目录执行，路径替换为实际文件位置：
+安装仓库要求的后端依赖后，在仓库根目录执行，路径替换为实际文件位置：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File backend\scripts\deploy_scan46.ps1 -FullBundlePath "D:\数据包\scan46_完整数据包.zip" -SupplementBundlePath "D:\数据包\scan46_最新结果补充包.zip" -WindowBundlePath "D:\数据包\scan46_窗户增量补充包.zip"
@@ -14,13 +14,12 @@ powershell -ExecutionPolicy Bypass -File backend\scripts\deploy_scan46.ps1 -Full
 
 在停止后端时执行数据恢复。脚本严格按完整包、原补充包、窗户增量包的顺序恢复；已有数据库会备份。
 三个包均由脚本自动解压，不需要手工合并。不要在第三个包之后重新覆盖旧包。
-本地演示的后端配置应使用 `DATABASE_URL=sqlite:///./anjing-local.db`、`DATA_DIR=./data`、
-`DEMO_LOGIN=true`、`DEMO_LOGIN_EMAIL=demo@demo.com`。
-公开生产部署应按仓库生产部署说明配置真实账号和鉴权，禁止开启演示登录。
+本地演示的后端配置应使用 `DATABASE_URL=sqlite:///./anjing-local.db`、`DATA_DIR=./data`。
+登录用仓库演示账户（机构「演示机构」，账号 `demo@anjing-vision.com`，密码与账号相同），或接手方自己的账号。
+演示登录旁路已于 2026-10-16 删除，公开部署请按生产说明配置真实账号和密钥，详见[账号与权限](accounts-and-permissions.md)。
 
-然后重启后端，并从仓库 `app` 目录启动或重新构建前端，API地址指向该后端。
-本机演示可执行 `flutter run -d web-server --web-port 3000 --dart-define=DEMO_LOGIN=true --dart-define=API_BASE_URL=http://127.0.0.1:8000`。
-旧浏览器缓存需要强制刷新。
+然后重启后端，浏览器打开 `http://127.0.0.1:8000/console` 登录工作台。业务界面只有工作台，没有独立前端服务；
+工作台入口页与静态资产每次回源校验，旧浏览器缓存不需要手工清理。
 
 ## 核对
 
