@@ -37,20 +37,11 @@
     try { return (JSON.parse(localStorage.getItem(SESSION_KEY) || '{}').token) || ''; } catch (e) { return ''; }
   }
   function headers() { var t = token(); return t ? { Authorization: 'Bearer ' + t } : {}; }
-  /* 没有控制台会话时自动走演示登录（本机 DEMO_LOGIN=true），避免卡在登录态上 */
+  /* 复用控制台登录态；没有会话就报错，不做任何旁路登录 */
   function ensureSession() {
     var existing = token();
     if (existing) return Promise.resolve(existing);
-    log('没有本地会话，尝试演示登录…');
-    return fetch('/api/auth/demo-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      .then(function (res) { return res.ok ? res.json() : Promise.reject(new Error('演示登录 HTTP ' + res.status)); })
-      .then(function (auth) {
-        localStorage.setItem(SESSION_KEY, JSON.stringify({
-          token: auth.token, user: auth.user, expiresAt: auth.expires_at || null, savedAt: Date.now(),
-        }));
-        log('演示登录成功');
-        return auth.token;
-      });
+    return Promise.reject(new Error('没有控制台登录态，请先在 /console 登录'));
   }
 
   /* ---------- 参数 ---------- */
@@ -626,28 +617,9 @@
   }
   load();
 
-  /* 没登录时的兜底：本机开着演示登录，点一下就能拿到会话（与控制台同一个 localStorage key） */
+  /* 没登录时的提示：先到控制台登录，页面复用同一个 localStorage 会话 */
   function showLoginHint() {
     statusEl.style.display = '';
-    if (params.get('demo') === '1') {
-      statusEl.innerHTML = '正在以演示账号登录…';
-      demoLogin();
-      return;
-    }
-    statusEl.innerHTML = '当前浏览器没有控制台登录态。<br>可以先 <a href="/console" style="color:#7dd3fc">打开控制台</a> 登录，'
-      + '或直接 <button id="demo-login" class="primary" style="margin-top:8px">一键进入演示并继续</button>';
-    var btn = document.getElementById('demo-login');
-    btn.onclick = demoLogin;
-  }
-  function demoLogin() {
-    fetch('/api/auth/demo-login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
-      .then(function (res) { return res.ok ? res.json() : Promise.reject(new Error('HTTP ' + res.status)); })
-      .then(function (auth) {
-        localStorage.setItem(SESSION_KEY, JSON.stringify({
-          token: auth.token, user: auth.user, expiresAt: auth.expires_at || null, savedAt: Date.now(),
-        }));
-        location.reload();
-      })
-      .catch(function (error) { fatal(error); });
+    statusEl.innerHTML = '当前浏览器没有控制台登录态。<br>请先 <a href="/console" style="color:#7dd3fc">打开控制台</a> 登录后回到本页。';
   }
 })();

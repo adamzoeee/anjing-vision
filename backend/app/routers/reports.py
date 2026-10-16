@@ -191,7 +191,7 @@ def compare(
     db: Session = Depends(get_db),
     org_id: int = Depends(get_org_scope),
 ):
-    """按扫描 ID 对比；a/b 仅作为现有 Flutter 的兼容参数。"""
+    """按扫描 ID 对比；a/b 为早期客户端遗留的兼容参数（新客户端请用 before/after_scan_id）。"""
     if (
         before_scan_id is not None
         and legacy_before_scan_id is not None

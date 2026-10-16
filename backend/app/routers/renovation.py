@@ -30,8 +30,8 @@ from pipeline.structure_figure import render_structure_plan_to
 
 from ..config import Settings, get_settings
 from ..db import get_db
-from ..deps import get_org_scope
-from ..models import RenovationScheme, Scan
+from ..deps import get_org_scope, require_admin
+from ..models import RenovationScheme, Scan, User
 
 router = APIRouter()
 
@@ -266,8 +266,8 @@ def list_schemes(scan_id: int, db: Session = Depends(get_db), org_id: int = Depe
 
 @router.post("/scans/{scan_id}/schemes")
 def create_scheme(scan_id: int, payload: SchemeCreateRequest, db: Session = Depends(get_db),
-                  org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
-    _, work = _scan_and_work(scan_id, db, org_id, settings)
+                  admin: User = Depends(require_admin), settings: Settings = Depends(get_settings)):
+    _, work = _scan_and_work(scan_id, db, admin.org_id, settings)
     measurements, structure = _require_measurements(work), _load_structure(work)
     validation = build_scheme(measurements, structure, payload.edits)
     if validation["conflicts"]:
@@ -330,8 +330,8 @@ def scheme_passage_png(scan_id: int, scheme_id: int, db: Session = Depends(get_d
 
 @router.patch("/scans/{scan_id}/schemes/{scheme_id}")
 def rename_scheme(scan_id: int, scheme_id: int, payload: SchemePatchRequest, db: Session = Depends(get_db),
-                  org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
-    _scan_and_work(scan_id, db, org_id, settings)
+                  admin: User = Depends(require_admin), settings: Settings = Depends(get_settings)):
+    _scan_and_work(scan_id, db, admin.org_id, settings)
     scheme = _get_scheme(db, scan_id, scheme_id)
     scheme.name = payload.name
     db.commit()
@@ -341,8 +341,8 @@ def rename_scheme(scan_id: int, scheme_id: int, payload: SchemePatchRequest, db:
 
 @router.delete("/scans/{scan_id}/schemes/{scheme_id}")
 def delete_scheme(scan_id: int, scheme_id: int, db: Session = Depends(get_db),
-                  org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
-    _scan_and_work(scan_id, db, org_id, settings)
+                  admin: User = Depends(require_admin), settings: Settings = Depends(get_settings)):
+    _scan_and_work(scan_id, db, admin.org_id, settings)
     scheme = _get_scheme(db, scan_id, scheme_id)
     db.delete(scheme)
     db.commit()
@@ -358,10 +358,10 @@ async def export_scheme_pdf(
     scheme_id: int,
     plan: UploadFile = File(...),
     db: Session = Depends(get_db),
-    org_id: int = Depends(get_org_scope),
+    admin: User = Depends(require_admin),
     settings: Settings = Depends(get_settings),
 ):
-    scan, work = _scan_and_work(scan_id, db, org_id, settings)
+    scan, work = _scan_and_work(scan_id, db, admin.org_id, settings)
     scheme = _get_scheme(db, scan_id, scheme_id)
     measurements, structure = _require_measurements(work), _load_structure(work)
     payload = _scheme_payload(scan_id, measurements, structure, scheme.edits or [])

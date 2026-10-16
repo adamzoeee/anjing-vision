@@ -1,6 +1,6 @@
 /* 项目管理工作台：KPI 概览 + 项目卡片网格 */
 
-import { api } from '../api.js?v=house-scan-1';
+import { api, isAdmin } from '../api.js?v=house-scan-1';
 import { icon } from '../icons.js';
 import {
   esc, toast, countUp, openModal, blueprintSVG, timeAgo, fmtScore, scoreTone,
@@ -12,12 +12,15 @@ import { navigate } from '../app.js';
 export async function projectsView(ctx) {
   ctx.title([{ label: '项目工作台', current: true }]);
   ctx.actions.innerHTML = '';
+  const admin = isAdmin();
 
-  const newBtn = document.createElement('button');
-  newBtn.className = 'btn btn-primary';
-  newBtn.innerHTML = `${icon('plus', 16)} 新建项目`;
-  newBtn.addEventListener('click', () => openCreateProject(load));
-  ctx.actions.appendChild(newBtn);
+  if (admin) {
+    const newBtn = document.createElement('button');
+    newBtn.className = 'btn btn-primary';
+    newBtn.innerHTML = `${icon('plus', 16)} 新建项目`;
+    newBtn.addEventListener('click', () => openCreateProject(load));
+    ctx.actions.appendChild(newBtn);
+  }
 
   ctx.host.innerHTML = `
     <div class="view-projects">
@@ -80,20 +83,23 @@ export async function projectsView(ctx) {
         ${projects.length ? `
         <div class="projects-grid">
           ${projects.map((project, index) => projectCard(project, scanLists[index], reportByScan, index)).join('')}
+          ${admin ? `
           <div class="new-project-card" id="card-new-project" role="button" tabindex="0">
             <div class="np-inner">
               <div class="np-plus">${icon('plus', 20)}</div>
               <div>新建项目</div>
               <div style="font-size:12px;color:var(--text-4)">为一处住宅建立评估项目</div>
             </div>
-          </div>
+          </div>` : ''}
         </div>` : `
         <div class="glass panel">
           ${emptyState({
             iconName: 'folder',
             title: '还没有项目',
-            desc: '创建第一个项目，上传房间视频，系统将自动完成三维重建与风险评估。',
-            action: '<button class="btn btn-primary" id="btn-empty-new">新建项目</button>',
+            desc: admin
+              ? '创建第一个项目，上传房间视频，系统将自动完成三维重建与风险评估。'
+              : '当前机构还没有项目。成员账号为只读，请让机构管理员创建项目。',
+            action: admin ? '<button class="btn btn-primary" id="btn-empty-new">新建项目</button>' : '',
           })}
         </div>`}
       </div>`;

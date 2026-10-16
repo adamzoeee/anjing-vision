@@ -2,18 +2,34 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..config import Settings, get_settings
 from ..db import get_db
 from ..deps import get_current_user
 from ..models import Organization, User
-from ..schemas import AuthOut, DemoLoginIn, LoginIn, RegisterIn, UserOut
+from ..schemas import AuthOut, LoginIn, PasswordChangeIn, RegisterIn, UserOut
 from ..security import create_token, hash_password, verify_password
 
 router = APIRouter()
 
 
+def _user_payload(user: User) -> dict:
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
+        "org_name": user.org.name,
+    }
+
+
+def _auth_payload(user: User) -> AuthOut:
+    """登录 / 注册返回体：JWT + 账号画像（含机构名与角色）。"""
+    return AuthOut(token=create_token(user.id, user.org_id), user=_user_payload(user))
+
+
 @router.post("/register", response_model=AuthOut)
 def register(data: RegisterIn, db: Session = Depends(get_db)):
+    """公开注册：机构不存在则建机构并成为其管理员，否则作为成员加入已有机构。"""
     if db.query(User).filter(User.email == data.email).first():
         raise HTTPException(400, "邮箱已注册")
     org = db.query(Organization).filter(Organization.name == data.org_name).first()
@@ -68,51 +84,37 @@ def register(data: RegisterIn, db: Session = Depends(get_db)):
             db.rollback()
             raise HTTPException(400, "邮箱或机构已存在") from retry_exc
     db.refresh(user)
-    return AuthOut(token=create_token(user.id, user.org_id),
-                   user={"id": user.id, "name": user.name, "email": user.email,
-                         "role": user.role, "org_name": org.name})
+    return _auth_payload(user)
 
 
 @router.post("/login", response_model=AuthOut)
-def login(
-    data: LoginIn | DemoLoginIn,
-    db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
-):
-    if settings.demo_login:
-        user = db.query(User).filter(User.email == settings.demo_login_email).first()
-        if user is None:
-            raise HTTPException(503, "演示账号不存在")
-        return AuthOut(token=create_token(user.id, user.org_id),
-                       user={"id": user.id, "name": user.name, "email": user.email,
-                             "role": user.role, "org_name": user.org.name})
-    if not isinstance(data, LoginIn):
-        raise HTTPException(422, "邮箱格式不正确")
+def login(data: LoginIn, db: Session = Depends(get_db)):
+    """统一登录入口：只接受邮箱 + 密码，没有旁路。"""
     user = db.query(User).filter(User.email == data.email).first()
     if user is None or not verify_password(data.password, user.password_hash):
         raise HTTPException(401, "邮箱或密码错误")
-    return AuthOut(token=create_token(user.id, user.org_id),
-                   user={"id": user.id, "name": user.name, "email": user.email,
-                         "role": user.role, "org_name": user.org.name})
+    if not user.is_active:
+        raise HTTPException(403, "账号已停用，请联系机构管理员")
+    return _auth_payload(user)
 
 
-@router.post("/demo-login", response_model=AuthOut)
-def demo_login(
-    _data: DemoLoginIn,
+@router.post("/password", response_model=UserOut)
+def change_password(
+    data: PasswordChangeIn,
     db: Session = Depends(get_db),
-    settings: Settings = Depends(get_settings),
+    user: User = Depends(get_current_user),
 ):
-    if not settings.demo_login:
-        raise HTTPException(404, "演示登录未启用")
-    user = db.query(User).filter(User.email == settings.demo_login_email).first()
-    if user is None:
-        raise HTTPException(503, "演示账号不存在")
-    return AuthOut(token=create_token(user.id, user.org_id),
-                   user={"id": user.id, "name": user.name, "email": user.email,
-                         "role": user.role, "org_name": user.org.name})
+    """本人修改密码：必须提供原密码。"""
+    if not verify_password(data.current_password, user.password_hash):
+        raise HTTPException(400, "原密码不正确")
+    if data.new_password == data.current_password:
+        raise HTTPException(400, "新密码不能与原密码相同")
+    user.password_hash = hash_password(data.new_password)
+    db.commit()
+    db.refresh(user)
+    return UserOut(**_user_payload(user))
 
 
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
-    return UserOut(id=user.id, name=user.name, email=user.email, role=user.role,
-                   org_name=user.org.name)
+    return UserOut(**_user_payload(user))

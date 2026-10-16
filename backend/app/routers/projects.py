@@ -5,10 +5,10 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings, get_settings
 from ..db import get_db
-from ..deps import get_org_scope
+from ..deps import get_org_scope, require_admin
 from ..house_scan import load_house_package, write_house_scan
 from ..room_assembly import read_room, room_catalog, solve_assembly, write_assembly
-from ..models import Project, Scan
+from ..models import Project, Scan, User
 from ..schemas import ProjectIn, ProjectOut, ScanIn, ScanOut
 router = APIRouter()
 
@@ -57,8 +57,9 @@ def list_projects(
 
 
 @router.post("", response_model=ProjectOut)
-def create_project(data: ProjectIn, db: Session = Depends(get_db), org_id: int = Depends(get_org_scope)):
-    p = Project(org_id=org_id, name=data.name, address=data.address)
+def create_project(data: ProjectIn, db: Session = Depends(get_db),
+                   admin: User = Depends(require_admin)):
+    p = Project(org_id=admin.org_id, name=data.name, address=data.address)
     db.add(p)
     db.commit()
     db.refresh(p)
@@ -75,9 +76,9 @@ def get_project(project_id: int, db: Session = Depends(get_db), org_id: int = De
 
 @router.post("/{project_id}/scans", response_model=ScanOut)
 def create_scan(project_id: int, data: ScanIn, db: Session = Depends(get_db),
-                org_id: int = Depends(get_org_scope)):
+                admin: User = Depends(require_admin)):
     p = db.get(Project, project_id)
-    if p is None or p.org_id != org_id:
+    if p is None or p.org_id != admin.org_id:
         raise HTTPException(404, "项目不存在")
     scan = Scan(project_id=project_id, capture_type=data.capture_type)
     db.add(scan)
@@ -98,9 +99,10 @@ def list_house_rooms(project_id: int, db: Session = Depends(get_db),
 
 @router.post("/{project_id}/scans/house", response_model=ScanOut)
 def assemble_house(project_id: int, data: HouseAssemblyIn, db: Session = Depends(get_db),
-                   org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
+                   admin: User = Depends(require_admin),
+                   settings: Settings = Depends(get_settings)):
     project = db.get(Project, project_id)
-    if project is None or project.org_id != org_id:
+    if project is None or project.org_id != admin.org_id:
         raise HTTPException(404, "项目不存在")
     if len(set(data.scan_ids)) != len(data.scan_ids):
         raise HTTPException(422, "房间 Scan 不能重复")
@@ -144,11 +146,11 @@ def assemble_house(project_id: int, data: HouseAssemblyIn, db: Session = Depends
 def import_house_demo(
     project_id: int,
     db: Session = Depends(get_db),
-    org_id: int = Depends(get_org_scope),
+    admin: User = Depends(require_admin),
     settings: Settings = Depends(get_settings),
 ):
     project = db.get(Project, project_id)
-    if project is None or project.org_id != org_id:
+    if project is None or project.org_id != admin.org_id:
         raise HTTPException(404, "项目不存在")
     existing = (
         db.query(Scan)

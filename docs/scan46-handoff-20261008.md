@@ -47,19 +47,10 @@ $env:ENVIRONMENT = 'development'
 $env:DATABASE_URL = 'sqlite:///./scan46-handoff.db'
 $env:DATA_DIR = './data'
 $env:SECRET_KEY = (python -c "import secrets; print(secrets.token_hex(32))")
-$env:DEMO_LOGIN = 'true'
-$env:DEMO_LOGIN_EMAIL = 'demo@demo.com'
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-另一个窗口进入仓库 `app`：
-
-```powershell
-flutter pub get
-flutter run -d web-server --web-hostname 127.0.0.1 --web-port 3000 --dart-define=DEMO_LOGIN=true --dart-define=API_BASE_URL=http://127.0.0.1:8000
-```
-
-打开 `http://127.0.0.1:3000`，演示登录，进入“我的全黑家”扫描46的3D预览。不要复用旧JWT链接。演示登录仅供本机验收，**不得用这些设置公开部署**。线上使用接手方自己的认证、数据库和密钥。
+然后打开 `http://127.0.0.1:8000/console` 登录工作台（演示账户 `demo@anjing-vision.com`，密码与账号相同），进入“我的全黑家 → 房间工作台”查看扫描46的3D预览。不要复用旧JWT链接。演示登录旁路已于 2026-10-16 删除，公开部署**不得**沿用本机配置，线上使用接手方自己的认证、数据库和密钥，详见[账号与权限](accounts-and-permissions.md)。
 
 ## 接手修改重点
 

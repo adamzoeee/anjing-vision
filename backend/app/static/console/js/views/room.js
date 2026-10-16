@@ -1,6 +1,6 @@
 /* 房间管理工作台：3D 点云 + 结构/尺寸 + 风险评估 + AI 改造模拟 + 方案库 */
 
-import { api } from '../api.js?v=house-flow-1';
+import { api, isAdmin } from '../api.js?v=house-flow-1';
 import { icon } from '../icons.js';
 import {
   esc, toast, fmtMeters, fmtScore, fmtPct, riskLevel, scoreTone, typeName,
@@ -802,7 +802,9 @@ export async function roomView(ctx, scanId) {
           }).join('')}
         </div>` : ''}
         <div class="row gap-2" style="margin-top:12px">
+          ${isAdmin() ? `
           <button class="btn btn-sm btn-primary" id="btn-save-scheme">${icon('save', 13)} 保存为方案</button>
+          ` : ''}
           <button class="btn btn-sm" id="btn-clear-sim">${icon('x', 13)} 清除结果</button>
         </div>
         <div class="sim-disclaimer">${esc(result.disclaimer || '沙盒模拟 · 未修改真实数据')}</div>
@@ -876,8 +878,9 @@ export async function roomView(ctx, scanId) {
             <div class="sc-score">${fmtScore(scheme.score)}</div>
             <div class="sc-actions">
               <button class="icon-btn" data-scheme-action="view" data-id="${scheme.id}" data-tip="方案可视化" aria-label="方案可视化">${icon('image', 15)}</button>
+              ${isAdmin() ? `
               <button class="icon-btn" data-scheme-action="export" data-id="${scheme.id}" data-tip="导出 PDF" aria-label="导出 PDF">${icon('download', 15)}</button>
-              <button class="icon-btn" data-scheme-action="delete" data-id="${scheme.id}" data-tip="删除" aria-label="删除">${icon('trash', 15)}</button>
+              <button class="icon-btn" data-scheme-action="delete" data-id="${scheme.id}" data-tip="删除" aria-label="删除">${icon('trash', 15)}</button>` : ''}
             </div>
           </div>`).join('')}
       </div>`;
