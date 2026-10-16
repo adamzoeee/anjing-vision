@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     demo_login: bool = False
     demo_login_email: str | None = None
 
+    deepseek_api_key: str | None = Field(default=None, repr=False, exclude=True)
+    deepseek_model: str = "deepseek-flash"
+    deepseek_timeout_s: float = Field(default=20, gt=0, allow_inf_nan=False)
+
     storage_backend: Literal["local", "minio"] = "local"
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
