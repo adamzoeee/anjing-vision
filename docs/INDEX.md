@@ -12,6 +12,7 @@
 | 导出 C4D 可编辑模型与渲染图 | [Blender / FBX / GLB 导出](house-render-export.md) |
 | 恢复 Scan46 当前接受结果 | [Scan46 精简交接](scan46-handoff-20261008.md) |
 | 搭建 API、前端及视频主流程 | [首页运行说明](../README.md)、[配置样例](../backend/.env.example) |
+| 账号、角色、数据隔离与演示账户 | [账号与权限](accounts-and-permissions.md) |
 | 理解正式测量与风险评分 | [空间指标验收](spatial-metrics-acceptance.md)、[风险开发报告](risk-assessment-development-report.md) |
 | 查看窗边修复的来源和未解决问题 | [源数据可追溯修复](scan46-source-traced-repair.md)、[窗边问题交接](scan46-window-black-handoff.md) |
 
@@ -46,16 +47,17 @@
 | 功能 | 路由 / 页面 | 实现 |
 |---|---|---|
 | 健康 | `GET /api/health`、`GET /api/health/ready` | [main.py](../backend/app/main.py) |
-| 登录与机构 | `/api/auth` | [auth.py](../backend/app/routers/auth.py)、[login_page.dart](../app/lib/pages/login_page.dart) |
+| 登录与机构 | `/api/auth` | [auth.py](../backend/app/routers/auth.py)、[login.js](../backend/app/static/console/js/views/login.js) |
+| 账号与权限 | `/api/users`（仅管理员） | [users.py](../backend/app/routers/users.py)、[users.js](../backend/app/static/console/js/views/users.js)、[deps.py](../backend/app/deps.py) |
 | 项目与扫描 | `/api/projects`、`/api/scans` | [projects.py](../backend/app/routers/projects.py)、[scans.py](../backend/app/routers/scans.py) |
-| 视频采集 / 上传 | `POST /api/scans/{scan_id}/upload` | [capture_page.dart](../app/lib/pages/capture_page.dart)、[upload_page.dart](../app/lib/pages/upload_page.dart) |
-| 报告 | `GET /api/reports/scans/{scan_id}` | [reports.py](../backend/app/routers/reports.py)、[report_page.dart](../app/lib/pages/report_page.dart) |
+| 视频上传 | `POST /api/scans/{scan_id}/upload` | [scans.py](../backend/app/routers/scans.py)、[project.js](../backend/app/static/console/js/views/project.js) |
+| 报告 | `GET /api/reports/scans/{scan_id}` | [reports.py](../backend/app/routers/reports.py)、[room.js](../backend/app/static/console/js/views/room.js) |
 | 三维查看 | `/preview/{scan_id}`、`/api/preview/{scan_id}/manifest.json` | [preview.py](../backend/app/routers/preview.py)、[viewer.js](../backend/app/static/preview/viewer.js) |
 | 展示层 | 点云预览的六个结构展示层 | [visual_layers.js](../backend/app/static/preview/visual_layers.js) |
 | 正式评估数据 | `/api/preview/{scan_id}/spatial-metrics.json`、`risk-assessment.json` | [preview.py](../backend/app/routers/preview.py) |
 | 改造助手 | `/api/assistant/scans/{scan_id}/suggestions`、`simulate` | [renovation.py](../backend/app/routers/renovation.py) |
-| API 地址与产物解析 | `API_BASE_URL`、report / artifact 模型 | [client.dart](../app/lib/api/client.dart)、[models.dart](../app/lib/api/models.dart) |
-| 历史对比 | 扫描比较界面 | [compare_page.dart](../app/lib/pages/compare_page.dart) |
+| API 客户端与产物解析 | JWT 会话、二进制资源、业务接口 | [api.js](../backend/app/static/console/js/api.js) |
+| 历史对比 | `GET /api/reports/compare` | [reports.py](../backend/app/routers/reports.py) |
 
 业务接口的字段与授权规则以运行中的 `/docs` 为准；静态 Demo 不经过业务认证或任务队列。
 
@@ -124,9 +126,11 @@
 | 正式风险与报告集成 | [test_risk_assessment.py](../backend/tests/test_risk_assessment.py)、[test_pipeline_risk_integration.py](../backend/tests/test_pipeline_risk_integration.py)、[test_pdf_report.py](../backend/tests/test_pdf_report.py) |
 | 查看器 | [test_preview_chunks.cjs](../backend/tests/test_preview_chunks.cjs)、[room_camera](../backend/tests/test_preview_room_camera.cjs)、[visual_layers](../backend/tests/test_preview_visual_layers.cjs) |
 | Scan46 交付 | [test_scan46_delivery.py](../backend/tests/test_scan46_delivery.py) |
-| Flutter | [app/test/](../app/test/)；analyze、models、报告、登录、采集等组件测试 |
+| 账号与权限 | [test_auth_api.py](../backend/tests/test_auth_api.py)、[test_users_api.py](../backend/tests/test_users_api.py)、[test_permissions.py](../backend/tests/test_permissions.py) |
 
-后端 pytest 从 `backend` 工作目录运行，Flutter 从 `app` 运行。文档中的历史测试数字有对应验收时间和范围，不替代当前全量回归。
+后端 pytest 从 `backend` 工作目录运行。文档中的历史测试数字有对应验收时间和范围，不替代当前全量回归。
+
+> 2026-10-16：Flutter 客户端（原 `app/`）已移除，业务界面只剩 `/console` 工作台；`app/lib/**`、`app/test/**` 等路径只存在于 git 历史与早期设计文档中。账号与权限规则见[账号与权限](accounts-and-permissions.md)。
 
 ## 文档索引
 
@@ -153,6 +157,11 @@
 - [spatial-metrics-acceptance.md](spatial-metrics-acceptance.md)：正式空间指标验收。
 - [risk-assessment-baseline.md](risk-assessment-baseline.md)：开发基准和历史问题。
 - [risk-assessment-development-report.md](risk-assessment-development-report.md)：正式评分、报告集成与历史回归结论。
+
+### 账号与工作台
+
+- [accounts-and-permissions.md](accounts-and-permissions.md)：机构 / 用户模型、权限矩阵、演示账户与迁移步骤。
+- [house-scan-workbench.md](house-scan-workbench.md)：逐房间扫描与整屋拼接工作台。
 
 ### 历史设计与研究
 

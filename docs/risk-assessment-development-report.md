@@ -219,6 +219,9 @@ PDF 不执行阈值判断、不重算分数，并明确展示 `not_evaluable` �
 
 ## 16. Flutter
 
+> 2026-10-16：本节记录的 Flutter 报告页已随 Flutter 客户端移除（工作台成为唯一业务界面）。同名能力现由
+> `backend/app/static/console/js/views/room.js` 与报告接口承担，后端契约未变；本节保留为当时的验收记录。
+
 Flutter 报告页已支持：
 
 - 正式 overall score；

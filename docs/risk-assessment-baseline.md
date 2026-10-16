@@ -35,7 +35,7 @@ The task brief listed six known failures. The current checkout therefore has two
 | Risk rules | `pipeline/rules.py` | Eight legacy rules; red/yellow/green vocabulary; legacy 40/40/20 categories | Replace official path with centralized versioned rules and low/medium/high output while retaining explicit legacy compatibility |
 | Official scoring | `pipeline/rules.py` | Legacy worst-item scoring | Implement a single official 40/30/30 score with insufficient-data semantics |
 | Pipeline integration | `app/tasks/pipeline_runner.py` | Risk identification and scoring are explicitly deferred | Wire the unified backend result after structured artifacts exist |
-| Flutter report | `app/lib/pages/report_page.dart` | Displays the legacy report shape | Make it a renderer of the backend unified payload only |
+| Client report page | `app/lib/pages/report_page.dart`（2026-10-16 已随 Flutter 客户端移除） | Displays the legacy report shape | Renderer of the backend unified payload only；现由 `backend/app/static/console/js/views/room.js` 承担 |
 | PDF | `pipeline/pdf_report.py` | Contains duplicated risk labels/advice | Consume the unified payload; do not make independent decisions |
 
 ## Hard boundaries

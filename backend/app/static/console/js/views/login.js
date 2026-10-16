@@ -214,8 +214,6 @@ export function loginView(ctx) {
             <div class="field error hidden" id="login-error" role="alert"></div>
             <button class="btn btn-primary btn-lg" id="btn-login" type="submit">${icon('arrowRight', 17)} 登录工作台</button>
           </form>
-          <div class="login-divider">或</div>
-          <button class="btn btn-lg" id="btn-demo" style="width:100%">${icon('sparkles', 17)} 一键进入演示</button>
           <div class="login-foot">安龄智境 · 居家适老化安全评估系统<br>大屏工作台 · 桌面端专用（≥1280px）</div>
         </div>
       </div>
@@ -232,7 +230,6 @@ export function loginView(ctx) {
 
   const form = document.getElementById('login-form');
   const btnLogin = document.getElementById('btn-login');
-  const btnDemo = document.getElementById('btn-demo');
   const errorEl = document.getElementById('login-error');
 
   const setLoading = (btn, loading, label) => {
@@ -240,7 +237,6 @@ export function loginView(ctx) {
     btn.innerHTML = loading ? `<span class="spinner"></span> ${label}` : btn.dataset.html;
   };
   btnLogin.dataset.html = btnLogin.innerHTML;
-  btnDemo.dataset.html = btnDemo.innerHTML;
 
   const enter = (auth, message) => {
     setSession({ token: auth.token, user: auth.user });
@@ -270,14 +266,4 @@ export function loginView(ctx) {
     }
   });
 
-  btnDemo.addEventListener('click', async () => {
-    setLoading(btnDemo, true, '正在进入演示…');
-    try {
-      const auth = await api.demoLogin();
-      enter(auth, '已进入演示环境');
-    } catch (error) {
-      toast('error', '演示登录失败', error?.message || '');
-      setLoading(btnDemo, false);
-    }
-  });
 }
