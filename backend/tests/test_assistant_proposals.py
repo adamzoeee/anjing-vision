@@ -158,6 +158,56 @@ def test_relabeling_assumed_object_does_not_make_a_new_strategy(scheme_inputs):
     assert result["proposals"] == []
 
 
+@pytest.mark.parametrize("obstacle_collection", ["geometric_obstacles", "walls", "semantic_instances"])
+def test_moves_cannot_overlap_structured_obstacles(scheme_inputs, obstacle_collection):
+    m, s = scheme_inputs
+    s[obstacle_collection].append({"instance_id": "fixed_obstacle", "id": "fixed_obstacle",
+                                   "label": "cabinet", "center": [1.2, 1.4, 0.2],
+                                   "size": [0.4, 0.4, 0.4], "rotation_z_deg": 0})
+    result = _engine()(m, s, None, lambda context, feedback: _valid_candidates()[:2])
+    assert result["status"] == "insufficient"
+    assert result["proposals"] == []
+    assert "geometry_conflict" in {r["reason"] for r in result["rejections"]}
+
+
+def test_assumed_furniture_cannot_overlap_structured_obstacle(scheme_inputs):
+    m, s = scheme_inputs
+    s["geometric_obstacles"].append({"instance_id": "fixed_box", "center": [3.5, 3.5, 0.25],
+                                      "size": [0.4, 0.4, 0.5]})
+    invalid = _candidate([
+        {"op": "move", "target": "desk_001", "dx": 0, "dy": -0.6},
+        {"op": "add", "label": "chair", "center": [3.5, 3.5, 0.25], "size": [0.3, 0.3, 0.5]},
+    ])
+    result = _engine()(m, s, None, lambda context, feedback: [invalid, _valid_candidates()[1]])
+    assert result["status"] == "insufficient"
+    assert "geometry_conflict" in {r["reason"] for r in result["rejections"]}
+
+
+@pytest.mark.parametrize("height", [1.0, 1.4])
+def test_vertical_separation_from_structured_obstacle_is_allowed(scheme_inputs, height):
+    m, s = scheme_inputs
+    # Desk top is z=0.8: the obstacle either touches its top or is above it.
+    s["geometric_obstacles"].append({"instance_id": "raised_box", "center": [1.2, 1.4, height],
+                                      "size": [0.4, 0.4, 0.4]})
+    result = _engine()(m, s, None, lambda context, feedback: _valid_candidates()[:2])
+    assert result["status"] == "ready"
+    assert len(result["proposals"]) == 2
+    assert result["proposals"][0]["edits"] == _valid_candidates()[0]["edits"]
+
+
+def test_cancelling_rotations_do_not_make_a_second_move_strategy(scheme_inputs):
+    m, s = scheme_inputs
+    variant = _candidate([
+        {"op": "move", "target": "desk_001", "dx": 0, "dy": -0.65},
+        {"op": "rotate", "target": "desk_001", "quarter_turns": 1},
+        {"op": "rotate", "target": "desk_001", "quarter_turns": 3},
+    ])
+    result = _engine()(m, s, None, lambda context, feedback: [_valid_candidates()[0], variant])
+    assert result["status"] == "insufficient"
+    assert result["proposals"] == []
+    assert "duplicate_strategy" in {r["reason"] for r in result["rejections"]}
+
+
 def test_api_changed_inputs_during_generation_return_conflict(client, scheme_inputs, monkeypatch):
     route = _fake_model(monkeypatch)
     sid, headers, post = _scan(client, scheme_inputs)

@@ -7,7 +7,7 @@ import math
 from typing import Callable
 
 from pipeline.scheme_assessment import build_scheme, diff_assessments
-from pipeline.scheme_state import apply_edits, object_id
+from pipeline.scheme_state import _corners, apply_edits, object_id, overlap_depth
 
 DISCLAIMER = "沙盒模拟 · 非实测；结果来自正式评估链路重算，实施前须现场复核。"
 LIMITATIONS = ["仅基于现有结构化测量，未读取原始影像或点云。",
@@ -175,13 +175,56 @@ def _require_effective_edits(measurements: dict, structure: dict, edits: list[di
         previous = state
 
 
-def _strategy(edits: list[dict], improvements: list[dict]) -> tuple:
-    # Centimetre variants with the same targets, operations and assessed outcome
-    # are one strategy, even when titles or model-authored risk codes differ.
-    operations = tuple(sorted({(edit["op"], edit.get("target") or (
-        "assumed_objects" if edit["op"] == "add" else "all_doors")) for edit in edits}))
+def _footprint(box: dict, *, relative=False) -> list[tuple[float, float]]:
+    center = [0, 0] if relative else box["center"]
+    return _corners(center, box["size"][0], box["size"][1], box["rotation_z_deg"])
+
+
+def _relative_shape(box: dict) -> tuple:
+    return tuple(sorted((round(x, 6), round(y, 6)) for x, y in _footprint(box, relative=True)))
+
+
+def _require_structured_clearance(before: dict, after: dict) -> None:
+    old_objects = {item["id"]: item for item in before["objects"] if item["kind"] == "object"}
+    for item in after["objects"]:
+        old = old_objects.get(item["id"])
+        if item["kind"] != "object" or old is not None and all(
+                item[key] == old[key] for key in ("center", "size", "rotation_z_deg")):
+            continue
+        for obstacle in [*after["objects"], *after["walls"]]:
+            if obstacle is item:
+                continue
+            # Boxes which only touch or occupy separate heights cannot collide.
+            vertical_overlap = min(item["center"][2] + item["size"][2] / 2,
+                                   obstacle["center"][2] + obstacle["size"][2] / 2) - max(
+                item["center"][2] - item["size"][2] / 2,
+                obstacle["center"][2] - obstacle["size"][2] / 2)
+            if vertical_overlap > 1e-6 and overlap_depth(_footprint(item), _footprint(obstacle)) > 1e-6:
+                raise _Rejected("geometry_conflict")
+
+
+def _strategy(before: dict, after: dict, improvements: list[dict]) -> tuple:
+    # Derive operations from the final geometry rather than the edit history.
+    # Cancelled rotations/moves cannot manufacture a distinct strategy.
+    old_objects = {item["id"]: item for item in before["objects"] if item["kind"] == "object"}
+    new_objects = {item["id"]: item for item in after["objects"] if item["kind"] == "object"}
+    operations = set()
+    for target in old_objects.keys() | new_objects.keys():
+        old, new = old_objects.get(target), new_objects.get(target)
+        if old is None:
+            operations.add(("add", "assumed_objects"))
+        elif new is None:
+            operations.add(("remove", target))
+        else:
+            if any(not math.isclose(a, b, abs_tol=1e-6, rel_tol=0)
+                   for a, b in zip(old["center"], new["center"])):
+                operations.add(("move", target))
+            if _relative_shape(old) != _relative_shape(new):
+                operations.add(("rotate", target))
+    if before["doors"] != after["doors"]:
+        operations.add(("resize_door", "all_doors"))
     effects = tuple(sorted((item["metric_code"], item["risk_after"]) for item in improvements))
-    return operations, effects
+    return tuple(sorted(operations)), effects
 
 
 def generate_room_proposals(measurements: dict, structure: dict, goal: str | None, request_fn: Callable) -> dict:
@@ -208,8 +251,9 @@ def generate_room_proposals(measurements: dict, structure: dict, goal: str | Non
                     raise _Rejected("geometry_conflict")
                 if result["measurements"] == measurements and result["structure"] == structure:
                     raise _Rejected("no_effect")
+                _require_structured_clearance(result["layout_before"], result["layout_after"])
                 improvements = _improvements(baseline, result)
-                strategy = _strategy(edits, improvements)
+                strategy = _strategy(result["layout_before"], result["layout_after"], improvements)
                 layout = json.dumps(result["layout_after"], sort_keys=True, allow_nan=False)
                 if strategy in strategies or layout in layouts:
                     raise _Rejected("duplicate_strategy")
