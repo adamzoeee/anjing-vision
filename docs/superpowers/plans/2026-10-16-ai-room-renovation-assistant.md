@@ -77,7 +77,7 @@
 - Consumes: Task 2 的候选 `edits`、`title`、`intent`、`evidence`、`limitations`、`input_fingerprints`。
 - Produces: `RenovationScheme.proposal_meta` JSON 字段；`POST /api/assistant/scans/{scan_id}/schemes` 扩展可选 `based_on` 和 `proposal_meta`，`GET` 列表/详情返回元数据。旧请求体保持兼容。
 
-- [ ] **Step 1: 写失败测试。** 保存 AI 方案后断言说明和服务端重算证据可读；旧方案没有元数据仍可读；指纹不匹配返回 409；模型说明过长被拒绝或裁剪；恶意 HTML 说明只作为文本保存；迁移升级后已有行可读。
+- [ ] **Step 1: 写失败测试。** 保存 AI 方案后断言说明和服务端重算证据可读；旧方案没有元数据仍可读；指纹不匹配返回 409；模型说明过长返回 422；恶意 HTML 说明只作为文本保存；迁移升级后已有行可读。
 - [ ] **Step 2: 验证测试失败。** 从 `backend` 执行 `./.venv/Scripts/python.exe -m pytest tests/test_renovation_schemes_api.py -q`，预期新字段相关测试失败。
 - [ ] **Step 3: 实现迁移与接口。** 新 JSON 列默认 `{}`，`down_revision="20260926_0005"`；保存时重算方案、检查扫描输入指纹、长度限制和数据来源，证据值由服务端产生。旧方案查询不依赖新元数据存在。
 - [ ] **Step 4: 重跑方案测试和迁移检查。** 同 Step 2 命令；将 `DATABASE_URL` 临时设为 `sqlite:///./tmp/assistant-migration-check.db` 后执行 `./.venv/Scripts/python.exe -m alembic upgrade head`，预期测试通过且隔离数据库迁移成功。
@@ -100,7 +100,7 @@
 - Consumes: Task 2 的候选响应和 Task 3 的保存接口；`createSchemeViewer`/`diffLayout` from `scheme3d.mjs`。
 - Produces: 路由 `#/scans/{scan_id}/assistant`；`api.generateRoomProposals(scanId, goal)`；纯函数 `candidateViewModel(proposal)` 与 `proposalSavePayload(proposal, fingerprints)`，供页面及 Node 测试共用。
 
-- [ ] **Step 1: 写失败测试。** Node 测试断言各候选独立布局/分数绑定，切换前后所用布局正确，保存载荷含指纹和元数据，标题/描述按文本转义；额外检查工作台不再出现旧 `/solve` 调用入口。
+- [ ] **Step 1: 写失败测试。** Node 测试断言各候选独立布局/分数绑定，切换前后所用布局正确，保存载荷含指纹和元数据，标题/描述按文本转义；验证房间页助手入口实际导航到新页面且旧模拟控件不呈现（测试用户可见行为，不搜索源码）。
 - [ ] **Step 2: 验证测试失败。** 从 `backend` 执行 `node tests/test_console_assistant.cjs`，预期因新模块或路由缺失失败。
 - [ ] **Step 3: 实现新页面和入口。** 房间页顶部按钮进入新路由；三案卡选择控制同一 3D viewer，未保存即可看前后；卡片呈现服务端证据、限制和保存动作。生成中显示进度，离开页面时中止页面请求。旧模拟面板从工作台移除；方案详情显示保存的说明。复用工作台 token、主题、组件与 `scheme3d.mjs`，窄屏折叠且保留键盘焦点样式。
 - [ ] **Step 4: 重跑测试及静态回归。** 执行 `node tests/test_console_assistant.cjs`、`node tests/test_console_scheme3d.cjs` 与相关后端测试，预期通过；在运行中的 8000/console 对真实房间做一次受控模型调用，验证候选切换、改后框架图、保存与重读。
