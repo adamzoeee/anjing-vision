@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from uuid import uuid4
 
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", "sqlite:///./test.db")
 os.environ["ENVIRONMENT"] = "test"
@@ -7,8 +8,7 @@ os.environ["SECRET_KEY"] = "test-secret-key-with-at-least-32-bytes"
 os.environ["STORAGE_BACKEND"] = "local"
 os.environ["TASK_SYNC"] = "true"  # 测试环境管道同步执行，避免 Redis/Celery 依赖
 os.environ["DEMO_LOGIN"] = "false"
-# 测试存储隔离到专用目录：否则 clean_db 的 rmtree 会删掉生产 backend/data/
-# 用绝对路径，避免从仓库根跑 pytest 时目录落错位置
+# 用绝对路径，每个测试再分配唯一子目录；保留产物供用户手动清理。
 os.environ["DATA_DIR"] = str(Path(__file__).resolve().parent.parent / ".test-data")
 
 import pytest
@@ -62,13 +62,17 @@ def scheme_inputs():
 
 @pytest.fixture(autouse=True)
 def clean_db():
+    from app import storage
+    from app.config import get_settings
+
+    media_root = Path(__file__).resolve().parent.parent / ".test-data" / uuid4().hex
+    os.environ["DATA_DIR"] = str(media_root)
+    # 迁移测试会清空 Settings 缓存，storage.s 可能仍引用旧对象。
+    get_settings().data_dir = str(media_root)
+    storage.s.data_dir = str(media_root)
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield
-    # 清理本地存储目录，避免文件残留影响跨测试用例断言
-    import shutil
-    from app.storage import _local_root
-    shutil.rmtree(_local_root(), ignore_errors=True)
 
 
 @pytest.fixture
