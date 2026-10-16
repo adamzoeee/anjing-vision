@@ -1,6 +1,7 @@
 import io
 import json
 import traceback
+from http.client import IncompleteRead
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -109,6 +110,17 @@ def test_bounds_response_read(monkeypatch):
     monkeypatch.setattr("assistant.deepseek_client.urlopen", lambda *a, **k: LargeResponse())
     with pytest.raises(DeepSeekInvalidResponse):
         request_candidates({}, None, api_key=KEY)
+
+
+def test_interrupted_response_read_is_controlled_and_hides_partial_content(monkeypatch):
+    class InterruptedResponse(io.BytesIO):
+        def read(self, size=-1):
+            raise IncompleteRead(KEY.encode(), 100)
+
+    monkeypatch.setattr("assistant.deepseek_client.urlopen", lambda *a, **k: InterruptedResponse())
+    with pytest.raises(DeepSeekUnavailable) as caught:
+        request_candidates({}, None, api_key=KEY)
+    assert KEY not in "".join(traceback.format_exception(caught.value))
 
 
 @pytest.mark.parametrize("failure", [

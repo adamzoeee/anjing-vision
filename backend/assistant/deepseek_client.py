@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from http.client import HTTPException
 from urllib.request import Request, urlopen
 
 
@@ -54,7 +55,7 @@ def request_candidates(
     try:
         with urlopen(request, timeout=timeout_s) as response:
             raw = response.read(_MAX_RESPONSE_BYTES + 1)
-    except (OSError, TimeoutError):
+    except (OSError, TimeoutError, HTTPException):
         raise DeepSeekUnavailable("DeepSeek service is unavailable") from None
 
     if len(raw) > _MAX_RESPONSE_BYTES:
