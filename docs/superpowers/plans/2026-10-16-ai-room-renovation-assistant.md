@@ -53,12 +53,14 @@
 - Create: `backend/assistant/proposal_engine.py`
 - Create: `backend/app/routers/assistant_proposals.py`
 - Modify: `backend/app/main.py`
+- Modify: `backend/tests/conftest.py` (non-deleting test media isolation required by user instruction)
 - Test: `backend/tests/test_assistant_proposals.py`
 
 **Interfaces:**
 - Consumes: Task 1 的 `request_candidates(...)` 与受控异常；`pipeline.scheme_assessment.build_scheme` 和 `diff_assessments`。
 - Produces: `generate_room_proposals(measurements: dict, structure: dict, goal: str | None, request_fn: Callable) -> dict`，含 `proposals`、生成状态及拒绝原因；`POST /api/assistant/scans/{scan_id}/proposals` 请求 `{goal?: string}`，返回每项 `title`、`intent`、`edits`、`layout_before/after`、`comparison`、`metric_changes`、`risk_changes`、`evidence`、`limitations`、`disclaimer` 与输入指纹。
 
+- [ ] **Step 0: 修正测试隔离。** 现有 `clean_db` 夹具会递归删除测试目录，违反用户指令。先改为每个测试分配唯一的、位于 `backend/.test-data/` 下的 `DATA_DIR`，同步更新环境变量与缓存 Settings 对象；测试结束不删除文件或目录。既有数据库表重建行为保持。
 - [ ] **Step 1: 写失败测试。** 复用单房间结构化测试夹具，替身模型给三组不同编辑；断言每组数值等于独立 `build_scheme`。再覆盖 Review Focus 的不存在 ID、非有限数字、重复策略，以及首轮不足时恰好修订一次；两轮后不足返回明确失败。API 测试确认 `status=done` 且 `capture_type` 为 `video` 或 `photos`，缺数据、整屋、跨机构均被拒绝。
 - [ ] **Step 2: 验证测试失败。** 从 `backend` 执行 `./.venv/Scripts/python.exe -m pytest tests/test_assistant_proposals.py -q`，预期缺少新接口或断言失败。
 - [ ] **Step 3: 实现验算与 API。** 构造最小结构化上下文；白名单化编辑操作和参数范围，按操作/目标/效果去重；冲突、无生效编辑、不可评估或无可核查改善者不推荐。只有合格候选进入响应；一次修订接收结构化拒绝原因，异常映射为不泄密的 4xx/5xx。
