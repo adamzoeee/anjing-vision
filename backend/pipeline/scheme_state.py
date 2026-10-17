@@ -79,6 +79,46 @@ def _find(container: list[dict], target: str) -> dict | None:
     return None
 
 
+def _wall_local(point, wall: dict) -> tuple[float, float]:
+    angle = math.radians(float(wall.get("rotation_z_deg") or 0.0))
+    dx, dy = point[0] - wall["center"][0], point[1] - wall["center"][1]
+    return dx * math.cos(angle) + dy * math.sin(angle), -dx * math.sin(angle) + dy * math.cos(angle)
+
+
+def _door_geometry_conflict(door: dict, width: float, walls: list[dict], bounds: dict,
+                            wall_id=None) -> str | None:
+    """Check the opening segment, excluding visual box thickness across a wall."""
+    try:
+        center = [float(value) for value in door["center"][:2]]
+        angle = math.radians(float(door.get("rotation_z_deg") or 0.0))
+        if len(center) != 2 or not all(math.isfinite(value) for value in [*center, angle]):
+            return "invalid_door_geometry"
+        endpoints = [(center[0] + sign * width / 2 * math.cos(angle),
+                      center[1] + sign * width / 2 * math.sin(angle)) for sign in (-1, 1)]
+        if not _inside_room(endpoints, bounds):
+            return "door_out_of_room"
+        linked = [wall for index, wall in enumerate(walls)
+                  if wall_id is not None and str(wall.get("id", index)) == str(wall_id)]
+        containing = linked
+        if not containing:
+            containing = []
+            for wall in walls:
+                along, normal = _wall_local(center, wall)
+                parallel = abs(math.sin(angle - math.radians(float(wall.get("rotation_z_deg") or 0.0)))) <= 0.01
+                if (parallel and abs(along) <= wall["size"][0] / 2 + _EDGE_TOL
+                        and abs(normal) <= wall["size"][1] / 2 + _EDGE_TOL):
+                    containing.append(wall)
+        for wall in containing:
+            for point in endpoints:
+                along, normal = _wall_local(point, wall)
+                if (abs(along) > wall["size"][0] / 2 + _EDGE_TOL
+                        or abs(normal) > wall["size"][1] / 2 + _EDGE_TOL):
+                    return "door_out_of_wall"
+    except (KeyError, IndexError, TypeError, ValueError, OverflowError):
+        return "invalid_door_geometry"
+    return None
+
+
 def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
     """返回改后的 measurements / structure，以及冲突与被采纳的编辑。"""
     m, s = deepcopy(measurements), deepcopy(structure)
@@ -100,6 +140,31 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
             if not 0.5 <= width <= 1.5:
                 conflicts.append({"type": "invalid_door_width", "op": "resize_door",
                                   "width_m": width})
+                continue
+            measured_doors = [opening for opening in m.get("openings", []) if opening.get("type") == "door"]
+            structure_doors = [door for door in s.get("doors", []) if door.get("size")]
+            invalid = None
+            # A resize affects every door: preflight both representations before
+            # mutating any of them, so one invalid opening rejects the whole edit.
+            for doors, mirrors in ((measured_doors, structure_doors), (structure_doors, measured_doors)):
+                for door in doors:
+                    mirror = _find(mirrors, object_id(door)) if object_id(door) else None
+                    if mirror is None:
+                        mirror = next((other for other in mirrors if door.get("center") and other.get("center")
+                                       and all(math.isclose(a, b, abs_tol=_EDGE_TOL, rel_tol=0)
+                                               for a, b in zip(door["center"][:2], other["center"][:2]))), None)
+                    # Generated measurements may omit opening rotation and the
+                    # structure may omit IDs. Match by center and inherit only
+                    # absent geometry fields, then check both representations.
+                    geometry = {**(mirror or {}), **door}
+                    reason = _door_geometry_conflict(geometry, width, s.get("walls", []), bounds, geometry.get("wall_id"))
+                    if reason:
+                        invalid = {"type": reason, "target": object_id(door), "op": "resize_door"}
+                        break
+                if invalid:
+                    break
+            if invalid:
+                conflicts.append(invalid)
                 continue
             for opening in m.get("openings", []):
                 if opening.get("type") == "door":
@@ -202,14 +267,8 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
             turns = int(edit.get("quarter_turns") or 1) % 4
             if turns == 0:
                 continue
-            swap_axes = turns % 2 == 1
             new_rotation = (float(item.get("rotation_z_deg") or 0.0) + 90.0 * turns) % 360.0
-            rotated = {
-                **item,
-                "length_m": item["width_m"] if swap_axes else item["length_m"],
-                "width_m": item["length_m"] if swap_axes else item["width_m"],
-                "rotation_z_deg": new_rotation,
-            }
+            rotated = {**item, "rotation_z_deg": new_rotation}
             corners = _rect_of_measurement(rotated)
             if not _inside_room(corners, bounds):
                 conflicts.append({"type": "out_of_room", "target": target, "op": "rotate"})
@@ -222,12 +281,17 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
                                   "op": "rotate"})
                 continue
             item["rotation_z_deg"] = new_rotation
-            if swap_axes:
-                item["length_m"], item["width_m"] = item["width_m"], item["length_m"]
-            if sit is not None and sit.get("size"):
-                if swap_axes:
-                    sit["size"] = [sit["size"][1], sit["size"][0], sit["size"][2]]
-                sit["rotation_z_deg"] = new_rotation
+            mirrored = {"instance_id": target, "label": item.get("type") or item.get("label") or "object",
+                        "center": list(item["center"]),
+                        "size": [item["length_m"], item["width_m"], float(item.get("height_m") or 0.0)],
+                        "rotation_z_deg": new_rotation}
+            active_collection = (s.setdefault("semantic_instances", []) if s.get("semantic_instances") or "objects" not in s
+                                 else s["objects"])
+            rotation_sit = _find(active_collection, target)
+            if rotation_sit is None:
+                active_collection.append(mirrored)
+            else:
+                rotation_sit.update({key: mirrored[key] for key in ("center", "size", "rotation_z_deg")})
             applied.append(dict(edit))
             continue
 

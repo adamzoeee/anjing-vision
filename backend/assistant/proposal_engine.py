@@ -16,8 +16,15 @@ LIMITATIONS = ["仅基于现有结构化测量，未读取原始影像或点云�
 _RISK_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 
-class _Rejected(ValueError):
-    pass
+class ProposalRejected(ValueError):
+    """A candidate failed verification; reason is a sanitized machine code."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
+_Rejected = ProposalRejected
 
 
 def _number(low: float, high: float, *, integer=False) -> dict:
@@ -227,6 +234,35 @@ def _strategy(before: dict, after: dict, improvements: list[dict]) -> tuple:
     return tuple(sorted(operations)), effects
 
 
+def validate_room_candidate(measurements: dict, structure: dict, candidate: dict,
+                            *, baseline: dict | None = None) -> tuple[dict, list[dict]]:
+    """Verify one candidate for generation or saving, without model access.
+
+    Returns the complete independent build_scheme result and formal improvement
+    evidence. A trusted internal caller may reuse its already computed baseline.
+    Raises ProposalRejected with a safe reason code for any candidate failure.
+    """
+    try:
+        if baseline is None:
+            baseline = build_scheme(measurements, structure, [])
+        context = _context(measurements, structure, baseline, None)
+        edits = _candidate_edits(candidate, context)
+        _require_effective_edits(measurements, structure, edits)
+        result = build_scheme(measurements, structure, edits)
+        if result["conflicts"] or len(result["applied_edits"]) != len(edits):
+            raise ProposalRejected("geometry_conflict")
+        if result["measurements"] == measurements and result["structure"] == structure:
+            raise ProposalRejected("no_effect")
+        _require_structured_clearance(result["layout_before"], result["layout_after"])
+        improvements = _improvements(baseline, result)
+        json.dumps(result["layout_after"], allow_nan=False)
+        return result, improvements
+    except ProposalRejected:
+        raise
+    except (ValueError, TypeError, KeyError, IndexError, OverflowError):
+        raise ProposalRejected("not_evaluable") from None
+
+
 def generate_room_proposals(measurements: dict, structure: dict, goal: str | None, request_fn: Callable) -> dict:
     """Return 2–3 verified choices, or a reasoned failure after one revision."""
     baseline = build_scheme(measurements, structure, [])
@@ -244,15 +280,8 @@ def generate_room_proposals(measurements: dict, structure: dict, goal: str | Non
         # Bound the amount of synchronous geometry work even for a valid huge JSON list.
         for index, candidate in enumerate(candidates[:12]):
             try:
-                edits = _candidate_edits(candidate, context)
-                _require_effective_edits(measurements, structure, edits)
-                result = build_scheme(measurements, structure, edits)
-                if result["conflicts"] or len(result["applied_edits"]) != len(edits):
-                    raise _Rejected("geometry_conflict")
-                if result["measurements"] == measurements and result["structure"] == structure:
-                    raise _Rejected("no_effect")
-                _require_structured_clearance(result["layout_before"], result["layout_after"])
-                improvements = _improvements(baseline, result)
+                result, improvements = validate_room_candidate(measurements, structure, candidate, baseline=baseline)
+                edits = deepcopy(candidate["edits"])
                 strategy = _strategy(result["layout_before"], result["layout_after"], improvements)
                 layout = json.dumps(result["layout_after"], sort_keys=True, allow_nan=False)
                 if strategy in strategies or layout in layouts:

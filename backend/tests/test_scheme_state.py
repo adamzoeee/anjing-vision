@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from pipeline.scheme_assessment import assess_scheme, build_scheme, diff_assessments
-from pipeline.scheme_state import apply_edits, overlap_depth, _rect_of_measurement
+from pipeline.scheme_state import apply_edits, overlap_depth, _corners, _rect_of_measurement
 
 SCAN46 = Path(__file__).resolve().parents[1] / "data" / "work" / "46" / "postprocess"
 
@@ -97,33 +97,60 @@ def test_remove_and_add_participate_in_scoring():
     assert added["scope"]["contains_assumed_objects"] is True
 
 
-def test_rotate_90_swaps_footprint():
+@pytest.mark.parametrize("turns,expected", [
+    (1, [(1.75, 1.0), (1.75, 2.0), (2.25, 1.0), (2.25, 2.0)]),
+    (2, [(1.5, 1.25), (1.5, 1.75), (2.5, 1.25), (2.5, 1.75)]),
+    (3, [(1.75, 1.0), (1.75, 2.0), (2.25, 1.0), (2.25, 2.0)]),
+])
+def test_rotations_change_physical_corners_and_mirror_layout(turns, expected):
     m, s = _measurements(), _structure()
+    m["objects"][1]["center"] = [2.0, 1.5, 0.4]
+    s["semantic_instances"][1]["center"] = [2.0, 1.5, 0.4]
+    rotated = build_scheme(m, s, [{"op": "rotate", "target": "desk_001", "quarter_turns": turns}])
+    assert rotated["conflicts"] == []
+    desk_m = rotated["measurements"]["objects"][1]
+    desk_s = next(item for item in rotated["layout_objects"] if item["id"] == "desk_001")
+    for corners in (_rect_of_measurement(desk_m), _corners(desk_s["center"], *desk_s["size"][:2], desk_s["rotation_z_deg"])):
+        actual = sorted((round(x, 6), round(y, 6)) for x, y in corners)
+        assert actual == expected
+    assert desk_m["length_m"] == 1.0 and desk_m["width_m"] == 0.5
+    assert desk_s["size"] == [1.0, 0.5, 0.8]
+    assert desk_m["rotation_z_deg"] == desk_s["rotation_z_deg"] == 90 * turns
+
+
+def test_rotation_mirrors_missing_structure_object():
+    m, s = _measurements(), _structure()
+    m["objects"][1]["center"] = [2.0, 1.5, 0.4]
+    s["semantic_instances"] = s["semantic_instances"][:1]
     rotated = build_scheme(m, s, [{"op": "rotate", "target": "desk_001", "quarter_turns": 1}])
-    desk = next(x for x in rotated["layout_objects"] if x["id"] == "desk_001")
-    assert desk["size"][0] == pytest.approx(0.5)
-    assert desk["size"][1] == pytest.approx(1.0)
+    assert rotated["conflicts"] == []
+    desk = next(item for item in rotated["layout_objects"] if item["id"] == "desk_001")
+    assert desk["size"] == [1.0, 0.5, 0.8]
+    assert desk["rotation_z_deg"] == 90
+    assert desk["center"] == [2.0, 1.5, 0.4]
 
 
-def test_rotate_180_keeps_footprint_and_270_swaps():
+def test_rotation_mirrors_legacy_objects_only_structure():
     m, s = _measurements(), _structure()
-    half = build_scheme(m, s, [{"op": "rotate", "target": "desk_001", "quarter_turns": 2}])
-    desk_m = next(x for x in half["measurements"]["objects"] if x["instance_id"] == "desk_001")
-    assert desk_m["length_m"] == pytest.approx(1.0)
-    assert desk_m["width_m"] == pytest.approx(0.5)
-    assert desk_m["rotation_z_deg"] == pytest.approx(180.0)
-    desk = next(x for x in half["layout_objects"] if x["id"] == "desk_001")
-    assert desk["size"][0] == pytest.approx(1.0)
-    assert desk["size"][1] == pytest.approx(0.5)
+    m["objects"][1]["center"] = [2.0, 1.5, 0.4]
+    s["objects"] = s.pop("semantic_instances")
+    s["objects"][1]["center"] = [2.0, 1.5, 0.4]
 
-    three = build_scheme(m, s, [{"op": "rotate", "target": "desk_001", "quarter_turns": 3}])
-    desk_m = next(x for x in three["measurements"]["objects"] if x["instance_id"] == "desk_001")
-    assert desk_m["length_m"] == pytest.approx(0.5)
-    assert desk_m["width_m"] == pytest.approx(1.0)
-    assert desk_m["rotation_z_deg"] == pytest.approx(270.0)
-    desk = next(x for x in three["layout_objects"] if x["id"] == "desk_001")
-    assert desk["size"][0] == pytest.approx(0.5)
-    assert desk["size"][1] == pytest.approx(1.0)
+    rotated = build_scheme(m, s, [{"op": "rotate", "target": "desk_001", "quarter_turns": 1}])
+
+    assert rotated["conflicts"] == []
+    assert "semantic_instances" not in rotated["structure"]
+    assert len(rotated["layout_after"]["objects"]) == 2
+    desk = next(item for item in rotated["layout_after"]["objects"] if item["id"] == "desk_001")
+    assert desk["size"] == [1.0, 0.5, 0.8]
+    assert desk["rotation_z_deg"] == 90
+
+
+def test_rotation_rejects_real_new_overlap():
+    m, s = _measurements(), _structure()
+    rotated = apply_edits(m, s, [{"op": "rotate", "target": "desk_001", "quarter_turns": 1}])
+    assert rotated["conflicts"][0]["type"] == "overlap"
+    assert rotated["applied_edits"] == []
 
 
 def test_move_mirrors_into_structure_when_missing():
@@ -193,3 +220,72 @@ def test_resize_door_without_width_defaults_to_point_nine():
     assert result["conflicts"] == []
     value = next(x["value"] for x in result["metrics"] if x["metric_code"] == "door_width")
     assert value == pytest.approx(0.90, abs=1e-6)
+
+
+@pytest.mark.parametrize("center,angle", [([0.6, 0, 1.05], 0), ([0, 0.6, 1.05], 90),
+                                          ([3.4, 4, 1.05], 180), ([4, 3.4, 1.05], 270)])
+def test_resize_door_rejects_opening_endpoints_beyond_room(center, angle):
+    m, s = _measurements(), _structure()
+    m["openings"][0].update(center=center, rotation_z_deg=angle)
+    s["doors"][0].update(center=center, rotation_z_deg=angle)
+    result = apply_edits(m, s, [{"op": "resize_door", "width_m": 1.5}])
+    assert result["conflicts"][0]["type"] == "door_out_of_room"
+    assert result["applied_edits"] == []
+    assert result["measurements"]["openings"][0]["width_m"] == 0.85
+    assert result["structure"]["doors"][0]["size"][0] == 0.85
+
+
+@pytest.mark.parametrize("angle", [0, 45, 90])
+@pytest.mark.parametrize("linked", [False, True])
+def test_resize_door_respects_containing_wall_segment(angle, linked):
+    m, s = _measurements(), _structure()
+    wall = {"id": "short_wall", "center": [2, 2, 1.35], "size": [1.2, 0.12, 2.7], "rotation_z_deg": angle}
+    s["walls"] = [wall]
+    m["openings"][0].update(center=[2, 2, 1.05], rotation_z_deg=angle)
+    s["doors"][0].update(center=[2, 2, 1.05], rotation_z_deg=angle)
+    if linked:
+        s["doors"][0]["wall_id"] = "short_wall"
+    result = apply_edits(m, s, [{"op": "resize_door", "width_m": 1.4}])
+    assert result["conflicts"][0]["type"] == "door_out_of_wall"
+    assert result["applied_edits"] == []
+
+
+@pytest.mark.parametrize("center,angle,wall", [
+    ([0.6, 0, 1.05], 0, None), ([0, 0.6, 1.05], 90, None),
+    ([2, 2, 1.05], 45, {"id": 0, "center": [2, 2, 1.35], "size": [1.2, 0.12, 2.7], "rotation_z_deg": 45}),
+])
+def test_resize_door_can_touch_room_or_wall_endpoint(center, angle, wall):
+    m, s = _measurements(), _structure()
+    m["openings"][0].update(center=center, rotation_z_deg=angle)
+    s["doors"][0].update(center=center, rotation_z_deg=angle)
+    if wall is not None:
+        s["walls"] = [wall]
+        s["doors"][0]["wall_id"] = 0
+    result = apply_edits(m, s, [{"op": "resize_door", "width_m": 1.2}])
+    assert result["conflicts"] == []
+    assert len(result["applied_edits"]) == 1
+
+
+def test_resize_door_checks_all_openings_atomically():
+    m, s = _measurements(), _structure()
+    m["openings"].append({**m["openings"][0], "id": "door_02", "center": [3.65, 4, 1.05], "width_m": 0.5})
+    s["doors"].append({**s["doors"][0], "instance_id": "door_02", "center": [3.65, 4, 1.05], "size": [0.5, 0.12, 2.1]})
+    result = apply_edits(m, s, [{"op": "resize_door", "width_m": 1.0}])
+    assert result["conflicts"][0]["type"] == "door_out_of_room"
+    assert result["applied_edits"] == []
+    assert [door["width_m"] for door in result["measurements"]["openings"]] == [0.85, 0.5]
+    assert [door["size"][0] for door in result["structure"]["doors"]] == [0.85, 0.5]
+
+
+def test_resize_door_uses_structure_orientation_when_measurements_omit_it():
+    # measurement_builder emits opening centers/widths without angle, while
+    # structure_builder's corresponding doors may not have stable IDs.
+    m, s = _measurements(), _structure()
+    m["openings"][0]["center"] = [0, 0.6, 1.05]
+    m["openings"][0].pop("rotation_z_deg")
+    s["doors"][0].update(center=[0, 0.6, 1.05], rotation_z_deg=90)
+    s["doors"][0].pop("instance_id")
+    result = apply_edits(m, s, [{"op": "resize_door", "width_m": 1.0}])
+    assert result["conflicts"] == []
+    assert result["measurements"]["openings"][0]["width_m"] == 1.0
+    assert result["structure"]["doors"][0]["size"][0] == 1.0

@@ -93,7 +93,7 @@ def test_context_has_real_ids_and_explicit_schema_without_private_inputs(scheme_
     ({"op": "move", "target": "desk_001", "dx": 0.2, "dy": 0.9}, "geometry_conflict"),
     ({"op": "move", "target": "desk_001", "dx": 4, "dy": 0}, "geometry_conflict"),
     ({"op": "move", "target": "desk_001", "dx": 0, "dy": 0}, "no_effect"),
-    ({"op": "rotate", "target": "desk_001", "quarter_turns": 1}, "no_improvement"),
+    ({"op": "rotate", "target": "desk_001", "quarter_turns": 1}, "geometry_conflict"),
     ({"op": "remove", "target": "desk_001"}, "lost_evaluability"),
     ({"op": "resize_door", "width_m": 0.5}, "risk_worsened"),
 ])
@@ -206,6 +206,79 @@ def test_cancelling_rotations_do_not_make_a_second_move_strategy(scheme_inputs):
     assert result["status"] == "insufficient"
     assert result["proposals"] == []
     assert "duplicate_strategy" in {r["reason"] for r in result["rejections"]}
+
+
+def test_rotation_proposal_uses_truly_rotated_footprint(scheme_inputs):
+    m, s = scheme_inputs
+    candidate = _candidate([
+        {"op": "move", "target": "desk_001", "dx": 0, "dy": -0.6},
+        {"op": "rotate", "target": "desk_001", "quarter_turns": 1},
+    ])
+    result = _engine()(m, s, None, lambda context, feedback: [candidate, _valid_candidates()[1]])
+    assert result["status"] == "ready"
+    rotated = result["proposals"][0]
+    assert rotated["layout_after"]["objects"][1]["size"] == [1.0, 0.5, 0.8]
+    assert rotated["layout_after"]["objects"][1]["rotation_z_deg"] == 90
+    clearance = next(change for change in rotated["metric_changes"] if change["metric_code"] == "bedside_clearance")
+    assert clearance["after"] == pytest.approx(0.5)
+
+
+def test_door_proposal_cannot_widen_beyond_room(scheme_inputs):
+    m, s = scheme_inputs
+    candidate = _candidate([{"op": "resize_door", "width_m": 1.5}])
+    result = _engine()(m, s, None, lambda context, feedback: [candidate, _valid_candidates()[0]])
+    assert result["status"] == "insufficient"
+    assert "geometry_conflict" in {r["reason"] for r in result["rejections"]}
+
+
+def test_single_candidate_validator_returns_verified_result_and_improvements(scheme_inputs):
+    from assistant.proposal_engine import validate_room_candidate
+    m, s = scheme_inputs
+    result, improvements = validate_room_candidate(m, s, _valid_candidates()[0])
+    assert result["overall"]["score"] == 92.0
+    assert result["layout_after"]["objects"][1]["center"] == [1.2, 1.4, 0.4]
+    assert improvements == [{"metric_code": "bedside_clearance", "before": 0.15, "after": 0.75,
+                              "unit": "m", "risk_before": "high", "risk_after": "low"}]
+
+
+@pytest.mark.parametrize("edit,reason", [
+    ({"op": "move", "target": "missing", "dx": 0, "dy": -0.6}, "unknown_target"),
+    ({"op": "move", "target": "desk_001", "dx": float("nan"), "dy": 0}, "invalid_number"),
+    ({"op": "move", "target": "desk_001", "dx": 0, "dy": 0}, "no_effect"),
+    ({"op": "rotate", "target": "desk_001", "quarter_turns": 1}, "geometry_conflict"),
+    ({"op": "rotate", "target": "desk_001", "quarter_turns": 2}, "no_improvement"),
+    ({"op": "remove", "target": "desk_001"}, "lost_evaluability"),
+    ({"op": "resize_door", "width_m": 0.5}, "risk_worsened"),
+    ({"op": "resize_door", "width_m": 1.5}, "geometry_conflict"),
+])
+def test_single_candidate_validator_enforces_generation_checks(scheme_inputs, edit, reason):
+    from assistant.proposal_engine import ProposalRejected, validate_room_candidate
+    m, s = scheme_inputs
+    with pytest.raises(ProposalRejected) as error:
+        validate_room_candidate(m, s, _candidate([edit]))
+    assert error.value.reason == reason
+    assert str(error.value) == reason
+
+
+def test_single_candidate_validator_rejects_structured_collision(scheme_inputs):
+    from assistant.proposal_engine import ProposalRejected, validate_room_candidate
+    m, s = scheme_inputs
+    s["geometric_obstacles"].append({"center": [1.2, 1.4, 0.2], "size": [0.4, 0.4, 0.4]})
+    with pytest.raises(ProposalRejected, match="geometry_conflict"):
+        validate_room_candidate(m, s, _valid_candidates()[0])
+
+
+def test_single_candidate_validator_rejects_invalid_description_and_risk(scheme_inputs):
+    from assistant.proposal_engine import ProposalRejected, validate_room_candidate
+    m, s = scheme_inputs
+    candidate = _valid_candidates()[0]
+    candidate["intent"] = "x" * 601
+    with pytest.raises(ProposalRejected, match="invalid_description"):
+        validate_room_candidate(m, s, candidate)
+    candidate["intent"] = "Provide care space"
+    candidate["risk_codes"] = ["unverified_risk"]
+    with pytest.raises(ProposalRejected, match="unknown_risk"):
+        validate_room_candidate(m, s, candidate)
 
 
 def test_api_changed_inputs_during_generation_return_conflict(client, scheme_inputs, monkeypatch):
