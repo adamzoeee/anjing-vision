@@ -252,6 +252,10 @@ def test_ai_scheme_preserves_narrative_and_recomputes_evidence(client, scheme_in
     assert verification["source"] == "build_scheme"
     assert verification["comparison"]["after_score"] == saved["score"]
     assert verification["comparison"]["after_score"] != 9999
+    assert verification["improvements"] == [
+        {"metric_code": "door_width", "before": 0.85, "after": 1.0, "unit": "m",
+         "risk_before": "medium", "risk_after": "low"},
+    ]
     door = next(item for item in verification["metric_changes"] if item["metric_code"] == "door_width")
     assert door["before"] == 0.85
     assert door["after"] == 1.0
@@ -274,6 +278,51 @@ def test_legacy_scheme_without_metadata_remains_readable(client, scheme_inputs):
     assert listed["proposal_meta"] == {}
     assert detail["proposal_meta"] == {}
     assert detail["plan"]["source"] == "manual"
+
+
+@pytest.mark.parametrize("edits,reason", [
+    ([], "invalid_edit"),
+    ([{"op": "resize_door", "width_m": 0.5}], "risk_worsened"),
+    ([{"op": "resize_door", "width_m": 1.0, "unexpected": True}], "invalid_edit"),
+], ids=["empty_edits", "worsening_edit", "malformed_edit_schema"])
+def test_ai_scheme_rejects_unverified_candidate_without_saving(client, scheme_inputs, edits, reason):
+    h = _auth(client)
+    sid = _scan_with_artifacts(client, h, *scheme_inputs)
+    request = _ai_save_payload(sid)
+    request["edits"] = edits
+
+    response = client.post(f"/api/assistant/scans/{sid}/schemes", json=request, headers=h)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["message"] == reason
+    assert client.get(f"/api/assistant/scans/{sid}/schemes", headers=h).json()["schemes"] == []
+
+
+def test_ai_scheme_rejects_structured_obstacle_overlap_without_saving(client, scheme_inputs):
+    measurements, structure = scheme_inputs
+    structure["geometric_obstacles"].append({
+        "instance_id": "fixed_obstacle", "center": [1.2, 1.4, 0.2],
+        "size": [0.4, 0.4, 0.4],
+    })
+    h = _auth(client)
+    sid = _scan_with_artifacts(client, h, measurements, structure)
+    request = _ai_save_payload(sid)
+    request["edits"] = [{"op": "move", "target": "desk_001", "dx": 0, "dy": -0.6}]
+
+    response = client.post(f"/api/assistant/scans/{sid}/schemes", json=request, headers=h)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["message"] == "geometry_conflict"
+    assert client.get(f"/api/assistant/scans/{sid}/schemes", headers=h).json()["schemes"] == []
+
+
+def test_metadata_free_ai_scheme_keeps_legacy_save_behavior(client, scheme_inputs):
+    h = _auth(client)
+    sid = _scan_with_artifacts(client, h, *scheme_inputs)
+    response = client.post(f"/api/assistant/scans/{sid}/schemes",
+                           json={"name": "旧 AI 方案", "source": "ai", "edits": []}, headers=h)
+    assert response.status_code == 200, response.text
+    assert response.json()["proposal_meta"] == {}
 
 
 @pytest.mark.parametrize("change", ["changed", "missing", "extra"])

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from assistant.intent_edits import intent_to_edits
 from assistant.intent_parser import parse_intent
+from assistant.proposal_engine import ProposalRejected, validate_room_candidate
 from pipeline.scheme_assessment import build_scheme, diff_assessments
 from pipeline.scheme_pdf import build_scheme_appendix_pdf
 from pipeline.scheme_solver import CONSTRUCTION_METRICS, _movable_objects, solve_metric
@@ -289,25 +290,29 @@ def create_scheme(scan_id: int, payload: SchemeCreateRequest, db: Session = Depe
     if payload.based_on is not None and payload.based_on != fingerprints:
         raise HTTPException(409, "扫描输入已更新，请重新生成方案后保存")
     measurements, structure = _require_measurements(work), _load_structure(work)
-    validation = build_scheme(measurements, structure, payload.edits)
-    if validation["conflicts"]:
-        raise HTTPException(422, f"方案包含无效编辑：{validation['conflicts'][0]}")
     proposal_meta = {}
     if payload.proposal_meta is not None:
         baseline = build_scheme(measurements, structure, [])
-        known_codes = {risk.get(key) for risk in baseline["risks"]
-                       if risk.get("assessment_status") == "evaluated"
-                       for key in ("metric_code", "risk_code")}
-        if any(code not in known_codes for code in payload.proposal_meta.risk_codes):
-            raise HTTPException(422, "AI 方案引用了未知或不可评估的风险指标")
+        candidate = {"title": payload.proposal_meta.title, "intent": payload.proposal_meta.intent,
+                     "risk_codes": payload.proposal_meta.risk_codes, "edits": payload.edits}
+        try:
+            validation, improvements = validate_room_candidate(
+                measurements, structure, candidate, baseline=baseline)
+        except ProposalRejected as exc:
+            raise HTTPException(422, exc.reason) from exc
         proposal_meta = payload.proposal_meta.model_dump()
         proposal_meta["evidence"] = {
             "facts": {"source": "structured_scan", "score": baseline["overall"].get("score"),
                       "risks": [risk for risk in baseline["risks"] if risk.get("assessment_status") == "evaluated"]},
             "design_intent": {"source": "model", "text": proposal_meta["intent"]},
-            "verification": {"source": "build_scheme", **diff_assessments(baseline, validation),
+            "verification": {"source": "build_scheme", "improvements": improvements,
+                             **diff_assessments(baseline, validation),
                              **{key: validation[key] for key in ("metrics", "risks", "overall")}},
         }
+    else:
+        validation = build_scheme(measurements, structure, payload.edits)
+        if validation["conflicts"]:
+            raise HTTPException(422, f"方案包含无效编辑：{validation['conflicts'][0]}")
     if _input_fingerprints(work) != fingerprints:
         raise HTTPException(409, "扫描输入已更新，请重新生成方案后保存")
     scheme = RenovationScheme(scan_id=scan_id, name=payload.name, edits=payload.edits,
