@@ -48,6 +48,16 @@ def test_requests_json_candidates_with_credentials_only_in_header(monkeypatch):
     assert captured["timeout"] == 20
 
 
+def test_disables_thinking_for_bounded_json_candidate_request(monkeypatch):
+    def transport(request, timeout):
+        payload = json.loads(request.data)
+        assert payload["thinking"] == {"type": "disabled"}
+        return io.BytesIO(completion())
+
+    monkeypatch.setattr("assistant.deepseek_client.urlopen", transport)
+    request_candidates({}, None, api_key=KEY)
+
+
 def test_forwards_room_context_and_allowed_schema_without_adding_data(monkeypatch):
     context = {
         "goal": "Clear the entrance",

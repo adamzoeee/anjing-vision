@@ -39,6 +39,7 @@ def request_candidates(
     payload = {
         "model": model,
         "response_format": {"type": "json_object"},
+        "thinking": {"type": "disabled"},
         "max_tokens": max_tokens,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
