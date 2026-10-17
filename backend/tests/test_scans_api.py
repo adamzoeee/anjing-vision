@@ -4,6 +4,7 @@ from app.db import SessionLocal
 from app.main import app
 from app.models import Scan
 from app.tasks.pipeline_tasks import TaskDispatchError
+import pytest
 
 
 def _auth(client):
@@ -316,3 +317,109 @@ def test_list_scans_by_project(client):
     client.post(f"/api/projects/{pid}/scans", json={"capture_type": "photos"}, headers=h)
     r = client.get(f"/api/projects/{pid}/scans", headers=h)
     assert len(r.json()) == 2
+
+
+def test_new_video_waits_for_explicit_start_and_preserves_old_result(client, monkeypatch):
+    from app.routers import scans as scans_module
+    dispatched = []
+    monkeypatch.setattr(scans_module, "dispatch_scan", dispatched.append)
+    h = _auth(client)
+    pid = client.post('/api/projects', headers=h, json={'name': '重传'}).json()['id']
+    old = client.post(f'/api/projects/{pid}/scans', headers=h, json={'capture_type': 'video'}).json()['id']
+    with SessionLocal() as db:
+        scan = db.get(Scan, old)
+        scan.status, scan.media_path = 'done', 'media/old.mp4'
+        db.commit()
+    new = client.post(f'/api/projects/{pid}/scans', headers=h, json={'capture_type': 'video'}).json()['id']
+    assert client.post(f'/api/scans/{new}/start', headers=h).status_code == 409
+    uploaded = client.post(f'/api/scans/{new}/upload?defer_processing=true', headers=h,
+                          files={'files': ('new.mp4', b'new-video', 'video/mp4')})
+    assert uploaded.status_code == 200
+    assert dispatched == []
+    assert client.get(f'/api/scans/{new}', headers=h).json()['status'] == 'uploaded'
+    assert client.post(f'/api/scans/{new}/start', headers=h).status_code == 200
+    assert dispatched == [new]
+    assert client.post(f'/api/scans/{new}/start', headers=h).status_code == 409
+    assert dispatched == [new]
+    unchanged = client.get(f'/api/scans/{old}', headers=h).json()
+    assert unchanged['status'] == 'done'
+    with SessionLocal() as db:
+        assert db.get(Scan, old).media_path == 'media/old.mp4'
+    assert client.post(f'/api/scans/{old}/upload?defer_processing=true', headers=h,
+                       files={'files': ('new.mp4', b'x', 'video/mp4')}).status_code == 409
+
+
+def test_deferred_start_queue_failure_keeps_video_for_retry(client, monkeypatch):
+    from app.routers import scans as scans_module
+    h = _auth(client)
+    pid = client.post('/api/projects', headers=h, json={'name': '重试'}).json()['id']
+    sid = client.post(f'/api/projects/{pid}/scans', headers=h, json={'capture_type': 'video'}).json()['id']
+    monkeypatch.setattr(scans_module, 'dispatch_scan', lambda _: None)
+    client.post(f'/api/scans/{sid}/upload?defer_processing=true', headers=h,
+                files={'files': ('new.mp4', b'x', 'video/mp4')})
+    def fail(_):
+        raise TaskDispatchError('private broker password')
+    monkeypatch.setattr(scans_module, 'dispatch_scan', fail)
+    result = client.post(f'/api/scans/{sid}/start', headers=h)
+    assert result.status_code == 503
+    assert 'private' not in result.text
+    assert client.get(f'/api/scans/{sid}', headers=h).json()['status'] == 'uploaded'
+    monkeypatch.setattr(scans_module, 'dispatch_scan', lambda _: None)
+    assert client.post(f'/api/scans/{sid}/start', headers=h).status_code == 200
+
+
+@pytest.mark.parametrize('role,own,status', [('member', True, 403), ('admin', False, 404)])
+def test_start_enforces_role_and_organization(client, role, own, status):
+    from app.models import User, Project
+    h = _auth(client)
+    with SessionLocal() as db:
+        user = db.query(User).filter_by(email='a1@x.com').one()
+        project = Project(org_id=user.org_id, name='待开始')
+        db.add(project); db.flush()
+        scan = Scan(project_id=project.id, status='uploaded', media_path='media/new.mp4')
+        db.add(scan); db.flush(); sid = scan.id
+        if own:
+            user.role = role
+        db.commit()
+    if not own:
+        client.post('/api/auth/register', json={'org_name': '其他机构', 'name': '乙', 'email': 'other@x.com', 'password': 'secret123'})
+        token = client.post('/api/auth/login', json={'email': 'other@x.com', 'password': 'secret123'}).json()['token']
+        h = {'Authorization': f'Bearer {token}'}
+    assert client.post(f'/api/scans/{sid}/start', headers=h).status_code == status
+
+
+@pytest.mark.parametrize('filename,content', [('notes.txt', b'not a video'), ('empty.mp4', b'')])
+def test_deferred_video_upload_requires_nonempty_video_file(client, monkeypatch, filename, content):
+    from app.routers import scans as scans_module
+    monkeypatch.setattr(scans_module, 'dispatch_scan', lambda _: None)
+    h = _auth(client)
+    pid = client.post('/api/projects', headers=h, json={'name': '校验新视频'}).json()['id']
+    sid = client.post(f'/api/projects/{pid}/scans', headers=h, json={'capture_type': 'video'}).json()['id']
+    response = client.post(f'/api/scans/{sid}/upload?defer_processing=true', headers=h,
+                           files={'files': (filename, content, 'application/octet-stream')})
+    assert response.status_code == 400
+    assert client.get(f'/api/scans/{sid}', headers=h).json()['status'] == 'uploading'
+    assert client.post(f'/api/scans/{sid}/start', headers=h).status_code == 409
+
+
+def test_reupload_mode_survives_closing_dialog_and_resuming_upload(client, monkeypatch):
+    from app.routers import scans as scans_module
+    dispatched = []
+    monkeypatch.setattr(scans_module, 'dispatch_scan', dispatched.append)
+    h = _auth(client)
+    pid = client.post('/api/projects', headers=h, json={'name': '恢复重传'}).json()['id']
+    created = client.post(f'/api/projects/{pid}/scans', headers=h,
+                          json={'capture_type': 'video', 'defer_processing': True}).json()
+    assert created['status'] == 'awaiting_video'
+    sid = created['id']
+    refs = client.put(f'/api/scans/{sid}/references', headers=h, json={'measurements': [
+        {'object_type': 'door', 'dimension': 'width', 'meters': .85},
+        {'object_type': 'door', 'dimension': 'height', 'meters': 2.0},
+    ]})
+    assert refs.status_code == 200
+    # A later session uses the default upload URL: the server must retain the explicit-start mode.
+    result = client.post(f'/api/scans/{sid}/upload', headers=h,
+                         files={'files': ('new.mp4', b'new-video', 'video/mp4')})
+    assert result.status_code == 200
+    assert dispatched == []
+    assert client.get(f'/api/scans/{sid}', headers=h).json()['status'] == 'uploaded'

@@ -150,9 +150,9 @@ export async function roomView(ctx, scanId) {
               </div>` : `
               <div class="stage-loading-card">
                 <div class="float-slow" style="color:var(--accent-2)">${icon('cpu', 36)}</div>
-                <div class="load-title">${failed ? '处理失败' : '正在处理房间数据'}</div>
+                <div class="load-title">${scan.status === 'uploaded' ? '新视频已上传，等待开始' : failed ? '处理失败' : '正在处理房间数据'}</div>
                 <div class="load-sub" id="proc-message">${esc(scan.message || SCAN_STAGE_LABEL[scan.status] || '')}</div>
-                ${failed ? `<div class="row gap-2" style="margin-top:6px">
+                ${scan.status === 'uploaded' ? `<div class="row gap-2" style="margin-top:6px">${isAdmin() ? '<button class="btn btn-primary" id="btn-start-scan">开始重新重建与分析</button>' : '<span>请管理员开始重建与分析</span>'}</div>` : failed || scan.status === 'awaiting_video' ? `<div class="row gap-2" style="margin-top:6px">
                     <button class="btn btn-sm" id="btn-goto-project">返回项目重试上传</button>
                   </div>` : `
                 <div class="progress" style="width:320px"><div class="p-fill" style="width:${Math.max(4, Math.min(100, scan.progress || 0))}%"></div></div>
@@ -243,7 +243,7 @@ export async function roomView(ctx, scanId) {
     const card = overlay.querySelector('.stage-loading-card');
     if (card) {
       const title = card.querySelector('.load-title');
-      if (title) title.textContent = failed ? '处理失败' : `正在处理 · ${SCAN_STAGE_LABEL[scan.status] || ''}`;
+      if (title) title.textContent = scan.status === 'uploaded' ? '新视频已上传，等待开始' : failed ? '处理失败' : `正在处理 · ${SCAN_STAGE_LABEL[scan.status] || ''}`;
       const sub = card.querySelector('#proc-message');
       if (sub) sub.textContent = scan.message || SCAN_STAGE_LABEL[scan.status] || '';
       const steps = card.querySelector('#proc-steps');
@@ -252,6 +252,11 @@ export async function roomView(ctx, scanId) {
       if (fill) fill.style.width = `${Math.max(4, Math.min(100, scan.progress || 0))}%`;
     }
     document.getElementById('btn-goto-project')?.addEventListener('click', () => navigate(`#/projects/${data.scan.project_id}`));
+    document.getElementById('btn-start-scan')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget; button.disabled = true;
+      try { await api.startScan(scanId); await reload(); }
+      catch (error) { toast('error', '启动失败', error.message); button.disabled = false; }
+    });
     document.getElementById('btn-room-screen')?.addEventListener('click', () => navigate(`#/screen/${scanId}`));
     void SCAN_STAGES;
   }

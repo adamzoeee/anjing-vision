@@ -81,6 +81,9 @@ def create_scan(project_id: int, data: ScanIn, db: Session = Depends(get_db),
     if p is None or p.org_id != admin.org_id:
         raise HTTPException(404, "项目不存在")
     scan = Scan(project_id=project_id, capture_type=data.capture_type)
+    if data.defer_processing:
+        scan.status = "awaiting_video"
+        scan.message = "请上传新视频，上传后可手动开始重建与分析"
     db.add(scan)
     db.commit()
     db.refresh(scan)

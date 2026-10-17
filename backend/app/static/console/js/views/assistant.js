@@ -4,11 +4,13 @@ import { icon } from '../icons.js';
 import { navigate } from '../app.js';
 import { createSchemeViewer } from '../viewer/scheme3d.mjs';
 import { candidateViewModel, candidateLayout, proposalSavePayload, describeProposalEdit, proposalNarrativeHTML } from './assistant_model.mjs';
+import { openUploadModal } from './project.js';
 
 export async function assistantView(ctx, scanId) {
   const canSave = isAdmin();
   let alive = true, request = null, viewer = null, proposals = [], fingerprints = null;
   let selected = 0, view = 'after', busy = false, saving = false, stale = false;
+  let projectId = null;
   ctx.cleanup(() => { alive = false; request?.abort(); viewer?.dispose(); viewer = null; });
   ctx.actions.innerHTML = '';
   ctx.title([{ label: '房间工作台', href: `#/scans/${scanId}` }, { label: 'AI 改造助手', current: true }]);
@@ -35,6 +37,15 @@ export async function assistantView(ctx, scanId) {
       </section>
       <section class="glass panel assistant-evidence-panel">
         <button class="btn btn-primary" id="assistant-save">${icon('save', 15)} 保存此方案</button>
+        <button class="btn" id="assistant-unsatisfied" type="button" aria-expanded="false">不满意，重新处理</button>
+        <div id="assistant-retry-options" hidden>
+          <p class="muted">方案不满意可补充上方目标再生成；原始数据不满意请重新上传新视频。旧扫描与已保存方案不会覆盖。</p>
+          <div class="row gap-2" style="flex-wrap:wrap">
+            <button class="btn" id="assistant-regenerate" type="button">只重新生成方案</button>
+            <button class="btn" id="assistant-reupload" type="button" ${canSave ? '' : 'disabled'}>重新上传新视频</button>
+          </div>
+          ${canSave ? '' : '<p class="muted">重新上传与重建仅管理员可操作。</p>'}
+        </div>
         <p class="muted" id="assistant-save-status" role="status"></p><div id="assistant-evidence"></div></section>
     </div>
   </div>`;
@@ -47,6 +58,9 @@ export async function assistantView(ctx, scanId) {
     $('#assistant-cancel').hidden = !busy;
     $('#assistant-form').setAttribute('aria-busy', String(busy));
     $('#assistant-save').disabled = !canSave || saving || stale || !proposals.length;
+    $('#assistant-unsatisfied').disabled = busy || saving;
+    $('#assistant-regenerate').disabled = busy || saving;
+    $('#assistant-reupload').disabled = !canSave || !projectId || busy || saving;
     $('#assistant-save').innerHTML = canSave
       ? `${icon('save', 15)} ${saving ? '正在保存…' : '保存此方案'}`
       : '仅管理员可保存';
@@ -85,6 +99,8 @@ export async function assistantView(ctx, scanId) {
     if (busy || saving) return;
     const controller = new AbortController(); request = controller;
     busy = true; stale = false; proposals = []; fingerprints = null;
+    $('#assistant-retry-options').hidden = true;
+    $('#assistant-unsatisfied').setAttribute('aria-expanded', 'false');
     $('#assistant-workspace').hidden = true; controls(); error();
     status('正在生成并逐组验算；必要时会修订一次，请稍候…');
     try {
@@ -117,6 +133,17 @@ export async function assistantView(ctx, scanId) {
     }
   }
   $('#assistant-form').addEventListener('submit', generate);
+  $('#assistant-unsatisfied').addEventListener('click', () => {
+    const options = $('#assistant-retry-options');
+    options.hidden = !options.hidden;
+    $('#assistant-unsatisfied').setAttribute('aria-expanded', String(!options.hidden));
+  });
+  $('#assistant-regenerate').addEventListener('click', generate);
+  $('#assistant-reupload').addEventListener('click', () => {
+    if (!canSave || !projectId || busy || saving) return;
+    openUploadModal(null, (newId) => { if (alive) navigate(`#/scans/${newId}`); }, null,
+      { deferProcessing: true, projectId });
+  });
   $('#assistant-cancel').addEventListener('click', () => {
     request?.abort(); request = null; busy = false; controls(); status('已取消本次请求，可重新生成。');
   });
@@ -142,6 +169,7 @@ export async function assistantView(ctx, scanId) {
   try {
     const scan = await api.getScan(scanId);
     if (!alive) return;
+    projectId = scan.project_id;
     const unavailable = !['video', 'photos'].includes(scan.capture_type) ? '小助手仅支持单房间扫描，整屋扫描暂不可用。'
       : scan.status !== 'done' ? '请等待房间扫描完成后生成方案。' : '';
     if (unavailable) { status(unavailable); return; }

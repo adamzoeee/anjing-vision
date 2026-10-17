@@ -64,11 +64,33 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
   const staticRoot = path.resolve(__dirname, '../app/static');
   let mode = 'ready'; let saved; let pending; let generationCalls = 0; let saveConflict = false;
   let scanStatus = 'done'; let captureType = 'video'; let staleDetail = false;
-  let lastGoal;
+  let lastGoal; let newScanCreated = 0; let uploadedVideo = ''; let starts = 0; let failStart = false;
+  let newScanStatus = 'awaiting_video'; let failUpload = false;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const json = (body, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
     if (url.pathname.startsWith('/api/')) {
+      if (url.pathname === '/api/projects/1/scans' && req.method === 'POST') {
+        let body = ''; for await (const chunk of req) body += chunk;
+        assert.equal(JSON.parse(body).defer_processing, true);
+        newScanCreated++; return json({ id: 9, project_id: 1, status: 'awaiting_video', capture_type: 'video' });
+      }
+      if (url.pathname === '/api/projects/1/scans') return json([
+        { id: 9, project_id: 1, status: newScanStatus, capture_type: 'video', progress: 0 },
+      ]);
+      if (url.pathname === '/api/scans/9/upload') {
+        assert.equal(url.searchParams.get('defer_processing'), 'true');
+        let body = ''; for await (const chunk of req) body += chunk;
+        uploadedVideo = body;
+        if (failUpload) return json({ error: { message: '测试上传中断，请重试' } }, 503);
+        newScanStatus = 'uploaded';
+        return json({ ok: true, media: 'media/9/new.mp4' });
+      }
+      if (url.pathname === '/api/scans/9/start') {
+        if (failStart) return json({ error: { message: '任务队列暂不可用，视频已保留，请稍后重试' } }, 503);
+        starts++; newScanStatus = 'extracting'; return json({ ok: true, scan_id: 9 });
+      }
+      if (url.pathname === '/api/scans/9') return json({ id: 9, project_id: 1, status: newScanStatus, capture_type: 'video', progress: 0 });
       if (url.pathname.endsWith('/proposals')) {
         let body = ''; for await (const chunk of req) body += chunk;
         lastGoal = JSON.parse(body).goal;
@@ -245,7 +267,62 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
     await memberPage.getByRole('button', { name: '生成改造方案', exact: true }).click();
     await memberPage.locator('.assistant-candidate').nth(1).waitFor();
     assert.equal(await memberPage.locator('#assistant-save').isDisabled(), true);
+    await memberPage.getByRole('button', { name: '不满意，重新处理', exact: true }).click();
+    assert.equal(await memberPage.getByRole('button', { name: '重新上传新视频', exact: true }).isDisabled(), true);
     await memberPage.close();
+    // Reupload must require a fresh file and create a separate scan, never reuse scan 7's media.
+    await page.goto(`${base}#/scans/7/assistant`);
+    await page.reload();
+    await page.getByRole('button', { name: '生成改造方案', exact: true }).click();
+    await page.locator('.assistant-candidate').nth(1).waitFor();
+    await page.getByRole('button', { name: '不满意，重新处理', exact: true }).click();
+    const callsBeforeRetry = generationCalls;
+    await page.getByRole('button', { name: '只重新生成方案', exact: true }).click();
+    await page.locator('.assistant-candidate').nth(1).waitFor();
+    assert.equal(generationCalls, callsBeforeRetry + 1);
+    assert.equal(newScanCreated, 0);
+    await page.getByRole('button', { name: '不满意，重新处理', exact: true }).click();
+    if (process.env.ASSISTANT_SCREENSHOT_DIR) {
+      await page.setViewportSize({ width: 1440, height: 1100 });
+      await page.locator('#assistant-unsatisfied').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(process.env.ASSISTANT_SCREENSHOT_DIR, 'assistant-retry-options.png') });
+    }
+    await page.getByRole('button', { name: '重新上传新视频', exact: true }).click();
+    await page.getByRole('button', { name: '开始上传', exact: true }).click();
+    assert.equal(newScanCreated, 0, 'no new scan until a new file is chosen');
+    await page.locator('#upload-file').setInputFiles({ name: 'new.mp4', mimeType: 'video/mp4', buffer: Buffer.from('fresh-video-content') });
+    failUpload = true;
+    await page.getByRole('button', { name: '开始上传', exact: true }).click();
+    await page.getByText('测试上传中断，请重试', { exact: true }).waitFor();
+    assert.equal(newScanCreated, 1);
+    await page.getByRole('button', { name: '取消', exact: true }).click();
+    await page.goto(`${base}#/projects/1`);
+    await page.getByRole('button', { name: '上传视频', exact: true }).click();
+    failUpload = false;
+    await page.locator('#upload-file').setInputFiles({ name: 'new.mp4', mimeType: 'video/mp4', buffer: Buffer.from('fresh-video-content') });
+    await page.getByRole('button', { name: '开始上传', exact: true }).click();
+    await page.getByRole('button', { name: '开始重新重建与分析', exact: true }).waitFor();
+    assert.equal(newScanCreated, 1);
+    assert(uploadedVideo.includes('new.mp4') && uploadedVideo.includes('fresh-video-content'));
+    assert.equal(starts, 0, 'upload must not start reconstruction implicitly');
+    if (process.env.ASSISTANT_SCREENSHOT_DIR) {
+      await page.screenshot({ path: path.join(process.env.ASSISTANT_SCREENSHOT_DIR, 'assistant-new-video-uploaded.png') });
+    }
+    failStart = true;
+    await page.getByRole('button', { name: '开始重新重建与分析', exact: true }).click();
+    await page.getByText('任务队列暂不可用，视频已保留，请稍后重试', { exact: true }).waitFor();
+    assert.equal(starts, 0);
+    assert.equal(newScanCreated, 1, 'queue failure must reuse the uploaded new video, not create another scan');
+    failStart = false;
+    // Closing the dialog must not lose the uploaded file or the start action.
+    await page.getByRole('button', { name: '取消', exact: true }).click();
+    await page.goto(`${base}#/scans/9`);
+    await page.getByRole('button', { name: '开始重新重建与分析', exact: true }).waitFor();
+    await page.getByRole('button', { name: '开始重新重建与分析', exact: true }).click();
+    await page.waitForURL(/#\/scans\/9$/);
+    await page.getByText('正在处理 · 视频抽帧', { exact: true }).waitFor();
+    assert.equal(starts, 1);
+    await page.goto(`${base}#/scans/7/assistant`);
     scanStatus = 'done'; captureType = 'house';
     await page.reload();
     await page.getByText('小助手仅支持单房间扫描，整屋扫描暂不可用。', { exact: true }).waitFor();

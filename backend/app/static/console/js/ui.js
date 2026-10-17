@@ -68,6 +68,8 @@ export function riskLevel(level) {
 export const SCAN_STAGES = ['uploading', 'extracting', 'reconstructing', 'cleaning', 'understanding', 'done'];
 export const SCAN_STAGE_LABEL = {
   uploading: '上传中',
+  awaiting_video: '等待上传新视频',
+  uploaded: '视频已上传，等待开始',
   extracting: '视频抽帧',
   reconstructing: '三维重建',
   cleaning: '点云后处理',

@@ -144,7 +144,19 @@ export async function projectView(ctx, projectId) {
       });
     });
     list.querySelectorAll('[data-action="upload"]').forEach((btn) => {
-      btn.addEventListener('click', () => openUploadModal(Number(btn.dataset.id), refresh));
+      btn.addEventListener('click', () => {
+        const scan = scans.find((item) => item.id === Number(btn.dataset.id));
+        openUploadModal(scan.id, refresh, null, { deferProcessing: ['awaiting_video', 'failed'].includes(scan.status) });
+      });
+    });
+    list.querySelectorAll('[data-action="start"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await api.startScan(Number(btn.dataset.id));
+          navigate(`#/scans/${btn.dataset.id}`);
+        } catch (error) { toast('error', '启动失败', error.message); btn.disabled = false; }
+      });
     });
     list.querySelectorAll('[data-action="pdf"]').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -187,7 +199,7 @@ export async function projectView(ctx, projectId) {
           </div>
         </div>
         <div class="scan-progress">
-          ${active || failed ? `
+          ${active || failed || ['uploaded', 'awaiting_video'].includes(scan.status) ? `
             <div class="sp-meta"><span>${esc(stage)}</span><span class="num">${progress}%</span></div>
             <div class="progress thin"><div class="p-fill" style="width:${failed ? 100 : progress}%;${failed ? 'background:linear-gradient(90deg,#e23a52,#ff8fa3);box-shadow:none' : ''}"></div></div>
           ` : `
@@ -196,10 +208,11 @@ export async function projectView(ctx, projectId) {
           `}
         </div>
         <div>
-          ${done ? house ? '<span class="badge info">整屋模型 · 未评分</span>' : `<span class="badge ${scoreTone(score) === 'ok' ? 'ok' : scoreTone(score) === 'warn' ? 'warn' : scoreTone(score) === 'bad' ? 'bad' : ''}">综合评分 ${score === null || score === undefined ? '—' : fmtScore(score)}</span>` : `<span class="faint" style="font-size:12px">${scan.status === 'uploading' ? '等待视频上传' : '处理中…'}</span>`}
+          ${done ? house ? '<span class="badge info">整屋模型 · 未评分</span>' : `<span class="badge ${scoreTone(score) === 'ok' ? 'ok' : scoreTone(score) === 'warn' ? 'warn' : scoreTone(score) === 'bad' ? 'bad' : ''}">综合评分 ${score === null || score === undefined ? '—' : fmtScore(score)}</span>` : `<span class="faint" style="font-size:12px">${scan.status === 'uploaded' ? '等待手动开始' : ['uploading', 'awaiting_video'].includes(scan.status) ? '等待视频上传' : '处理中…'}</span>`}
         </div>
         <div class="scan-actions">
-          ${admin && scan.status === 'uploading' ? `<button class="btn btn-sm btn-primary" data-action="upload" data-id="${scan.id}">${icon('upload', 14)} 上传视频</button>` : ''}
+          ${admin && scan.status === 'uploaded' ? `<button class="btn btn-sm btn-primary" data-action="start" data-id="${scan.id}">开始重建与分析</button>` : ''}
+          ${admin && ['uploading', 'awaiting_video'].includes(scan.status) ? `<button class="btn btn-sm btn-primary" data-action="upload" data-id="${scan.id}">${icon('upload', 14)} 上传视频</button>` : ''}
           ${admin && failed && !house ? `<button class="btn btn-sm" data-action="upload" data-id="${scan.id}">${icon('refresh', 14)} 重新上传</button>` : ''}
           ${done ? `
             <button class="btn btn-sm btn-primary" data-action="open" data-id="${scan.id}">${icon('home', 14)} ${house ? '整屋工作台' : '房间工作台'}</button>
@@ -315,10 +328,11 @@ async function openAssemblyModal(projectId, onDone) {
     : '门宽或门高差异过大、重复使用同一扇门、连接图不完整时，系统会阻止生成。每次生成都会保存为新的整屋 Scan。';
 }
 
-export function openUploadModal(scanId, onDone, presetFile = null) {
+export function openUploadModal(scanId, onDone, presetFile = null, { deferProcessing = false, projectId } = {}) {
+  let uploaded = false, working = false;
   const modal = openModal({
-    title: '上传房间视频',
-    desc: '视频将依次进入：抽帧 → SLAM3R 稠密重建 → 点云后处理 → SpatialLM 结构识别。',
+    title: deferProcessing ? '重新上传新视频' : '上传房间视频',
+    desc: deferProcessing ? '请选择新视频。旧扫描与已保存方案保留；上传后需再次点击开始重建与分析。关闭后可在项目列表继续。' : '视频将依次进入：抽帧 → SLAM3R 稠密重建 → 点云后处理 → SpatialLM 结构识别。',
     body: `
       <div class="col gap-4">
         <div class="dropzone" id="upload-dropzone" tabindex="0" role="button">
@@ -351,9 +365,20 @@ export function openUploadModal(scanId, onDone, presetFile = null) {
         label: '开始上传',
         variant: 'btn-primary',
         onClick: async (c, modalEl) => {
+          if (working) return;
+          const confirmBtn = modalEl.querySelector('.modal-actions .btn-primary');
+          if (uploaded) {
+            working = true; confirmBtn.disabled = true;
+            try { await api.startScan(scanId); c(); onDone?.(scanId); }
+            catch (error) { toast('error', '启动失败', error.message); }
+            finally { working = false; confirmBtn.disabled = false; }
+            return;
+          }
           const file = modalEl._file;
           if (!file) { toast('error', '请先选择视频文件'); return; }
+          if (!file.size) { toast('error', '视频文件不能为空'); return; }
           if (file.size > 512 * 1024 * 1024) { toast('error', '文件过大', '单个视频不能超过 512 MB'); return; }
+          if (deferProcessing && !/\.(mp4|mov|avi|mkv)$/i.test(file.name)) { toast('error', '请选择 MP4 / MOV / AVI / MKV 视频'); return; }
           const refs = [];
           const pushRef = (selector, objectType, dimension) => {
             const value = Number(modalEl.querySelector(selector)?.value);
@@ -368,9 +393,10 @@ export function openUploadModal(scanId, onDone, presetFile = null) {
           const percent = modalEl.querySelector('#upload-percent');
           const phase = modalEl.querySelector('#upload-phase');
           progressWrap.classList.remove('hidden');
-          const confirmBtn = modalEl.querySelector('.modal-actions .btn-primary');
+          working = true; confirmBtn.disabled = true;
           confirmBtn.classList.add('is-loading');
           try {
+            if (!scanId) scanId = (await api.createScan(projectId, { deferProcessing })).id;
             if (refs.length) {
               phase.textContent = '保存参考尺寸';
               await api.putReferences(scanId, refs);
@@ -380,9 +406,17 @@ export function openUploadModal(scanId, onDone, presetFile = null) {
               const value = Math.round(frac * 100);
               fill.style.width = `${value}%`;
               percent.textContent = `${value}%`;
-            });
+            }, { deferProcessing });
             fill.style.width = '100%';
             percent.textContent = '100%';
+            if (deferProcessing) {
+              uploaded = true;
+              phase.textContent = '新视频已上传，尚未开始重建';
+              confirmBtn.textContent = '开始重新重建与分析';
+              modalEl.querySelectorAll('input').forEach((input) => { input.disabled = true; });
+              dropzone.setAttribute('aria-disabled', 'true');
+              return;
+            }
             phase.textContent = '上传完成，管道已启动';
             toast('ok', '视频已上传', '三维重建管道已开始运行');
             setTimeout(() => {
@@ -390,8 +424,9 @@ export function openUploadModal(scanId, onDone, presetFile = null) {
               onDone?.();
             }, 600);
           } catch (error) {
-            confirmBtn.classList.remove('is-loading');
             toast('error', '上传失败', error?.message || '');
+          } finally {
+            working = false; confirmBtn.disabled = false; confirmBtn.classList.remove('is-loading');
           }
         },
       },
@@ -403,6 +438,7 @@ export function openUploadModal(scanId, onDone, presetFile = null) {
   const title = modalEl.querySelector('#dz-title');
 
   const setFile = (file) => {
+    if (working || uploaded) return;
     modalEl._file = file;
     if (file) {
       const mb = (file.size / 1024 / 1024).toFixed(1);

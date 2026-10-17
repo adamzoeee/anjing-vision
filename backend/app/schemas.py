@@ -123,6 +123,7 @@ class ProjectOut(BaseModel):
 
 
 class ScanIn(BaseModel):
+    defer_processing: bool = False
     capture_type: Literal["video", "photos"] = "video"
 
 
