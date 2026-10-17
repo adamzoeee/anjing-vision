@@ -1,7 +1,7 @@
 """改造方案的派生状态：在内存副本上应用 edits，绝不触碰真实产物。
 
 约束：
-- 只处理 measurements.objects / measurements.openings / structure.semantic_instances；
+- 只处理 measurements.objects / measurements.openings / structure.semantic_instances（兼容 structure.objects）；
 - 越界、与其他家具重叠的编辑一律拒绝并记入 conflicts；
 - 新增物体的 measurement_status 恒为 "assumed"，由 space_foundation 显式接受。
 """
@@ -79,6 +79,13 @@ def _find(container: list[dict], target: str) -> dict | None:
     return None
 
 
+def _active_objects(structure: dict) -> list[dict]:
+    """Use the same furniture collection as the derived layout."""
+    if structure.get("semantic_instances") or "objects" not in structure:
+        return structure.setdefault("semantic_instances", [])
+    return structure["objects"]
+
+
 def _wall_local(point, wall: dict) -> tuple[float, float]:
     angle = math.radians(float(wall.get("rotation_z_deg") or 0.0))
     dx, dy = point[0] - wall["center"][0], point[1] - wall["center"][1]
@@ -108,6 +115,8 @@ def _door_geometry_conflict(door: dict, width: float, walls: list[dict], bounds:
                 if (parallel and abs(along) <= wall["size"][0] / 2 + _EDGE_TOL
                         and abs(normal) <= wall["size"][1] / 2 + _EDGE_TOL):
                     containing.append(wall)
+        if walls and not containing:
+            return "door_out_of_wall"
         for wall in containing:
             for point in endpoints:
                 along, normal = _wall_local(point, wall)
@@ -200,7 +209,7 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
                 "measurement_status": ASSUMED_STATUS, "measurement_reason": "user_assumption",
                 "confidence": None,
             })
-            s.setdefault("semantic_instances", []).append({
+            _active_objects(s).append({
                 "instance_id": oid, "label": label, "center": center, "size": list(size),
                 "rotation_z_deg": candidate["rotation_z_deg"], "assumed": True,
             })
@@ -209,7 +218,8 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
             continue
 
         item = _find(m.get("objects", []), target)
-        sit = _find(s.get("semantic_instances", []), target)
+        active_objects = _active_objects(s)
+        sit = _find(active_objects, target)
         if item is None and sit is None:
             conflicts.append({"type": "unknown_object", "target": target, "op": op})
             continue
@@ -218,7 +228,7 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
             if item is not None:
                 m["objects"].remove(item)
             if sit is not None:
-                s["semantic_instances"].remove(sit)
+                active_objects.remove(sit)
             applied.append(dict(edit))
             continue
 
@@ -248,7 +258,7 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
             if sit is not None:
                 sit["center"] = [moved["center"][0], moved["center"][1], sit["center"][2]]
             else:
-                s.setdefault("semantic_instances", []).append({
+                active_objects.append({
                     "instance_id": object_id(item),
                     "label": item.get("type") or item.get("label") or "object",
                     "center": list(moved["center"]),
@@ -285,13 +295,13 @@ def apply_edits(measurements: dict, structure: dict, edits: list[dict]) -> dict:
                         "center": list(item["center"]),
                         "size": [item["length_m"], item["width_m"], float(item.get("height_m") or 0.0)],
                         "rotation_z_deg": new_rotation}
-            active_collection = (s.setdefault("semantic_instances", []) if s.get("semantic_instances") or "objects" not in s
-                                 else s["objects"])
-            rotation_sit = _find(active_collection, target)
-            if rotation_sit is None:
-                active_collection.append(mirrored)
+            if sit is None:
+                active_objects.append(mirrored)
             else:
-                rotation_sit.update({key: mirrored[key] for key in ("center", "size", "rotation_z_deg")})
+                sit["center"] = mirrored["center"]
+                if not sit.get("size"):
+                    sit["size"] = mirrored["size"]
+                sit["rotation_z_deg"] = (float(sit.get("rotation_z_deg") or 0.0) + 90.0 * turns) % 360.0
             applied.append(dict(edit))
             continue
 
