@@ -12,6 +12,7 @@
 | 恢复 Scan46 当前接受结果 | [Scan46 精简交接](scan46-handoff-20261008.md) |
 | 搭建 API、前端及视频主流程 | [首页运行说明](../README.md)、[配置样例](../backend/.env.example) |
 | 理解正式测量与风险评分 | [空间指标验收](spatial-metrics-acceptance.md)、[风险开发报告](risk-assessment-development-report.md) |
+| USB / 本地视频实时采集与预览 | [P0 开发说明](realtime-capture.md)、[审计](realtime-capture-audit.md)、[验收](realtime-capture-acceptance.md) |
 | 查看窗边修复的来源和未解决问题 | [源数据可追溯修复](scan46-source-traced-repair.md)、[窗边问题交接](scan46-window-black-handoff.md) |
 
 ## 业务代码地图
@@ -28,6 +29,7 @@
 | 空间识别 | [spatiallm_runner.py](../backend/pipeline/spatiallm_runner.py) | 外部 SpatialLM 推理及结构解析 |
 | 结构验证 | [structure_builder.py](../backend/pipeline/structure_builder.py) | 候选框、局部点云、几何与诊断输出 |
 | 视频 / 语义证据 | [semantic.py](../backend/pipeline/semantic.py)、[video_box_refiner.py](../backend/pipeline/video_box_refiner.py) | 可用时为结构与物体提供语义及多视角证据 |
+| 实时采集底座 | [realtime/](../backend/realtime/)、[live_capture.py](../backend/app/routers/live_capture.py) | USB / 文件统一帧、有界队列、有限重连、状态和鉴权 JPEG；不执行 AI |
 | 比例与测量 | [measurement_builder.py](../backend/pipeline/measurement_builder.py)、[metric_quality.py](../backend/pipeline/metric_quality.py) | 参考尺寸、统一比例、验证参考和质量判定 |
 | 通行与空间 | [space_foundation.py](../backend/pipeline/space_foundation.py)、[passage_builder.py](../backend/pipeline/passage_builder.py)、[passage_metrics.py](../backend/pipeline/passage_metrics.py) | 占地、路径、净距、通道和通行分析 |
 | 正式评估输入 | [spatial_assessment_inputs.py](../backend/pipeline/spatial_assessment_inputs.py)、[spatial_metrics.py](../backend/pipeline/spatial_metrics.py) | 已有结构化证据 → SpatialMetric 契约 |
@@ -48,6 +50,7 @@
 | 登录与机构 | `/api/auth` | [auth.py](../backend/app/routers/auth.py)、[login_page.dart](../app/lib/pages/login_page.dart) |
 | 项目与扫描 | `/api/projects`、`/api/scans` | [projects.py](../backend/app/routers/projects.py)、[scans.py](../backend/app/routers/scans.py) |
 | 视频采集 / 上传 | `POST /api/scans/{scan_id}/upload` | [capture_page.dart](../app/lib/pages/capture_page.dart)、[upload_page.dart](../app/lib/pages/upload_page.dart) |
+| 实时预览（独立于上传） | `/api/live-capture/status`、`start`、`stop`、`frame.jpg` | [live_capture.py](../backend/app/routers/live_capture.py)、[live_capture_page.dart](../app/lib/pages/live_capture_page.dart) |
 | 报告 | `GET /api/reports/scans/{scan_id}` | [reports.py](../backend/app/routers/reports.py)、[report_page.dart](../app/lib/pages/report_page.dart) |
 | 三维查看 | `/preview/{scan_id}`、`/api/preview/{scan_id}/manifest.json` | [preview.py](../backend/app/routers/preview.py)、[viewer.js](../backend/app/static/preview/viewer.js) |
 | 展示层 | 点云预览的六个结构展示层 | [visual_layers.js](../backend/app/static/preview/visual_layers.js) |

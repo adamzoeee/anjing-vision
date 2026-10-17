@@ -64,6 +64,12 @@ python -m http.server 8096 --bind 127.0.0.1 --directory backend/data/demos/house
 
 正式评估保留 `not_evaluable` 状态：缺少可靠数据不计为安全。标定、几何验证和风险评估是否成功应分别检查；扫描任务完成不等于每个指标都可评估。默认层高缩放是先验，实际测量可靠性以参考标定和证据质量为准。
 
+## 实时采集基础设施（P0）
+
+新增统一 USB / 本地视频输入、有界丢旧帧队列、生命周期与有限重连、鉴权状态/JPEG 预览。Flutter 项目列表右上角摄像头按钮进入“实时视频预览”。默认禁用，不自动打开摄像头、不录制或采集音频；尚未接入姿态、跌倒、环境检测或材质模型，也不改变原有离线重建/风险流程。
+
+配置、启动、统计定义及限制见 [实时采集开发说明](docs/realtime-capture.md)；[审计](docs/realtime-capture-audit.md) / [P0 验收记录](docs/realtime-capture-acceptance.md)。自动化已覆盖文件与假源，实体摄像头现场验收待完成。
+
 ## 业务处理流程
 
 ```text
@@ -147,6 +153,7 @@ app/                         Flutter 业务界面、API 模型、报告与预览
 backend/app/                 FastAPI、认证、数据模型、路由、任务编排
 backend/pipeline/            重建适配、结构/测量/通路/风险/报告、家庭 Demo
 backend/assistant/           改造意图解析与响应
+backend/realtime/            统一实时输入、帧队列、采集会话与统计（默认禁用）
 backend/scripts/             部署、视频 CLI、Scan46 修复/交接、Blender 导出
 backend/tests/               后端与查看器测试
 backend/data/demos/          已打包的家庭点云及渲染结果
