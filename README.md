@@ -153,7 +153,7 @@ API、上传和报告依赖业务数据与认证；家庭 Demo 使用独立的�
 - **整屋工作台** `#/scans/{id}`：同一路由显示拼接后的整屋点云、空间框架、房间拓扑与门对应关系；每次拼接生成新 Scan，原房间 Scan 保留。详见[逐房间扫描与整屋拼接](docs/house-scan-workbench.md)
 - **大屏演示模式** `#/screen/{id}`：一屏驾驶舱（结构识别、参考尺寸、平面图纸、3D 场景、综合评估、风险清单、关键指标跑马灯），含入场编排与实时时钟，可切换同项目内其他已完成房间
 
-前端为原生 HTML/CSS/ES Module（零构建、零外部 CDN，静态查看无需外网），源码在 `backend/app/static/console/`；设计系统固化于 `design-system/anjing-vision/MASTER.md`（v2 暮光 / 象牙主题）。AI 生成需后端配置 `DEEPSEEK_API_KEY` 并能访问 DeepSeek，密钥不进入前端；未配置、超时或可信方案不足会显示可重试原因，取消仅中止本页等待。深链支持 `?token=<jwt>`（与 `/preview` 一致）。
+前端为原生 HTML/CSS/ES Module（零构建、零外部 CDN，静态查看无需外网），源码在 `backend/app/static/console/`；设计系统固化于 `design-system/anjing-vision/MASTER.md`（v2 暮光 / 象牙主题）。AI 生成需后端配置 `DEEPSEEK_API_KEY` 并能访问 DeepSeek；可通过 `DEEPSEEK_MODEL`、`DEEPSEEK_ENDPOINT`（HTTPS）、`DEEPSEEK_TIMEOUT_S` 和 `DEEPSEEK_MAX_TOKENS`（128–4096，默认 2048）调整服务，密钥不进入前端；未配置、超时或可信方案不足会显示可重试原因，取消仅中止本页等待。深链支持 `?token=<jwt>`（与 `/preview` 一致）。
 
 > v2 视觉：双主题（「暮光」深紫珊瑚 /「象牙」暖白，工作台左下角一键切换）、全效动效开关（默认跟随系统"减少动效"，可强制全量）、界面背后常驻悬浮 3D 建模层（真实 layout 线框 + 粒子 + 鼠标视差）、页面级转场（View Transitions + 光带扫掠）、3D 场景「真实场景 / 空间结构」双视图切换。
 

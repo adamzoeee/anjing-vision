@@ -97,9 +97,9 @@ export async function schemeView(ctx, scanId, schemeId) {
           </div>
         </div>
         <div class="sh-score">
-          <div class="score-chip"><div class="label">改造前</div><div class="value">${fmtScore(comparison.before_score)}</div></div>
+          <div class="score-chip"><div class="label">${detail.stale ? '当前重算 · 改造前' : '改造前'}</div><div class="value">${fmtScore(comparison.before_score)}</div></div>
           <div class="score-arrow">${icon('chevronRight', 18)}</div>
-          <div class="score-chip after"><div class="label">改造后</div><div class="value">${fmtScore(comparison.after_score)}</div></div>
+          <div class="score-chip after"><div class="label">${detail.stale ? '当前重算 · 改造后' : '改造后'}</div><div class="value">${fmtScore(comparison.after_score)}</div></div>
           ${Number.isFinite(Number(comparison.score_delta)) ? `
             <span class="badge ${comparison.score_delta >= 0 ? 'ok' : 'bad'}">${comparison.score_delta >= 0 ? '+' : ''}${comparison.score_delta}</span>` : ''}
         </div>

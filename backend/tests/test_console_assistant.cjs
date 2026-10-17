@@ -32,7 +32,7 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
 }));
 
 (async () => {
-  const { candidateViewModel, proposalSavePayload, candidateLayout, describeProposalEdit } = await import('../app/static/console/js/views/assistant_model.mjs');
+  const { candidateViewModel, proposalSavePayload, candidateLayout, describeProposalEdit, proposalNarrativeHTML } = await import('../app/static/console/js/views/assistant_model.mjs');
   for (const [quarter_turns, degrees] of [[1, 90], [2, 180], [3, 270]]) {
     assert.equal(describeProposalEdit({ op: 'rotate', target: 'desk_001', quarter_turns }), `旋转 desk_001 ${degrees}°`);
   }
@@ -50,6 +50,10 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
     based_on: fingerprints, proposal_meta: { title: '移动桌子', intent: '保留家具，扩大通行空间', risk_codes: ['M01'], limitations: ['空间模拟，须现场复核'] },
   });
   assert.throws(() => proposalSavePayload(proposals[1], null), /指纹/);
+  const savedNarrative = proposalNarrativeHTML({ intent: '保留家具', evidence: {
+    facts: { score: 40, risks: [] }, verification: { comparison: { before_score: 40, after_score: 52 } },
+  } }, (value) => String(value));
+  assert(savedNarrative.includes('保存时验算'));
 
   // Real DOM and production router/view modules; only HTTP/model responses are synthetic.
   let playwright;
@@ -58,7 +62,7 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
   }
   const staticRoot = path.resolve(__dirname, '../app/static');
   let mode = 'ready'; let saved; let pending; let generationCalls = 0; let saveConflict = false;
-  let scanStatus = 'done'; let captureType = 'video';
+  let scanStatus = 'done'; let captureType = 'video'; let staleDetail = false;
   let lastGoal;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -80,7 +84,11 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
       }
       if (url.pathname.endsWith('/schemes/8')) {
         const proposal = mode === 'rotations' ? rotationProposals.find((item) => item.title === saved.name) : proposals[1];
-        return json({ ...proposal, plan: { id: 8, name: saved.name, edits: saved.edits }, proposal_meta: { ...saved.proposal_meta, evidence: proposal.evidence } });
+        return json({ ...proposal, stale: staleDetail,
+          comparison: staleDetail ? { before_score: 60, after_score: 63, score_delta: 3 } : proposal.comparison,
+          plan: { id: 8, name: saved.name, edits: saved.edits },
+          proposal_meta: { ...saved.proposal_meta, evidence: { ...proposal.evidence,
+            verification: { ...proposal.evidence.verification, comparison: proposal.comparison } } } });
       }
       if (url.pathname.endsWith('/schemes')) return json({ schemes: [] });
       if (url.pathname === '/api/scans/7') return json({ id: 7, project_id: 1, status: scanStatus, capture_type: captureType });
@@ -156,6 +164,14 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
     await page.getByText('保留家具，扩大通行空间', { exact: true }).waitFor();
     assert.deepEqual(saved.based_on, fingerprints); assert.equal(saved.source, 'ai');
     assert.equal(saved.proposal_meta.title, '移动桌子');
+    staleDetail = true;
+    await page.reload();
+    await page.getByText('基于旧数据', { exact: true }).waitFor();
+    assert((await page.locator('.sh-score').textContent()).includes('当前重算'));
+    assert((await page.locator('.sh-score').textContent()).includes('63'));
+    assert((await page.locator('.assistant-narrative').textContent()).includes('保存时验算'));
+    assert((await page.locator('.assistant-narrative').textContent()).includes('52'));
+    staleDetail = false;
     mode = 'rotations';
     for (const [index, degrees] of [[0, 90], [1, 180], [2, 270]]) {
       await page.goto(`${base}#/scans/7/assistant`);

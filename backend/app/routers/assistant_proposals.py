@@ -47,7 +47,8 @@ def room_proposals(
         result = generate_room_proposals(
             measurements, structure, payload.goal,
             partial(request_candidates, api_key=settings.deepseek_api_key,
-                    model=settings.deepseek_model, timeout_s=settings.deepseek_timeout_s),
+                    model=settings.deepseek_model, endpoint=settings.deepseek_endpoint,
+                    timeout_s=settings.deepseek_timeout_s, max_tokens=settings.deepseek_max_tokens),
         )
     except DeepSeekUnavailable:
         raise HTTPException(503, "AI 方案服务暂时不可用，请稍后重试") from None

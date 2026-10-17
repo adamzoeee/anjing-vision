@@ -33,12 +33,13 @@ def request_candidates(
     model: str = "deepseek-flash",
     endpoint: str = "https://api.deepseek.com/chat/completions",
     timeout_s: float = 20,
+    max_tokens: int = 2048,
 ) -> list[dict]:
     """Request candidate edits without exposing provider errors or credentials."""
     payload = {
         "model": model,
         "response_format": {"type": "json_object"},
-        "max_tokens": 2048,
+        "max_tokens": max_tokens,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps(

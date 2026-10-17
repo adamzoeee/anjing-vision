@@ -57,6 +57,8 @@ class Settings(BaseSettings):
 
     deepseek_api_key: str | None = Field(default=None, repr=False, exclude=True)
     deepseek_model: str = "deepseek-flash"
+    deepseek_endpoint: str = "https://api.deepseek.com/chat/completions"
+    deepseek_max_tokens: int = Field(default=2048, ge=128, le=4096)
     deepseek_timeout_s: float = Field(default=20, gt=0, allow_inf_nan=False)
 
     storage_backend: Literal["local", "minio"] = "local"
@@ -133,6 +135,21 @@ class Settings(BaseSettings):
             if value and value not in normalized:
                 normalized.append(value)
         return normalized
+
+    @field_validator("deepseek_endpoint")
+    @classmethod
+    def _validate_deepseek_endpoint(cls, value: str) -> str:
+        value = value.strip()
+        try:
+            parsed = urlsplit(value)
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("DEEPSEEK_ENDPOINT 格式无效") from exc
+        if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or port is not None and not 1 <= port <= 65535
+                or not parsed.path.startswith("/")):
+            raise ValueError("DEEPSEEK_ENDPOINT 必须是无凭据、查询参数的 HTTPS 接口地址")
+        return value
 
     @field_validator("database_url")
     @classmethod

@@ -78,13 +78,14 @@ def test_passes_revision_feedback_and_connection_overrides(monkeypatch):
     def transport(request, timeout):
         payload = json.loads(request.data)
         assert payload["model"] == "custom-model"
+        assert payload["max_tokens"] == 1024
         assert request.full_url == "https://example.test/completions"
         assert timeout == 3
         assert json.loads(payload["messages"][-1]["content"])["feedback"] == [{"reason": "overlap"}]
         return io.BytesIO(completion('{"proposals": []}'))
 
     monkeypatch.setattr("assistant.deepseek_client.urlopen", transport)
-    assert request_candidates({}, [{"reason": "overlap"}], api_key=KEY, model="custom-model", endpoint="https://example.test/completions", timeout_s=3) == []
+    assert request_candidates({}, [{"reason": "overlap"}], api_key=KEY, model="custom-model", endpoint="https://example.test/completions", timeout_s=3, max_tokens=1024) == []
 
 
 @pytest.mark.parametrize("body", [
@@ -142,10 +143,14 @@ def test_settings_load_deepseek_environment_without_exposing_key(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", KEY)
     monkeypatch.setenv("DEEPSEEK_MODEL", "custom-model")
     monkeypatch.setenv("DEEPSEEK_TIMEOUT_S", "7.5")
+    monkeypatch.setenv("DEEPSEEK_ENDPOINT", "https://example.test/v1/chat/completions")
+    monkeypatch.setenv("DEEPSEEK_MAX_TOKENS", "1024")
     settings = Settings(_env_file=None)
     assert settings.deepseek_api_key == KEY
     assert settings.deepseek_model == "custom-model"
     assert settings.deepseek_timeout_s == 7.5
+    assert settings.deepseek_endpoint == "https://example.test/v1/chat/completions"
+    assert settings.deepseek_max_tokens == 1024
     assert KEY not in repr(settings)
     assert "deepseek_api_key" not in settings.model_dump()
 
@@ -154,9 +159,29 @@ def test_settings_allow_unconfigured_client_and_reject_invalid_timeout(monkeypat
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
     monkeypatch.delenv("DEEPSEEK_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("DEEPSEEK_ENDPOINT", raising=False)
+    monkeypatch.delenv("DEEPSEEK_MAX_TOKENS", raising=False)
     settings = Settings(_env_file=None)
     assert settings.deepseek_api_key is None
     assert settings.deepseek_model == "deepseek-flash"
     assert settings.deepseek_timeout_s == 20
+    assert settings.deepseek_endpoint == "https://api.deepseek.com/chat/completions"
+    assert settings.deepseek_max_tokens == 2048
     with pytest.raises(ValidationError):
         Settings(_env_file=None, deepseek_timeout_s=0)
+
+
+@pytest.mark.parametrize("endpoint", [
+    "http://example.test/chat", "https://user:secret@example.test/chat",
+    "https://example.test/chat?key=secret", "https://example.test/chat#fragment",
+    "https://example.test:99999/chat", "https:///chat", "",
+])
+def test_settings_reject_insecure_or_malformed_deepseek_endpoint(endpoint):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, deepseek_endpoint=endpoint)
+
+
+@pytest.mark.parametrize("max_tokens", [0, 127, 4097, 1.5])
+def test_settings_reject_deepseek_token_cap_outside_bounded_integer_range(max_tokens):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, deepseek_max_tokens=max_tokens)

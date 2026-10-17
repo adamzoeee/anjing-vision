@@ -347,6 +347,26 @@ def test_api_accepts_completed_single_room_and_returns_fingerprints(client, sche
     assert "fake-test-key" not in response.text
 
 
+def test_api_uses_configured_provider_endpoint_and_token_cap(client, scheme_inputs, monkeypatch):
+    import app.routers.assistant_proposals as route
+    from types import SimpleNamespace
+    from app.main import app
+    settings = get_settings()
+    configured = SimpleNamespace(**{**settings.model_dump(), "deepseek_api_key": "fake-test-key",
+                                    "deepseek_endpoint": "https://example.test/v1/chat/completions",
+                                    "deepseek_max_tokens": 1024})
+    app.dependency_overrides[get_settings] = lambda: configured
+    def request(context, feedback, **kwargs):
+        assert kwargs["endpoint"] == "https://example.test/v1/chat/completions"
+        assert kwargs["max_tokens"] == 1024
+        assert kwargs["api_key"] == "fake-test-key"
+        return _valid_candidates()
+    monkeypatch.setattr(route, "request_candidates", request)
+    sid, headers, _ = _scan(client, scheme_inputs)
+    response = client.post(f"/api/assistant/scans/{sid}/proposals", json={}, headers=headers)
+    assert response.status_code == 200, response.text
+
+
 @pytest.mark.parametrize("status,capture_type,files", [
     ("processing", "video", True), ("uploading", "photos", True),
     ("done", "house", True), ("done", "house_demo", True), ("done", "video", False),
