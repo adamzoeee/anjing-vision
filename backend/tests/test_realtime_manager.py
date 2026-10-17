@@ -186,3 +186,35 @@ def test_preview_disabled_does_not_stop_consumers_and_org_isolation():
         with pytest.raises(PermissionError):manager.stop(8)
         assert manager.state=="running"
     finally:manager.stop()
+
+
+def test_snapshot_permissions_are_checked_at_read_not_only_at_route_entry():
+    manager=CaptureManager(CaptureConfig(target_fps=60),lambda c:FakeSource())
+    manager.start(7);wait_for(lambda:manager.frame_count>0)
+    assert manager.preview_jpeg(owner_org_id=7) is not None
+    manager.stop(7)
+    # An earlier route-level authorization must not permit reading a new owner's frame.
+    manager.start(8);wait_for(lambda:manager.frame_count>0)
+    try:
+        with pytest.raises(PermissionError):manager.status(owner_org_id=7)
+        with pytest.raises(PermissionError):manager.preview_jpeg(owner_org_id=7)
+        assert manager.preview_jpeg(owner_org_id=8) is not None
+    finally:manager.stop()
+
+
+def test_reconnect_after_delivered_frames_preserves_session_sequence():
+    class DisconnectAfterTwo(FakeSource):
+        def read(self):
+            if self.frames>=2:raise SourceError('device_disconnected')
+            return super().read()
+    first=DisconnectAfterTwo();second=FakeSource();sources=[first,second]
+    manager=CaptureManager(CaptureConfig(target_fps=60,retry_interval_s=.01,retry_max_interval_s=.02),
+                           lambda c:sources.pop(0))
+    session=manager.start(1)
+    try:
+        wait_for(lambda:manager.frame_count>=5)
+        frame=manager.consume_latest()
+        assert frame.session_id==session and frame.frame_id>=5
+        assert manager.reconnect_count==1 and first.closed
+        assert second.frames>=3
+    finally:manager.stop()

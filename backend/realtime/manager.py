@@ -188,9 +188,13 @@ class CaptureManager:
     def latest_frame(self):
         with self._lock: return self._latest
 
-    def preview_jpeg(self):
+    def preview_jpeg(self, owner_org_id=None):
         if not self.config.preview_enabled: raise PermissionError("预览已关闭")
-        frame = self.latest_frame()
+        # Authorize and take the snapshot atomically: a stopped session may be
+        # claimed by a different institution while another HTTP request is pending.
+        with self._lock:
+            if owner_org_id is not None: self.assert_owner(owner_org_id)
+            frame = self._latest
         if frame is None: return None
         key = frame.session_id, frame.frame_id
         with self._preview_lock:
@@ -207,9 +211,10 @@ class CaptureManager:
         recent = [t for t in times if t >= now-2]
         return round((len(recent)-1)/(recent[-1]-recent[0]),2) if len(recent)>1 and recent[-1]>recent[0] else 0.
 
-    def status(self):
+    def status(self, owner_org_id=None):
         now = time.monotonic()
         with self._lock:
+            if owner_org_id is not None: self.assert_owner(owner_org_id)
             return {"camera_id":self.config.camera_id,"session_id":self.session_id,"state":self.state,"reason":self.reason,
                 "source":self.config.public_source(),"connected":self.state=="running",
                 "thread_alive":bool(self._thread and self._thread.is_alive()),
