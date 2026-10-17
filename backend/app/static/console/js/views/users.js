@@ -19,17 +19,17 @@ export async function usersView(ctx) {
 
   ctx.host.innerHTML = `
     <div class="view-users">
-      <div class="glass panel" style="margin-bottom:14px;display:flex;gap:12px;align-items:center">
-        <div class="k-icon">${icon('shield', 17)}</div>
-        <div style="min-width:0">
-          <div style="font-weight:600">权限说明</div>
-          <div class="faint" style="font-size:12.5px;line-height:1.6">
+      <div class="glass panel" style="margin-bottom:14px">
+        <div class="panel-head" style="justify-content:center">
+          <div class="panel-title">${icon('shield', 16)} 权限说明</div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center">
+          <div class="faint" style="flex:1;min-width:0;font-size:12.5px;line-height:1.6">
             机构管理员可管理项目、上传视频、拼接整屋与保存改造方案；成员为只读账号，可查看项目、点云、图纸、报告与沙盒模拟结果。
             数据按机构隔离，成员只能看到本机构内容。
           </div>
+          <button class="btn" id="btn-self-password" style="flex:none">${icon('shield', 15)} 修改我的密码</button>
         </div>
-        <span class="grow"></span>
-        <button class="btn" id="btn-self-password">${icon('shield', 15)} 修改我的密码</button>
       </div>
       <div class="glass panel" id="users-panel">
         <div class="skeleton-line shimmer" style="width:40%"></div>
