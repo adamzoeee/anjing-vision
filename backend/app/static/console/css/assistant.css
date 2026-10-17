@@ -1,0 +1,48 @@
+.assistant-page { padding-bottom: 32px; overflow-y: auto; }
+.assistant-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+.assistant-head h1 { margin: 5px 0; }
+.assistant-head p { margin-top: 8px; }
+.assistant-form { gap: 12px; margin-bottom: 20px; }
+.assistant-form .row { flex-wrap: wrap; }
+.assistant-form textarea { resize: vertical; min-height: 74px; }
+.assistant-error { color: var(--bad); overflow-wrap: anywhere; }
+.assistant-workspace { display: grid; grid-template-columns: minmax(210px,.8fr) minmax(320px,1.7fr) minmax(260px,1fr); align-items: start; gap: 16px; }
+.assistant-workspace[hidden], .assistant-page [hidden] { display: none !important; }
+.assistant-workspace > * { min-width: 0; }
+.assistant-candidates { display: flex; flex-direction: column; gap: 12px; }
+.assistant-candidate { display: flex; flex-direction: column; gap: 10px; padding: 18px; text-align: left; color: var(--text-2); cursor: pointer; font: inherit; overflow-wrap: anywhere; transition: border-color 220ms var(--ease-soft), background 220ms var(--ease-soft); }
+.assistant-candidate strong { color: var(--text-1); font-size: 17px; }
+.assistant-candidate.is-selected { border-color: var(--accent); background: var(--panel-strong); }
+.assistant-candidate[aria-pressed="true"] .eyebrow { color: var(--accent); }
+.assistant-candidate:hover { border-color: var(--border-strong); }
+.assistant-candidate .tag { align-self: flex-start; white-space: normal; }
+.assistant-card-score, .assistant-score b { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.assistant-stage { height: min(55vh,560px); min-height: 320px; position: relative; overflow: hidden; border-radius: 12px; background: var(--well, #17122a); }
+.assistant-stage canvas { display: block; max-width: 100%; }
+.assistant-preview .panel-head { flex-wrap: wrap; gap: 12px; }
+.assistant-preview .panel-head .row { flex-wrap: wrap; }
+.assistant-legend { font-size: 12px; line-height: 1.8; margin-top: 12px; }
+.assistant-view-error { padding: 24px; color: #eaf0fb; }
+.assistant-evidence-panel { overflow-wrap: anywhere; }
+.assistant-evidence-panel h2 { font-size: 19px; }
+.assistant-evidence-panel h3, .assistant-narrative h3 { margin: 18px 0 8px; font-size: 13px; color: var(--text-1); }
+.assistant-evidence-panel p, .assistant-evidence-panel li, .assistant-narrative p, .assistant-narrative li { font-size: 13px; color: var(--text-2); line-height: 1.7; }
+.assistant-evidence-panel ol, .assistant-evidence-panel ul, .assistant-narrative ul { padding-left: 20px; }
+.assistant-evidence-panel #assistant-save { margin-bottom: 12px; width: 100%; }
+.assistant-page :is(button,a,textarea):focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.assistant-page button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+@media (max-width: 1279px) {
+  .app-root.assistant-route .rail { display: none; }
+  .app-root.assistant-route .main { min-width: 0; width: 100%; }
+  .app-root.assistant-route .view { overflow-y: auto; padding: 16px; }
+  .assistant-workspace { grid-template-columns: minmax(210px,.8fr) minmax(0,1.6fr); }
+  .assistant-evidence-panel { grid-column: 1 / -1; }
+}
+@media (max-width: 700px) {
+  .app-root.assistant-route .topbar { padding: 0 12px; }
+  .assistant-head { align-items: flex-start; flex-direction: column; }
+  .assistant-workspace { grid-template-columns: minmax(0,1fr); }
+  .assistant-stage { min-height: 300px; height: 360px; }
+  .assistant-preview, .assistant-evidence-panel, .assistant-form { padding: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .assistant-candidate { transition: none; } }

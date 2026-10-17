@@ -168,11 +168,12 @@ export const api = {
   getRiskAssessment: (scanId) => request(`/api/preview/${scanId}/risk-assessment.json`),
 
   getSuggestions: (scanId) => request(`/api/assistant/scans/${scanId}/suggestions`),
+  generateRoomProposals: (scanId, goal = '', { signal } = {}) => request(`/api/assistant/scans/${scanId}/proposals`, { method: 'POST', json: { goal: goal || null }, signal }),
   simulate: (scanId, payload) => request(`/api/assistant/scans/${scanId}/simulate`, { method: 'POST', json: payload }),
   solve: (scanId, metricCodes) => request(`/api/assistant/scans/${scanId}/solve`, { method: 'POST', json: { metric_codes: metricCodes } }),
   listSchemes: (scanId) => request(`/api/assistant/scans/${scanId}/schemes`),
   getScheme: (scanId, schemeId) => request(`/api/assistant/scans/${scanId}/schemes/${schemeId}`),
-  createScheme: (scanId, payload) => request(`/api/assistant/scans/${scanId}/schemes`, { method: 'POST', json: payload }),
+  createScheme: (scanId, payload, { signal } = {}) => request(`/api/assistant/scans/${scanId}/schemes`, { method: 'POST', json: payload, signal }),
   deleteScheme: (scanId, schemeId) => request(`/api/assistant/scans/${scanId}/schemes/${schemeId}`, { method: 'DELETE' }),
   exportSchemePdf: async (scanId, schemeId, pngBlob) => {
     const form = new FormData();

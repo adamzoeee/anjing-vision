@@ -9,6 +9,7 @@ import { projectsView } from './views/projects.js';
 import { projectView } from './views/project.js?v=house-flow-1';
 import { roomView } from './views/room.js?v=house-flow-1';
 import { schemeView } from './views/scheme.js';
+import { assistantView } from './views/assistant.js';
 import { screenView } from './views/screen.js?v=house-flow-1';
 
 const root = document.getElementById('app');
@@ -245,6 +246,7 @@ const routes = [
   { re: /^#\/projects\/?$/, layout: 'shell', run: (ctx) => projectsView(ctx) },
   { re: /^#\/projects\/(\d+)\/?$/, layout: 'shell', run: (ctx, m) => projectView(ctx, Number(m[1])) },
   { re: /^#\/scans\/(\d+)\/?$/, layout: 'shell', run: (ctx, m) => roomView(ctx, Number(m[1])) },
+  { re: /^#\/scans\/(\d+)\/assistant\/?$/, layout: 'shell', run: (ctx, m) => assistantView(ctx, Number(m[1])) },
   { re: /^#\/house\/(\d+)\/?$/, layout: 'shell', run: (_ctx, m) => navigate(`#/scans/${m[1]}`, { replace: true }) },
   { re: /^#\/scans\/(\d+)\/schemes\/(\d+)\/?$/, layout: 'shell', run: (ctx, m) => schemeView(ctx, Number(m[1]), Number(m[2])) },
   { re: /^#\/screen\/(\d+)\/?$/, layout: 'bare', run: (ctx, m) => screenView(ctx, Number(m[1])) },
@@ -265,6 +267,7 @@ async function render() {
   const hash = location.hash || '';
   root.classList.toggle('house-route', hash.startsWith('#/scans/') && lastScanIsHouse());
   root.classList.toggle('project-route', hash.startsWith('#/projects'));
+  root.classList.toggle('assistant-route', /^#\/scans\/\d+\/assistant\/?$/.test(hash));
   const session = getSession();
 
   if (!session && hash !== '#/login') {

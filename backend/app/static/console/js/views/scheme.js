@@ -10,6 +10,7 @@ import { esc, toast, fmtScore, riskLevel, emptyState, lightbox } from '../ui.js'
 import { navigate } from '../app.js';
 import { createSchemeViewer, diffLayout } from '../viewer/scheme3d.mjs';
 import { drawPlanPNG } from './room.js';
+import { proposalNarrativeHTML } from './assistant_model.mjs';
 
 const EDIT_LABEL = {
   move: '移动', add: '新增', remove: '移除', rotate: '旋转 90°', resize_door: '调整门洞宽度',
@@ -108,6 +109,7 @@ export async function schemeView(ctx, scanId, schemeId) {
       </div>
 
       <div class="scheme-grid">
+        ${(detail.proposal_meta || plan.proposal_meta)?.intent ? `<div class="glass panel rise scheme-span2">${proposalNarrativeHTML(detail.proposal_meta || plan.proposal_meta, esc)}</div>` : ''}
         <div class="glass panel rise scheme-span2">
           <div class="panel-head">
             <div class="panel-title">${icon('box', 15)} 家居框架图（3D）</div>

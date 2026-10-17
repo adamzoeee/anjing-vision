@@ -36,7 +36,7 @@
 | 正式风险与评分 | [rules.py](../backend/pipeline/rules.py)、[risk_assessment.py](../backend/pipeline/risk_assessment.py) | 规则版本、风险项、40/30/30、置信度与覆盖率 |
 | 正式图 / 报告 | [formal_risk_figure.py](../backend/pipeline/formal_risk_figure.py)、[pdf_report.py](../backend/pipeline/pdf_report.py)、[report_composer.py](../backend/pipeline/report_composer.py) | 消费正式评估结果生成风险图和 PDF |
 | 结构平面图 | [structure_figure.py](../backend/pipeline/structure_figure.py) | 房间与家具二维结构展示 |
-| 改造助手 | [renovation.py](../backend/app/routers/renovation.py)、[renovation_simulator.py](../backend/pipeline/renovation_simulator.py)、[intent_parser.py](../backend/assistant/intent_parser.py) | 意图、沙盒副本、几何与评分对比 |
+| 改造助手 | [assistant_proposals.py](../backend/app/routers/assistant_proposals.py)、[proposal_engine.py](../backend/assistant/proposal_engine.py)、[renovation.py](../backend/app/routers/renovation.py) | AI 独立候选、沙盒几何与正式评分验算、指纹校验与保存 |
 | Gaussian 实验 | [gaussian_runner.py](../backend/pipeline/gaussian_runner.py) | 位姿恢复相关调用，以及显式启用的 Gaussian 分支 |
 
 代码中保留了部分历史实现和原型；判断是否属于正式链路，应查看主编排中的实际调用，不能只依据文件名或旧文件头注释。
@@ -53,7 +53,8 @@
 | 三维查看 | `/preview/{scan_id}`、`/api/preview/{scan_id}/manifest.json` | [preview.py](../backend/app/routers/preview.py)、[viewer.js](../backend/app/static/preview/viewer.js) |
 | 展示层 | 点云预览的六个结构展示层 | [visual_layers.js](../backend/app/static/preview/visual_layers.js) |
 | 正式评估数据 | `/api/preview/{scan_id}/spatial-metrics.json`、`risk-assessment.json` | [preview.py](../backend/app/routers/preview.py) |
-| 改造助手 | `/api/assistant/scans/{scan_id}/suggestions`、`simulate` | [renovation.py](../backend/app/routers/renovation.py) |
+| 单房间 AI 助手 | `/console#/scans/{scan_id}/assistant`；`POST /api/assistant/scans/{scan_id}/proposals`、`schemes` | [assistant.js](../backend/app/static/console/js/views/assistant.js)、[assistant_proposals.py](../backend/app/routers/assistant_proposals.py)、[renovation.py](../backend/app/routers/renovation.py)；2–3 案独立框架、前后对比、证据与保存回读 |
+| 历史沙盒接口 | `/api/assistant/scans/{scan_id}/suggestions`、`solve`、`simulate` | [renovation.py](../backend/app/routers/renovation.py)；兼容保留，工作台新助手不调用 |
 | API 地址与产物解析 | `API_BASE_URL`、report / artifact 模型 | [client.dart](../app/lib/api/client.dart)、[models.dart](../app/lib/api/models.dart) |
 | 历史对比 | 扫描比较界面 | [compare_page.dart](../app/lib/pages/compare_page.dart) |
 

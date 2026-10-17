@@ -1,4 +1,4 @@
-/* 房间管理工作台：3D 点云 + 结构/尺寸 + 风险评估 + AI 改造模拟 + 方案库 */
+/* 房间管理工作台：3D 点云 + 结构/尺寸 + 风险评估 + 改造助手入口 + 方案库 */
 
 import { api } from '../api.js?v=house-flow-1';
 import { icon } from '../icons.js';
@@ -6,7 +6,7 @@ import {
   esc, toast, fmtMeters, fmtScore, fmtPct, riskLevel, scoreTone, typeName,
   formatMeasurement,
   measuredSizeMap, normalizeInstanceId,
-  openModal, lightbox, emptyState, confirmDialog,
+  lightbox, emptyState, confirmDialog,
   SCAN_STAGE_LABEL, SCAN_STAGES, scanStageIndex,
 } from '../ui.js';
 import { scoreRingHTML, mountRings, barRowHTML, mountBars } from '../charts.js';
@@ -25,7 +25,7 @@ export async function loadRoomData(scanId) {
   const scan = await api.getScan(scanId);
   const data = {
     scan, project: null, report: null, risk: null, measurements: null,
-    layout: null, structure: null, suggestions: null,
+    layout: null, structure: null,
   };
   const tasks = [api.getProject(scan.project_id).then((project) => { data.project = project; }).catch(() => {})];
   if (scan.status === 'done') {
@@ -37,7 +37,6 @@ export async function loadRoomData(scanId) {
       }).catch(() => {}),
       api.getLayout(scanId).then((layout) => { data.layout = layout; }).catch(() => {}),
       api.getStructure(scanId).then((structure) => { data.structure = structure; }).catch(() => {}),
-      api.getSuggestions(scanId).then((suggestions) => { data.suggestions = suggestions; }).catch(() => {}),
     );
   }
   await Promise.all(tasks);
@@ -51,8 +50,6 @@ export async function roomView(ctx, scanId) {
   let data = null;
   let viewer = null;
   let pollTimer = null;
-  let simState = { result: null, solveSummary: null, loading: false };
-  let selectedCodes = new Set();
 
   ctx.title([
     { label: '房间工作台', href: '#/projects' },
@@ -110,8 +107,6 @@ export async function roomView(ctx, scanId) {
     viewer?.dispose();
     viewer = null;
     data = await loadRoomData(scanId);
-    selectedCodes = new Set();
-    simState = { result: null, solveSummary: null, loading: false };
     render();
     if (withToast) toast('ok', '已刷新', '房间数据已同步');
   }
@@ -185,20 +180,8 @@ export async function roomView(ctx, scanId) {
     }
   }
 
-  /* AI 改造助手（右栏底部的“AI 改造模拟 + 方案库”）在 1080p 下位于折叠线以下，
-   * 顶部入口按钮负责把它带到眼前并高亮，避免“功能没了”的错觉。 */
   function jumpToAssistant() {
-    const col = document.getElementById('room-right');
-    const panel = document.getElementById('sim-panel');
-    if (!col || !panel) return;
-    const delta = panel.getBoundingClientRect().top - col.getBoundingClientRect().top;
-    const top = Math.max(0, col.scrollTop + delta - 16);
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    col.scrollTo({ top, behavior: reduced ? 'auto' : 'smooth' });
-    panel.classList.remove('assistant-flash');
-    void panel.offsetWidth;   // 强制重排，保证连续点击也能重放高亮
-    panel.classList.add('assistant-flash');
-    window.setTimeout(() => panel.classList.remove('assistant-flash'), 2000);
+    navigate(`#/scans/${scanId}/assistant`);
   }
 
   function stageChrome() {
@@ -592,12 +575,6 @@ export async function roomView(ctx, scanId) {
           }).join('')}
         </div>
       </div>
-      <div class="glass panel rise" style="--i:5" id="sim-panel">
-        <div class="panel-head"><div class="panel-title">${icon('wand', 15)} AI 改造模拟</div>
-          <div class="panel-actions panel-sub">沙盒 · 不改动真实数据</div>
-        </div>
-        <div id="sim-body"></div>
-      </div>
       <div class="glass panel rise" style="--i:6" id="scheme-panel">
         <div class="panel-head"><div class="panel-title">${icon('save', 15)} 方案库</div>
           <div class="panel-actions"><button class="btn btn-sm" id="btn-scheme-refresh">${icon('refresh', 13)}</button></div>
@@ -605,7 +582,6 @@ export async function roomView(ctx, scanId) {
         <div id="scheme-body"><div class="skeleton-line shimmer" style="width:70%"></div></div>
       </div>`;
 
-    renderSimPanel();
     wireRiskItems();
     loadSchemes();
     document.getElementById('btn-scheme-refresh')?.addEventListener('click', () => loadSchemes(true));
@@ -644,213 +620,6 @@ export async function roomView(ctx, scanId) {
     });
   }
 
-  /* —— 模拟面板 —— */
-  function renderSimPanel() {
-    const body = document.getElementById('sim-body');
-    if (!body) return;
-    const suggestions = data.suggestions?.suggestions || [];
-    body.innerHTML = `
-      ${suggestions.length ? `
-      <div class="eyebrow" style="margin-bottom:8px">勾选改造建议</div>
-      <div class="sim-suggestions">
-        ${suggestions.map((suggestion) => `
-          <div class="suggestion ${selectedCodes.has(suggestion.metric_code) ? 'checked' : ''}" data-code="${esc(suggestion.metric_code)}">
-            <div class="s-check">${icon('check', 12)}</div>
-            <div class="grow">
-              <div class="s-name">${esc(suggestion.name)}
-                ${suggestion.level ? `<span class="badge ${riskLevel(suggestion.level).tone === 'neutral' ? '' : riskLevel(suggestion.level).tone}">${riskLevel(suggestion.level).label}</span>` : ''}
-                <span class="tag">${esc(suggestion.reachability_label || '')}</span>
-              </div>
-              ${suggestion.advice ? `<div class="s-advice">${esc(suggestion.advice)}</div>` : ''}
-            </div>
-          </div>`).join('')}
-      </div>
-      <div class="divider"></div>` : ''}
-      <div class="eyebrow" style="margin-bottom:8px">或直接描述改造设想</div>
-      <textarea class="textarea" id="sim-prompt" maxlength="300" placeholder="例如：把床向左移动 30 厘米；在床边放一个 60×40×50 厘米的箱子"></textarea>
-      <div class="row gap-2" style="margin-top:12px">
-        <button class="btn btn-primary grow" id="btn-run-sim">${icon('zap', 15)} 运行沙盒模拟</button>
-      </div>
-      <div id="sim-result"></div>`;
-
-    body.querySelectorAll('.suggestion').forEach((node) => {
-      node.addEventListener('click', () => {
-        const code = node.dataset.code;
-        if (selectedCodes.has(code)) selectedCodes.delete(code);
-        else selectedCodes.add(code);
-        node.classList.toggle('checked', selectedCodes.has(code));
-      });
-    });
-    body.querySelector('#btn-run-sim')?.addEventListener('click', runSimulation);
-    if (simState.result || simState.solveSummary) renderSimResult();
-  }
-
-  async function runSimulation() {
-    const prompt = document.getElementById('sim-prompt')?.value.trim() || '';
-    if (!selectedCodes.size && !prompt) {
-      toast('info', '先选择建议或输入设想', '例如：把床向左移动 30 厘米');
-      return;
-    }
-    const btn = document.getElementById('btn-run-sim');
-    btn.classList.add('is-loading');
-    btn.innerHTML = `<span class="spinner"></span> 正在模拟…`;
-    simState = { result: null, solveSummary: null, loading: true };
-    renderSimResult();
-    try {
-      let edits = null;
-      let solveSummary = null;
-      if (selectedCodes.size) {
-        const solve = await api.solve(scanId, Array.from(selectedCodes));
-        solveSummary = solve.results || [];
-        edits = solveSummary.flatMap((item) => item.edits || []);
-        if (!edits.length) {
-          simState = { result: null, solveSummary, loading: false };
-          renderSimResult();
-          toast('info', '没有可执行的移动方案', '该房间条件下无法自动求解，试试自由描述设想');
-          return;
-        }
-      }
-      const result = await api.simulate(scanId, edits ? { edits } : { prompt });
-      simState = { result, solveSummary, loading: false };
-      renderSimResult();
-      toast('ok', '模拟完成', `评分 ${fmtScore(result.comparison?.before_score)} → ${fmtScore(result.comparison?.after_score)}`);
-    } catch (error) {
-      simState = { result: null, solveSummary: null, loading: false };
-      renderSimResult();
-      toast('error', '模拟失败', error?.message || '');
-    } finally {
-      btn.classList.remove('is-loading');
-      btn.innerHTML = `${icon('zap', 15)} 运行沙盒模拟`;
-    }
-  }
-
-  function renderSimResult() {
-    const host = document.getElementById('sim-result');
-    if (!host) return;
-    if (simState.loading) {
-      host.innerHTML = `<div style="margin-top:14px">
-        <div class="skeleton-line shimmer" style="width:60%"></div>
-        <div class="skeleton-line shimmer" style="width:85%"></div>
-        <div class="skeleton-line shimmer" style="width:45%"></div>
-      </div>`;
-      return;
-    }
-    const { result, solveSummary } = simState;
-    if (!result) {
-      if (solveSummary?.length) {
-        host.innerHTML = `<div class="sim-result">
-          ${solveSummary.map((item) => `
-            <div class="sim-change-row">
-              <span class="c-name">${esc(item.risk_name || item.metric_code)}</span>
-              <span class="c-delta ${item.solved ? 'up' : 'down'}">${item.solved ? '已求解' : '未能求解'}</span>
-            </div>`).join('')}
-        </div>`;
-      } else host.innerHTML = '';
-      return;
-    }
-    const comparison = result.comparison || {};
-    const delta = comparison.score_delta;
-    const metricChanges = result.metric_changes || [];
-    const riskChanges = result.risk_changes || [];
-    host.innerHTML = `
-      <div class="sim-result">
-        <div class="sim-compare">
-          <div class="sim-score"><div class="ss-label">当前评分</div><div class="ss-value">${fmtScore(comparison.before_score)}</div></div>
-          <div class="sim-arrow">${icon('arrowRight', 22)}</div>
-          <div class="sim-score after"><div class="ss-label">模拟后评分</div><div class="ss-value">${fmtScore(comparison.after_score)}</div></div>
-        </div>
-        <div class="row gap-2" style="justify-content:center">
-          <span class="badge ${delta > 0 ? 'ok' : delta < 0 ? 'bad' : ''}">${delta === null || delta === undefined ? '无法对比' : `${delta > 0 ? '+' : ''}${fmtScore(delta)} 分`}</span>
-          <span class="tag">应用编辑 ${(result.applied_edits || []).length} 项</span>
-          ${(result.conflicts || []).length ? `<span class="tag" style="color:var(--warn)">冲突 ${result.conflicts.length}</span>` : ''}
-        </div>
-        ${solveSummary?.length ? `
-        <div class="sim-changes">
-          ${solveSummary.map((item) => `
-            <div class="sim-change-row">
-              <span class="c-name">${esc(item.risk_name || item.metric_code)}</span>
-              ${item.solved ? '<span class="badge ok">已达成</span>' : '<span class="badge warn">部分达成</span>'}
-            </div>`).join('')}
-        </div>` : ''}
-        ${metricChanges.length ? `
-        <div class="eyebrow">指标变化</div>
-        <div class="sim-changes">
-          ${metricChanges.slice(0, 6).map((change) => {
-            const before = formatMeasurement(change.before, change.unit);
-            const after = formatMeasurement(change.after, change.unit);
-            const deltaNum = Number(change.after) - Number(change.before);
-            const improvedOverall = (comparison.score_delta || 0) > 0;
-            return `<div class="sim-change-row">
-              <span class="c-name">${esc(change.name || change.metric_code)}</span>
-              <span class="num faint">${before.text}${before.unit} → ${after.text}${after.unit}</span>
-              <span class="c-delta ${improvedOverall ? 'up' : 'down'}">${deltaNum > 0 ? '+' : ''}${deltaNum.toFixed(2)}</span>
-            </div>`;
-          }).join('')}
-        </div>` : ''}
-        ${riskChanges.length ? `
-        <div class="eyebrow">风险等级变化</div>
-        <div class="sim-changes">
-          ${riskChanges.slice(0, 5).map((change) => {
-            const before = riskLevel(change.before);
-            const after = riskLevel(change.after);
-            return `<div class="sim-change-row">
-              <span class="c-name">${esc(change.name || change.metric_code)}</span>
-              <span class="badge ${before.tone === 'neutral' ? '' : before.tone}">${before.label}</span>
-              ${icon('arrowRight', 13)}
-              <span class="badge ${after.tone === 'neutral' ? '' : after.tone}">${after.label}</span>
-            </div>`;
-          }).join('')}
-        </div>` : ''}
-        <div class="row gap-2" style="margin-top:12px">
-          <button class="btn btn-sm btn-primary" id="btn-save-scheme">${icon('save', 13)} 保存为方案</button>
-          <button class="btn btn-sm" id="btn-clear-sim">${icon('x', 13)} 清除结果</button>
-        </div>
-        <div class="sim-disclaimer">${esc(result.disclaimer || '沙盒模拟 · 未修改真实数据')}</div>
-      </div>`;
-
-    host.querySelector('#btn-save-scheme')?.addEventListener('click', () => saveScheme(result));
-    host.querySelector('#btn-clear-sim')?.addEventListener('click', () => {
-      simState = { result: null, solveSummary: null, loading: false };
-      renderSimResult();
-    });
-  }
-
-  function saveScheme(result) {
-    openModal({
-      title: '保存改造方案',
-      desc: '方案将保存在该房间下，可随时导出 PDF 附录。',
-      body: `
-        <div class="field">
-          <label for="scheme-name">方案名称 *</label>
-          <input class="input" id="scheme-name" maxlength="120" value="改造方案 ${new Date().toLocaleDateString('zh-CN')}">
-        </div>`,
-      actions: [
-        { label: '取消', variant: 'btn-ghost', onClick: (c) => c() },
-        {
-          label: '保存方案',
-          variant: 'btn-primary',
-          onClick: async (c, modal) => {
-            const name = modal.querySelector('#scheme-name').value.trim();
-            if (!name) { toast('error', '请输入方案名称'); return; }
-            try {
-              await api.createScheme(scanId, {
-                name,
-                edits: result.edits || [],
-                source: 'console',
-              });
-              c();
-              toast('ok', '方案已保存', name);
-              loadSchemes(true);
-            } catch (error) {
-              toast('error', '保存失败', error?.message || '');
-            }
-          },
-        },
-      ],
-    });
-  }
-
-  /* —— 方案库 —— */
   async function loadSchemes(refresh = false) {
     const body = document.getElementById('scheme-body');
     if (!body) return;
