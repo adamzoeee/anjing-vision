@@ -3,6 +3,7 @@
  * 数据来源：最近一次扫描的 layout.json（取不到时用程序化房间兜底）。 */
 
 import { getToken } from './api.js?v=house-scan-1';
+import { HOME_LAYOUT } from './home-plan.mjs';
 
 let instance = null;
 
@@ -67,22 +68,6 @@ function createBackground3D() {
   const dust = new THREE.Points(dustGeo, dustMat);
   scene.add(dust);
 
-  /* —— 程序化兜底房间 —— */
-  function proceduralLayout() {
-    const walls = [
-      { center: [0, -1.9, 1.35], size: [3.8, 0.08, 2.7], rotation_z_deg: 0 },
-      { center: [0, 1.9, 1.35], size: [3.8, 0.08, 2.7], rotation_z_deg: 0 },
-      { center: [-1.9, 0, 1.35], size: [0.08, 3.8, 2.7], rotation_z_deg: 0 },
-      { center: [1.9, 0, 1.35], size: [0.08, 3.8, 2.7], rotation_z_deg: 0 },
-    ];
-    const objects = [
-      { center: [-0.7, 0.9, 0.3], size: [2.0, 1.5, 0.6], rotation_z_deg: 0, label: 'bed' },
-      { center: [1.2, -0.9, 0.36], size: [0.7, 1.2, 0.72], rotation_z_deg: 12, label: 'table' },
-      { center: [1.4, 1.1, 0.9], size: [0.6, 0.5, 1.8], rotation_z_deg: -8, label: 'cabinet' },
-    ];
-    return { walls, doors: [], windows: [], objects };
-  }
-
   function clearGroup(group) {
     while (group.children.length) {
       const child = group.children.pop();
@@ -116,7 +101,8 @@ function createBackground3D() {
   function setLayout(layout) {
     clearGroup(modelGroup);
     fillMaterials = [];
-    const data = layout && (layout.walls || layout.objects) ? layout : proceduralLayout();
+    /* 没有真实 layout 时用设计好的示意户型（主卧一间，含门、窗与家具） */
+    const data = layout && (layout.walls || layout.objects) ? layout : HOME_LAYOUT;
     const kinds = [
       { key: 'walls', fill: 0.045, edge: 0.4 },
       { key: 'doors', fill: 0.09, edge: 0.5 },
@@ -254,8 +240,13 @@ function createBackground3D() {
 
   let currentScan = null;
   async function setScan(scanId) {
-    if (!scanId || scanId === currentScan) return;
-    currentScan = scanId;
+    const next = scanId || '';
+    if (next === currentScan) return;
+    currentScan = next;
+    if (!next) {
+      setLayout(null);
+      return;
+    }
     try {
       const token = getToken();
       const response = await fetch(`/api/preview/${scanId}/layout.json`, {
@@ -274,6 +265,7 @@ function createBackground3D() {
     setScan,
     applySkin,
     setSubtle(on) { canvas.classList.toggle('subtle', !!on); },
+    setMuted(on) { canvas.classList.toggle('muted', !!on); },
     setGrid(on) { gridGroup.visible = !!on; },
     dispose() {
       cancelAnimationFrame(raf);
