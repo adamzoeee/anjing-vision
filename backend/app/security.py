@@ -1,4 +1,5 @@
 import datetime as dt
+import hashlib
 
 import bcrypt as _bcrypt
 import jwt
@@ -19,12 +20,18 @@ def verify_password(pw: str, hashed: str) -> bool:
         return False
 
 
-def create_token(user_id: int, org_id: int) -> str:
+def password_fingerprint(password_hash: str) -> str:
+    """Bind a token to the current password without exposing the bcrypt hash."""
+    return hashlib.sha256(password_hash.encode("utf-8")).hexdigest()
+
+
+def create_token(user_id: int, org_id: int, password_hash: str) -> str:
     s = get_settings()
     now = dt.datetime.now(dt.UTC)
     payload = {
         "sub": str(user_id),
         "org": org_id,
+        "pwd": password_fingerprint(password_hash),
         "iat": now,
         "exp": now + dt.timedelta(minutes=s.token_expire_minutes),
     }

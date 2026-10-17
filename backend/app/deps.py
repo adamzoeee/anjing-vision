@@ -1,11 +1,12 @@
 from fastapi import Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import jwt
+import hmac
 from sqlalchemy.orm import Session
 
 from .db import get_db
 from .models import User
-from .security import decode_token
+from .security import decode_token, password_fingerprint
 
 bearer = HTTPBearer(auto_error=False)
 
@@ -22,6 +23,8 @@ def _get_user_for_token(token: str | None, db: Session) -> User:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "用户不存在")
     if payload["org"] != user.org_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "凭证组织与用户不一致")
+    if not hmac.compare_digest(str(payload.get("pwd", "")), password_fingerprint(user.password_hash)):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "密码已更新，请重新登录")
     # 停用立即生效：每次请求都重新读取账号状态，无需等 token 过期
     if not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "账号已停用，请联系机构管理员")

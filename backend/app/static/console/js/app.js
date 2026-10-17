@@ -11,7 +11,7 @@ import { roomView } from './views/room.js?v=house-flow-1';
 import { schemeView } from './views/scheme.js';
 import { assistantView } from './views/assistant.js';
 import { screenView } from './views/screen.js?v=house-flow-1';
-import { usersView } from './views/users.js';
+import { usersView, openSelfPassword } from './views/users.js';
 
 const root = document.getElementById('app');
 const LAST_SCAN_KEY = 'anjing.console.lastScan';
@@ -127,6 +127,8 @@ function playSweep() {
 function checkWidth() {
   const gate = document.getElementById('min-width-gate');
   gate.hidden = window.innerWidth >= 1280
+    || location.hash.startsWith('#/login')
+    || location.hash.startsWith('#/register')
     || location.hash.startsWith('#/projects')
     || location.hash.startsWith('#/scans/')
     || location.hash.startsWith('#/house/')
@@ -204,6 +206,7 @@ function buildShell() {
           <div class="u-name truncate">${esc(user.name || '未登录')}</div>
           <div class="u-org truncate">${esc(user.org_name || '')}${user.role ? ` · ${admin ? '管理员' : '成员'}` : ''}</div>
         </div>
+        <button class="icon-btn" id="btn-my-password" data-tip="修改密码" aria-label="修改密码">${icon('shield', 17)}</button>
         <button class="icon-btn" id="btn-logout" data-tip="退出登录" aria-label="退出登录">${icon('logout', 17)}</button>
       </div>
     </aside>
@@ -220,6 +223,7 @@ function buildShell() {
     setRailMode(getRailMode() === 'collapsed' ? 'expanded' : 'collapsed');
   });
   root.querySelector('#btn-logout').addEventListener('click', logout);
+  root.querySelector('#btn-my-password').addEventListener('click', openSelfPassword);
   root.querySelectorAll('.skin-dot').forEach((dot) => {
     dot.addEventListener('click', () => {
       setSkin(dot.dataset.skin);
@@ -264,6 +268,7 @@ const routes = [
   { re: /^#\/screen\/(\d+)\/?$/, layout: 'bare', run: (ctx, m) => screenView(ctx, Number(m[1])) },
   { re: /^#\/users\/?$/, layout: 'shell', run: (ctx) => (isAdmin() ? usersView(ctx) : navigate('#/projects', { replace: true })) },
   { re: /^#\/login\/?$/, layout: 'bare', run: (ctx) => loginView(ctx) },
+  { re: /^#\/register\/?$/, layout: 'bare', run: (ctx) => loginView(ctx) },
 ];
 
 function matchRoute(hash) {
@@ -283,7 +288,7 @@ async function render() {
   root.classList.toggle('assistant-route', /^#\/scans\/\d+\/assistant\/?$/.test(hash));
   const session = getSession();
 
-  if (!session && hash !== '#/login') {
+  if (!session && hash !== '#/login' && hash !== '#/register') {
     navigate('#/login', { replace: true });
     return;
   }
@@ -334,7 +339,7 @@ async function render() {
   /* 装饰层默认用设计好的温馨户型；只有进到具体 Scan 工作台才换成该 Scan 的真实布局 */
   bg.setScan(isImmersive ? getLastScan() : '');
   bg.setSubtle(isImmersive);
-  bg.setMuted(hash.startsWith('#/login'));
+  bg.setMuted(hash.startsWith('#/login') || hash.startsWith('#/register'));
 
   const transitionSupported = typeof document.startViewTransition === 'function' && motionEnabled();
   if (transitionSupported) {
@@ -364,11 +369,13 @@ async function boot() {
     const clean = location.pathname + (location.hash || '');
     history.replaceState(null, '', clean);
   }
-  if (getSession() && !getSession().user) {
+  if (getSession()?.token) {
     try {
       const user = await api.me();
       setSession({ ...getSession(), user });
     } catch { /* 401 由事件处理 */ }
+  } else if (getSession()) {
+    clearSession();
   }
   window.addEventListener('hashchange', () => render());
   window.addEventListener('resize', checkWidth);

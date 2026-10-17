@@ -171,6 +171,7 @@ function startHeroCanvas(canvas) {
 }
 
 export function loginView(ctx) {
+  const registering = location.hash.startsWith('#/register');
   const session = getSession();
   if (session) {
     location.hash = '#/projects';
@@ -199,28 +200,52 @@ export function loginView(ctx) {
           <div class="lc-logo">
             <div class="brand-mark">${icon('scanframe', 22)}</div>
             <div>
-              <h1>登录大屏工作台</h1>
-              <div class="lc-sub">使用机构账号登录 · 数据按机构隔离</div>
+              <h1>${registering ? '创建机构账号' : '登录大屏工作台'}</h1>
+              <div class="lc-sub">${registering ? '创建新机构并成为管理员' : '使用机构账号登录 · 数据按机构隔离'}</div>
             </div>
           </div>
           <form class="login-form" id="login-form" novalidate>
+            ${registering ? `
+            <div class="field">
+              <label for="register-org">机构名称</label>
+              <div class="input-wrap">${icon('building', 16)}
+                <input class="input" id="register-org" type="text" autocomplete="organization" maxlength="120" placeholder="例如：幸福养老院" required>
+              </div>
+            </div>
+            <div class="field">
+              <label for="register-name">您的姓名</label>
+              <div class="input-wrap">${icon('user', 16)}
+                <input class="input" id="register-name" type="text" autocomplete="name" maxlength="80" placeholder="例如：张主任" required>
+              </div>
+            </div>` : ''}
             <div class="field">
               <label for="login-email">邮箱</label>
               <div class="input-wrap">
                 ${icon('user', 16)}
-                <input class="input" id="login-email" type="email" autocomplete="username" placeholder="you@example.com" required>
+                <input class="input" id="login-email" type="email" autocomplete="username" maxlength="120" placeholder="you@example.com" required>
               </div>
             </div>
             <div class="field">
               <label for="login-password">密码</label>
               <div class="input-wrap">
                 ${icon('shield', 16)}
-                <input class="input" id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+                <input class="input" id="login-password" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" maxlength="64" minlength="${registering ? '8' : '1'}" placeholder="${registering ? '至少 8 位' : '••••••••'}" required>
               </div>
             </div>
+            ${registering ? `
+            <div class="field">
+              <label for="register-confirm">确认密码</label>
+              <div class="input-wrap">${icon('shield', 16)}
+                <input class="input" id="register-confirm" type="password" autocomplete="new-password" maxlength="64" placeholder="再次输入密码" required>
+              </div>
+            </div>` : ''}
             <div class="field error hidden" id="login-error" role="alert"></div>
-            <button class="btn btn-primary btn-lg" id="btn-login" type="submit">${icon('arrowRight', 17)} 登录工作台</button>
+            <button class="btn btn-primary btn-lg" id="btn-login" type="submit">${icon('arrowRight', 17)} ${registering ? '创建并进入工作台' : '登录工作台'}</button>
           </form>
+          <div class="login-switch">
+            ${registering ? '已有机构账号？ <a href="#/login">返回登录</a>' : '还没有机构账号？ <a href="#/register">创建新机构</a>'}
+          </div>
+          ${registering ? '<p class="login-note">已有机构的成员账号由机构管理员创建。</p>' : ''}
           <div class="login-foot">安龄智境 · 居家适老化安全评估系统<br>大屏工作台 · 桌面端专用（≥1280px）</div>
         </div>
       </div>
@@ -241,6 +266,7 @@ export function loginView(ctx) {
 
   const setLoading = (btn, loading, label) => {
     btn.classList.toggle('is-loading', loading);
+    btn.disabled = loading;
     btn.innerHTML = loading ? `<span class="spinner"></span> ${label}` : btn.dataset.html;
   };
   btnLogin.dataset.html = btnLogin.innerHTML;
@@ -255,19 +281,34 @@ export function loginView(ctx) {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     errorEl.classList.add('hidden');
+    const orgName = registering ? document.getElementById('register-org').value.trim() : '';
+    const name = registering ? document.getElementById('register-name').value.trim() : '';
     const email = document.getElementById('login-email').value.trim();
     const password = document.getElementById('login-password').value;
-    if (!email || !password) {
-      errorEl.textContent = '请输入邮箱和密码';
+    const confirm = registering ? document.getElementById('register-confirm').value : '';
+    if (registering && (!orgName || !name)) {
+      errorEl.textContent = '请输入机构名称和姓名';
       errorEl.classList.remove('hidden');
       return;
     }
-    setLoading(btnLogin, true, '正在登录…');
+    if (!email || !password || !/^\S+@\S+\.\S+$/.test(email)) {
+      errorEl.textContent = '请输入有效邮箱和密码';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    if (registering && (password.length < 8 || password !== confirm)) {
+      errorEl.textContent = password.length < 8 ? '密码至少 8 位' : '两次输入的密码不一致';
+      errorEl.classList.remove('hidden');
+      return;
+    }
+    setLoading(btnLogin, true, registering ? '正在创建…' : '正在登录…');
     try {
-      const auth = await api.login(email, password);
-      enter(auth, '登录成功');
+      const auth = registering
+        ? await api.register(orgName, name, email, password)
+        : await api.login(email, password);
+      enter(auth, registering ? '机构创建成功' : '登录成功');
     } catch (error) {
-      errorEl.textContent = esc(error?.message || '登录失败');
+      errorEl.textContent = error?.message || (registering ? '创建失败' : '登录失败');
       errorEl.classList.remove('hidden');
       setLoading(btnLogin, false);
     }

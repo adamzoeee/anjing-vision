@@ -46,10 +46,25 @@ def test_register_creates_admin_role(client):
     assert r.json()["user"]["is_active"] is True
 
 
-def test_second_registrant_joins_as_member(client):
+def test_public_registration_cannot_join_existing_org(client):
     _register(client, org="新机构", name="甲", email="x1@x.com")
     second = _register(client, org="新机构", name="乙", email="x2@x.com")
-    assert second.json()["user"]["role"] == "member"
+    assert second.status_code == 409
+    assert client.post("/api/auth/login", json={
+        "email": "x2@x.com", "password": "secret123"}).status_code == 401
+
+
+def test_public_registration_creates_separate_admin_org(client):
+    first = _register(client, org="机构甲", email="first@example.com")
+    second = _register(client, org="机构乙", email="second@example.com")
+    assert first.json()["user"]["role"] == "admin"
+    assert second.json()["user"]["role"] == "admin"
+    assert first.json()["user"]["org_name"] != second.json()["user"]["org_name"]
+
+
+def test_registration_rejects_password_over_bcrypt_byte_limit(client):
+    response = _register(client, org="超长密码机构", password="密" * 25)
+    assert response.status_code == 422
 
 
 def test_demo_login_endpoint_no_longer_exists(client):
@@ -74,10 +89,23 @@ def test_password_change_requires_current_password(client):
     ok = client.post("/api/auth/password", json={
         "current_password": "secret123", "new_password": "brandnew123"}, headers=headers)
     assert ok.status_code == 200, ok.text
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
     assert client.post("/api/auth/login", json={
         "email": "z@example.com", "password": "secret123"}).status_code == 401
     assert client.post("/api/auth/login", json={
         "email": "z@example.com", "password": "brandnew123"}).status_code == 200
+
+
+def test_admin_password_reset_revokes_member_token(client):
+    admin = _headers(_register(client).json()["token"])
+    created = client.post("/api/users", json={
+        "name": "成员", "email": "m@example.com", "password": "secret123"}, headers=admin)
+    member = _headers(client.post("/api/auth/login", json={
+        "email": "m@example.com", "password": "secret123"}).json()["token"])
+    reset = client.post(f"/api/users/{created.json()['id']}/password", json={
+        "password": "brandnew123"}, headers=admin)
+    assert reset.status_code == 200
+    assert client.get("/api/auth/me", headers=member).status_code == 401
 
 
 def test_repeated_password_change_is_rejected(client):

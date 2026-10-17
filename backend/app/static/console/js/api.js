@@ -51,7 +51,7 @@ async function readError(res) {
   return message;
 }
 
-export async function request(path, { method = 'GET', json, formData, signal } = {}) {
+export async function request(path, { method = 'GET', json, formData, signal, publicAuth = false } = {}) {
   const headers = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -69,7 +69,7 @@ export async function request(path, { method = 'GET', json, formData, signal } =
     if (error?.name === 'AbortError') throw error;
     throw new ApiError('网络异常，无法连接后端服务', 0, 'network');
   }
-  if (res.status === 401) {
+  if (res.status === 401 && !publicAuth) {
     onUnauthorized();
     throw new ApiError('登录已过期，请重新登录', 401, 'unauthorized');
   }
@@ -149,7 +149,10 @@ export async function downloadAsset(path, filename) {
 
 /* —— 业务接口 —— */
 export const api = {
-  login: (email, password) => request('/api/auth/login', { method: 'POST', json: { email, password } }),
+  login: (email, password) => request('/api/auth/login', { method: 'POST', json: { email, password }, publicAuth: true }),
+  register: (orgName, name, email, password) => request('/api/auth/register', {
+    method: 'POST', json: { org_name: orgName, name, email, password }, publicAuth: true,
+  }),
   me: () => request('/api/auth/me'),
   changePassword: (currentPassword, newPassword) => request('/api/auth/password', {
     method: 'POST',

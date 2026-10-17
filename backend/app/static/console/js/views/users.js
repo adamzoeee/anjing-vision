@@ -1,7 +1,7 @@
 /* 用户管理（机构管理员）：建号 / 改名 / 重置密码 / 停用启用 + 本人改密。
  * 每个机构只允许一个管理员，因此管理员账号不能在这里被停用或重置。 */
 
-import { api, currentUser } from '../api.js?v=house-scan-1';
+import { api, currentUser, clearSession } from '../api.js?v=house-scan-1';
 import { icon } from '../icons.js';
 import { esc, toast, openModal, timeAgo, emptyState } from '../ui.js';
 
@@ -126,7 +126,7 @@ function openCreateUser(onCreated) {
         </div>
         <div class="field">
           <label for="nu-password">初始密码 *</label>
-          <input class="input" id="nu-password" type="text" maxlength="64" placeholder="至少 8 位，交给成员后请尽快修改">
+          <input class="input" id="nu-password" type="password" autocomplete="new-password" maxlength="64" placeholder="至少 8 位，交给成员后请尽快修改">
         </div>
         <div class="field error hidden" id="nu-error"></div>
       </div>`,
@@ -204,9 +204,9 @@ function openResetPassword(user, onDone) {
       <div class="col gap-4">
         <div class="field">
           <label for="rp-password">新密码 *</label>
-          <input class="input" id="rp-password" type="text" maxlength="64" placeholder="至少 8 位">
+          <input class="input" id="rp-password" type="password" autocomplete="new-password" maxlength="64" placeholder="至少 8 位">
         </div>
-        <div class="faint" style="font-size:12.5px">成员已登录的设备在登录态过期前仍然有效。</div>
+        <div class="faint" style="font-size:12.5px">重置后成员所有已登录设备都需重新登录。</div>
         <div class="field error hidden" id="rp-error"></div>
       </div>`,
     actions: [
@@ -250,7 +250,7 @@ async function toggleActive(user, btn, onDone) {
   }
 }
 
-function openSelfPassword() {
+export function openSelfPassword() {
   openModal({
     title: '修改我的密码',
     desc: '需要先验证当前密码。',
@@ -283,7 +283,9 @@ function openSelfPassword() {
           try {
             await api.changePassword(currentPassword, newPassword);
             close();
-            toast('ok', '密码已更新', '下次请使用新密码登录');
+            clearSession();
+            toast('ok', '密码已更新', '请使用新密码重新登录');
+            location.hash = '#/login';
           } catch (error) {
             errorEl.textContent = error?.message || '修改失败';
             errorEl.classList.remove('hidden');

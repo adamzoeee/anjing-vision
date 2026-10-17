@@ -11,6 +11,12 @@ def _strip_required(value: str) -> str:
     return stripped
 
 
+def _check_bcrypt_password(value: str) -> str:
+    if len(value.encode("utf-8")) > 72:
+        raise ValueError("密码 UTF-8 编码后不能超过 72 字节")
+    return value
+
+
 class RegisterIn(BaseModel):
     org_name: str = Field(min_length=1, max_length=120)
     name: str = Field(min_length=1, max_length=80)
@@ -19,6 +25,7 @@ class RegisterIn(BaseModel):
 
     _normalize_org = field_validator("org_name")(_strip_required)
     _normalize_name = field_validator("name")(_strip_required)
+    _check_password = field_validator("password")(_check_bcrypt_password)
 
     @field_validator("email")
     @classmethod
@@ -68,6 +75,7 @@ class UserCreateIn(BaseModel):
     password: str = Field(min_length=8, max_length=64)
 
     _normalize_name = field_validator("name")(_strip_required)
+    _check_password = field_validator("password")(_check_bcrypt_password)
 
     @field_validator("email")
     @classmethod
@@ -95,6 +103,7 @@ class PasswordResetIn(BaseModel):
     """管理员为成员重置密码（不需要原密码）。"""
 
     password: str = Field(min_length=8, max_length=64)
+    _check_password = field_validator("password")(_check_bcrypt_password)
 
 
 class PasswordChangeIn(BaseModel):
@@ -102,6 +111,7 @@ class PasswordChangeIn(BaseModel):
 
     current_password: str = Field(min_length=1, max_length=64)
     new_password: str = Field(min_length=8, max_length=64)
+    _check_password = field_validator("new_password")(_check_bcrypt_password)
 
 
 class ProjectIn(BaseModel):
