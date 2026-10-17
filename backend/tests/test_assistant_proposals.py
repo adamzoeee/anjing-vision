@@ -116,6 +116,60 @@ def test_model_can_select_verified_starters_but_invalid_reply_is_not_filled(sche
     assert "geometry_conflict" in {item["reason"] for item in invalid["rejections"]}
 
 
+def test_scan46_style_room_offers_multiple_exact_starters_despite_narrow_door_and_early_furniture(scheme_inputs):
+    m, s = scheme_inputs
+    m["openings"][0]["center"][0] = 0.45
+    s["doors"][0]["center"][0] = 0.45
+    for index, kind in enumerate(("bookshelf", "table", "bookshelf", "table"), start=1):
+        target = f"{kind}_{index:03d}"
+        center = [3.5, 0.45 + (index - 1) * 0.9, 0.4]
+        m["objects"].insert(index - 1, {
+            "id": target, "instance_id": target, "type": kind, "center": center,
+            "length_m": 0.3, "width_m": 0.3, "height_m": 0.8,
+            "rotation_z_deg": 0, "measurement_status": "verified"})
+        s["semantic_instances"].insert(index - 1, {
+            "instance_id": target, "label": kind, "center": center, "size": [0.3, 0.3, 0.8]})
+
+    seen = []
+
+    def select(context, feedback):
+        seen.append(context["verified_starters"])
+        return [{"title": f"Model strategy {index}", "intent": "Improve access", **starter}
+                for index, starter in enumerate(context["verified_starters"][:3])]
+
+    result = _engine()(m, s, None, select)
+    assert len(seen[0]) >= 2
+    assert {item["edits"][0]["op"] for item in seen[0]} >= {"resize_door", "move"}
+    assert {item["edits"][0].get("width_m") for item in seen[0]} >= {0.9, None}
+    assert result["status"] == "ready"
+    assert len(result["proposals"]) >= 2
+
+
+def test_single_verified_starter_does_not_restrict_model_to_one_choice(scheme_inputs, monkeypatch):
+    import assistant.proposal_engine as engine
+
+    monkeypatch.setattr(engine, "_verified_starters", lambda *args: [
+        {"edits": [{"op": "resize_door", "width_m": 1.0}], "risk_codes": ["door_width_medium"]}])
+    m, s = scheme_inputs
+
+    def request(context, feedback):
+        assert context["verified_starters"] == []
+        return _valid_candidates()[:2]
+
+    result = _engine()(m, s, None, request)
+    assert result["status"] == "ready"
+
+
+def test_starter_search_stops_when_its_time_budget_expires(scheme_inputs, monkeypatch):
+    import assistant.proposal_engine as engine
+
+    clock = iter((0.0, 60.0))
+    monkeypatch.setattr(engine, "monotonic", lambda: next(clock), raising=False)
+    m, s = scheme_inputs
+    baseline = build_scheme(m, s, [])
+    assert engine._verified_starters(m, s, baseline) == []
+
+
 @pytest.mark.parametrize("edit,reason", [
     ({"op": "move", "target": "missing", "dx": 0, "dy": -0.6}, "unknown_target"),
     ({"op": "move", "target": "desk_001", "dx": float("nan"), "dy": 0}, "invalid_number"),

@@ -273,10 +273,10 @@ def _verified_starters(measurements: dict, structure: dict, baseline: dict) -> l
     layouts = set()
     operation_targets = set()
 
-    def consider(edits: list[dict]) -> None:
+    def consider(edits: list[dict]) -> bool:
         nonlocal attempts
         if attempts >= 40 or len(starters) >= 4:
-            return
+            return False
         attempts += 1
         try:
             result, improvements = validate_room_candidate(
@@ -287,7 +287,7 @@ def _verified_starters(measurements: dict, structure: dict, baseline: dict) -> l
             layout = json.dumps(result["layout_after"], sort_keys=True, allow_nan=False)
             operation_target = tuple((edit["op"], edit.get("target", "all_doors")) for edit in edits)
             if strategy in strategies or layout in layouts or operation_target in operation_targets:
-                return
+                return False
             strategies.add(strategy)
             layouts.add(layout)
             operation_targets.add(operation_target)
@@ -295,16 +295,31 @@ def _verified_starters(measurements: dict, structure: dict, baseline: dict) -> l
                           if risk.get("metric_code") in {item["metric_code"] for item in improvements}
                           and risk.get("risk_code")]
             starters.append({"edits": deepcopy(edits), "risk_codes": list(dict.fromkeys(risk_codes))})
+            return True
         except ProposalRejected:
-            pass
+            return False
 
-    if any(item.get("type") == "door" for item in measurements.get("openings", [])):
-        for width in (1.0, 1.2, 1.5):
-            consider([{"op": "resize_door", "width_m": width}])
+    doors = [item for item in measurements.get("openings", []) if item.get("type") == "door"]
+    if doors:
+        widths = {0.9, 1.0, 1.2}
+        for door in doors:
+            original = door.get("width_m")
+            if type(original) in (int, float) and math.isfinite(original):
+                widths.update(round(original + delta, 3) for delta in (0.05, 0.1, 0.15, 0.2))
+        for width in sorted(width for width in widths if 0.5 <= width <= 1.5)[:8]:
+            if consider([{"op": "resize_door", "width_m": width}]):
+                break
 
-    # Try small axis moves first, then larger diagonal relocations. Every
-    # proposed edit is checked against the actual structure before exposure.
-    offsets = [(0, -0.15 * spans[1]), (0, 0.15 * spans[1]),
+    objects = [object_id(item) for item in measurements.get("objects", []) if object_id(item)]
+    for target in objects:
+        consider([{"op": "remove", "target": target}])
+        if len(starters) >= 4 or attempts >= 40:
+            return starters
+
+    # Probe every target before trying its next offset, so objects late in the
+    # scan are not starved by a long series of failures on the first object.
+    offsets = [(-0.2, 0), (0, -0.2), (0, -0.15 * spans[1]),
+               (0.2, 0), (0, 0.2), (0, 0.15 * spans[1]),
                (-0.15 * spans[0], 0), (0.15 * spans[0], 0),
                (0, -0.25 * spans[1]), (0, 0.25 * spans[1]),
                (-0.25 * spans[0], 0), (0.25 * spans[0], 0),
@@ -312,17 +327,17 @@ def _verified_starters(measurements: dict, structure: dict, baseline: dict) -> l
                (-0.45 * spans[0], -0.25 * spans[1]),
                (0.25 * spans[0], -0.25 * spans[1]),
                (-0.25 * spans[0], -0.25 * spans[1])]
-    for item in measurements.get("objects", []):
-        target = object_id(item)
-        if not target:
-            continue
-        for dx, dy in offsets:
+    for dx, dy in offsets:
+        for target in objects:
             consider([{"op": "move", "target": target,
                        "dx": round(dx, 3), "dy": round(dy, 3)}])
             if len(starters) >= 4 or attempts >= 40:
                 return starters
+    for target in objects:
         for quarter_turns in (1, 2, 3):
             consider([{"op": "rotate", "target": target, "quarter_turns": quarter_turns}])
+            if len(starters) >= 4 or attempts >= 40:
+                return starters
     return starters
 
 
@@ -330,7 +345,8 @@ def generate_room_proposals(measurements: dict, structure: dict, goal: str | Non
     """Return 2–3 verified choices, or a reasoned failure after one revision."""
     baseline = build_scheme(measurements, structure, [])
     context = _context(measurements, structure, baseline, goal)
-    context["verified_starters"] = _verified_starters(measurements, structure, baseline)
+    starters = _verified_starters(measurements, structure, baseline)
+    context["verified_starters"] = starters if len(starters) >= 2 else []
     accepted, rejections = [], []
     strategies, layouts = set(), set()
     for round_number in (1, 2):

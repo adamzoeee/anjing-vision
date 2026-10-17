@@ -44,7 +44,7 @@
 
 通过 DeepSeek 的 Chat Completions API 调用 `deepseek-flash`，请求 JSON 输出。系统提示约束模型：只引用已提供 ID，返回三种不同取舍的方案，每组包含标题、意图、结构化 `edits` 和引用的风险代码；禁止编造实测值、分数、施工结论。使用后端环境变量 `DEEPSEEK_API_KEY`；模型、接口地址、超时和令牌上限可配置，密钥不进入前端响应、日志、数据库或 Git。默认接口为 `https://api.deepseek.com/chat/completions`。官方接口资料见 [初次调用](https://api-docs.deepseek.com/) 与 [JSON 输出](https://api-docs.deepseek.com/guides/json_mode/)。
 
-实机生成时，服务端在调用模型前尝试有限数量的空间编辑，使用同一个候选校验器筛出最多四个不同操作目标的 `verified_starters`，只把其编辑和相关风险代码送入上下文。菜单存在时，提示模型为每项选择一个不同的 starter，原样复制编辑并自行写标题与设计意图。菜单只提供模型可选输入，不直接成为返回方案；模型回复仍须逐项独立验算，不足两个可信方案时仍返回失败。
+实机生成时，服务端在调用模型前尝试有限数量的空间编辑，包括小幅门宽调整、逐件移除及对各家具轮流尝试移动，使用同一个候选校验器筛出最多四个不同操作目标的 `verified_starters`，只把其编辑和相关风险代码送入上下文。菜单至少有两项时，提示模型为每项选择一个不同的 starter，原样复制编辑并自行写标题与设计意图；菜单不足两项时不限制模型自行提案。菜单只提供模型可选输入，不直接成为返回方案；模型回复仍须逐项独立验算，不足两个可信方案时仍返回失败。
 
 响应返回 `scan_id`、`input_fingerprints`、`proposals`（最多三项）和生成状态。每项包含临时 ID、标题、设计意图、`edits`、`layout_before`、`layout_after`、`applied_edits`、`comparison`、`metric_changes`、`risk_changes`、`evidence`、`limitations` 与 `disclaimer`。`evidence` 中的数值由服务端从正式链路计算，明确来源指标；AI 原话只作为设计意图。所有候选的几何和数值来自同一次 `build_scheme` 结果，避免卡片与 3D 图不一致。
 
