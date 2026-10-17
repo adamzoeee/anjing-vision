@@ -2,8 +2,10 @@
 import io
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import PIL.Image
+import pytest
 
 from app.config import get_settings
 from app.routers.renovation import MAX_PLAN_BYTES
@@ -211,3 +213,162 @@ def test_scheme_export_provenance_includes_stale_flags(client, scheme_inputs, mo
     assert provenance["stale"] is True
     assert provenance["based_on_mismatch"] is True
     assert provenance["mismatched_keys"]
+
+
+def _ai_save_payload(sid):
+    import hashlib
+
+    post = Path(get_settings().data_dir) / "work" / str(sid) / "postprocess"
+    return {
+        "name": "拓宽房门", "source": "ai",
+        "edits": [{"op": "resize_door", "width_m": 1.0}],
+        "based_on": {name.replace(".json", "_sha256"): hashlib.sha256((post / name).read_bytes()).hexdigest()
+                     for name in ("measurements.json", "structure_calibrated.json")},
+        "proposal_meta": {
+            "title": "拓宽房门", "intent": "改善进出通行", "risk_codes": ["door_width"],
+            "limitations": ["须现场复核"],
+            "evidence": {"verification": {"source": "model", "comparison": {"after_score": 9999}},
+                         "facts": {"score": -1234}},
+        },
+    }
+
+
+def test_ai_scheme_preserves_narrative_and_recomputes_evidence(client, scheme_inputs):
+    h = _auth(client)
+    sid = _scan_with_artifacts(client, h, *scheme_inputs)
+    request = _ai_save_payload(sid)
+    created = client.post(f"/api/assistant/scans/{sid}/schemes", json=request, headers=h)
+    assert created.status_code == 200, created.text
+    saved = created.json()
+    meta = saved["proposal_meta"]
+    assert meta["title"] == "拓宽房门"
+    assert meta["intent"] == "改善进出通行"
+    assert meta["limitations"] == ["须现场复核"]
+    assert meta["risk_codes"] == ["door_width"]
+    assert meta["evidence"]["design_intent"] == {"source": "model", "text": "改善进出通行"}
+    assert meta["evidence"]["facts"]["source"] == "structured_scan"
+    assert meta["evidence"]["facts"]["score"] != -1234
+    verification = meta["evidence"]["verification"]
+    assert verification["source"] == "build_scheme"
+    assert verification["comparison"]["after_score"] == saved["score"]
+    assert verification["comparison"]["after_score"] != 9999
+    door = next(item for item in verification["metric_changes"] if item["metric_code"] == "door_width")
+    assert door["before"] == 0.85
+    assert door["after"] == 1.0
+    listed = client.get(f"/api/assistant/scans/{sid}/schemes", headers=h).json()["schemes"][0]
+    detail = client.get(f"/api/assistant/scans/{sid}/schemes/{saved['id']}", headers=h).json()
+    assert listed["proposal_meta"] == meta
+    assert detail["proposal_meta"] == meta
+    assert detail["plan"]["proposal_meta"] == meta
+    assert detail["plan"]["based_on"] == request["based_on"]
+
+
+def test_legacy_scheme_without_metadata_remains_readable(client, scheme_inputs):
+    h = _auth(client)
+    sid = _scan_with_artifacts(client, h, *scheme_inputs)
+    saved = client.post(f"/api/assistant/scans/{sid}/schemes", json={"name": "旧方案", "edits": []}, headers=h)
+    assert saved.status_code == 200
+    assert saved.json()["proposal_meta"] == {}
+    listed = client.get(f"/api/assistant/scans/{sid}/schemes", headers=h).json()["schemes"][0]
+    detail = client.get(f"/api/assistant/scans/{sid}/schemes/{saved.json()['id']}", headers=h).json()
+    assert listed["proposal_meta"] == {}
+    assert detail["proposal_meta"] == {}
+    assert detail["plan"]["source"] == "manual"
+
+
+@pytest.mark.parametrize("change", ["changed", "missing", "extra"])
+def test_scheme_rejects_stale_or_incomplete_fingerprints(client, scheme_inputs, change):
+    h = _auth(client)
+    sid = _scan_with_artifacts(client, h, *scheme_inputs)
+    request = _ai_save_payload(sid)
+    if change == "changed":
+        request["based_on"]["measurements_sha256"] = "0" * 64
+    elif change == "missing":
+        request["based_on"].pop("structure_calibrated_sha256")
+    else:
+        request["based_on"]["structure_sha256"] = "0" * 64
+    response = client.post(f"/api/assistant/scans/{sid}/schemes", json=request, headers=h)
+    assert response.status_code == 409, response.text
+    assert client.get(f"/api/assistant/scans/{sid}/schemes", headers=h).json()["schemes"] == []
+
+
+@pytest.mark.parametrize("field,value", [
+    ("title", "长" * 121), ("intent", "长" * 601),
+    ("limitations", ["长" * 601]), ("limitations", ["限制"] * 11),
+    ("risk_codes", ["door_width"] * 21),
+], ids=["title", "intent", "long_limitation", "too_many_limitations", "too_many_risks"])
+def test_ai_scheme_rejects_overlong_narrative(client, scheme_inputs, field, value):
+    h = _auth(client)
+    sid = _scan_with_artifacts(client, h, *scheme_inputs)
+    request = _ai_save_payload(sid)
+    request["proposal_meta"][field] = value
+    response = client.post(f"/api/assistant/scans/{sid}/schemes", json=request, headers=h)
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.parametrize("change", ["missing_fingerprints", "wrong_source", "unknown_risk"])
+def test_ai_scheme_requires_explicit_provenance(client, scheme_inputs, change):
+    h = _auth(client)
+    sid = _scan_with_artifacts(client, h, *scheme_inputs)
+    request = _ai_save_payload(sid)
+    if change == "missing_fingerprints":
+        request.pop("based_on")
+    elif change == "wrong_source":
+        request["source"] = "manual"
+    else:
+        request["proposal_meta"]["risk_codes"] = ["invented_risk"]
+    response = client.post(f"/api/assistant/scans/{sid}/schemes", json=request, headers=h)
+    assert response.status_code == 422, response.text
+
+
+def test_ai_scheme_html_is_stored_as_untrusted_text(client, scheme_inputs):
+    h = _auth(client)
+    sid = _scan_with_artifacts(client, h, *scheme_inputs)
+    request = _ai_save_payload(sid)
+    html = '<img src=x onerror="alert(1)">'
+    request["proposal_meta"]["intent"] = html
+    request["proposal_meta"]["provider_secret"] = "must-not-persist"
+    saved = client.post(f"/api/assistant/scans/{sid}/schemes", json=request, headers=h)
+    assert saved.status_code == 200, saved.text
+    detail = client.get(f"/api/assistant/scans/{sid}/schemes/{saved.json()['id']}", headers=h)
+    assert detail.headers["content-type"] == "application/json"
+    assert detail.json()["proposal_meta"]["intent"] == html
+    assert detail.json()["proposal_meta"]["evidence"]["design_intent"]["text"] == html
+    assert "provider_secret" not in detail.json()["proposal_meta"]
+
+
+def test_proposal_metadata_migration_keeps_existing_scheme_readable(monkeypatch):
+    import os
+
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+
+    from app.models import RenovationScheme
+
+    database = Path("tmp") / f"assistant-migration-test-{uuid4().hex}.db"
+    database.parent.mkdir(exist_ok=True)
+    database_url = f"sqlite:///{database.as_posix()}"
+    old_url = os.environ["DATABASE_URL"]
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    get_settings.cache_clear()
+    migrated_engine = create_engine(database_url)
+    try:
+        config = Config("alembic.ini")
+        command.upgrade(config, "20260926_0005")
+        with migrated_engine.begin() as connection:
+            connection.exec_driver_sql("INSERT INTO organizations (id, name) VALUES (1, '历史机构')")
+            connection.exec_driver_sql("INSERT INTO projects (id, org_id, name) VALUES (1, 1, '历史项目')")
+            connection.exec_driver_sql("INSERT INTO scans (id, project_id) VALUES (1, 1)")
+            connection.exec_driver_sql("INSERT INTO renovation_schemes (id, scan_id, name) VALUES (1, 1, '历史方案')")
+        command.upgrade(config, "head")
+        with Session(migrated_engine) as session:
+            scheme = session.scalar(select(RenovationScheme))
+            assert scheme.name == "历史方案"
+            assert scheme.edits == []
+            assert scheme.proposal_meta == {}
+    finally:
+        migrated_engine.dispose()
+        monkeypatch.setenv("DATABASE_URL", old_url)
+        get_settings.cache_clear()

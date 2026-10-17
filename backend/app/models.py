@@ -94,6 +94,7 @@ class RenovationScheme(Base):
     name = Column(String(120), nullable=False)
     edits = Column(JSON, default=list, nullable=False, server_default=text("'[]'"))
     based_on = Column(JSON, default=dict, nullable=False, server_default=text("'{}'"))
+    proposal_meta = Column(JSON, default=dict, nullable=False, server_default=text("'{}'"))
     source = Column(String(20), default="manual")
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now)

@@ -11,12 +11,13 @@ import hashlib
 import io
 import json
 from pathlib import Path
+from typing import Annotated
 from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.orm import Session
 
 from assistant.intent_edits import intent_to_edits
@@ -224,10 +225,23 @@ def simulate_renovation(
     return _scheme_payload(scan_id, measurements, structure, edits)
 
 
+class SchemeProposalMeta(BaseModel):
+    # Only bounded narrative crosses the persistence boundary. Client evidence,
+    # provider details and unknown fields are discarded by Pydantic's extra=ignore.
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
+    intent: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=600)]
+    risk_codes: list[Annotated[str, StringConstraints(min_length=1, max_length=80)]] = Field(
+        default_factory=list, max_length=20)
+    limitations: list[Annotated[str, StringConstraints(min_length=1, max_length=600)]] = Field(
+        default_factory=list, max_length=10)
+
+
 class SchemeCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     edits: list[dict] = Field(default_factory=list)
     source: str = Field(default="manual", max_length=20)
+    based_on: dict[str, str] | None = None
+    proposal_meta: SchemeProposalMeta | None = None
 
 
 class SchemePatchRequest(BaseModel):
@@ -255,6 +269,7 @@ def list_schemes(scan_id: int, db: Session = Depends(get_db), org_id: int = Depe
         result = build_scheme(measurements, structure, scheme.edits or [])
         items.append({
             "id": scheme.id, "name": scheme.name, "edits": scheme.edits, "source": scheme.source,
+            "proposal_meta": scheme.proposal_meta or {},
             "created_at": scheme.created_at.isoformat() if scheme.created_at else None,
             "score": (result.get("overall") or {}).get("score"),
             "baseline_score": baseline_score,
@@ -268,16 +283,40 @@ def list_schemes(scan_id: int, db: Session = Depends(get_db), org_id: int = Depe
 def create_scheme(scan_id: int, payload: SchemeCreateRequest, db: Session = Depends(get_db),
                   org_id: int = Depends(get_org_scope), settings: Settings = Depends(get_settings)):
     _, work = _scan_and_work(scan_id, db, org_id, settings)
+    fingerprints = _input_fingerprints(work)
+    if payload.proposal_meta is not None and (payload.source != "ai" or payload.based_on is None):
+        raise HTTPException(422, "AI 方案说明须声明 AI 来源并提供扫描输入指纹")
+    if payload.based_on is not None and payload.based_on != fingerprints:
+        raise HTTPException(409, "扫描输入已更新，请重新生成方案后保存")
     measurements, structure = _require_measurements(work), _load_structure(work)
     validation = build_scheme(measurements, structure, payload.edits)
     if validation["conflicts"]:
         raise HTTPException(422, f"方案包含无效编辑：{validation['conflicts'][0]}")
+    proposal_meta = {}
+    if payload.proposal_meta is not None:
+        baseline = build_scheme(measurements, structure, [])
+        known_codes = {risk.get(key) for risk in baseline["risks"]
+                       if risk.get("assessment_status") == "evaluated"
+                       for key in ("metric_code", "risk_code")}
+        if any(code not in known_codes for code in payload.proposal_meta.risk_codes):
+            raise HTTPException(422, "AI 方案引用了未知或不可评估的风险指标")
+        proposal_meta = payload.proposal_meta.model_dump()
+        proposal_meta["evidence"] = {
+            "facts": {"source": "structured_scan", "score": baseline["overall"].get("score"),
+                      "risks": [risk for risk in baseline["risks"] if risk.get("assessment_status") == "evaluated"]},
+            "design_intent": {"source": "model", "text": proposal_meta["intent"]},
+            "verification": {"source": "build_scheme", **diff_assessments(baseline, validation),
+                             **{key: validation[key] for key in ("metrics", "risks", "overall")}},
+        }
+    if _input_fingerprints(work) != fingerprints:
+        raise HTTPException(409, "扫描输入已更新，请重新生成方案后保存")
     scheme = RenovationScheme(scan_id=scan_id, name=payload.name, edits=payload.edits,
-                              source=payload.source, based_on=_input_fingerprints(work))
+                              source=payload.source, based_on=fingerprints, proposal_meta=proposal_meta)
     db.add(scheme)
     db.commit()
     db.refresh(scheme)
     return {"id": scheme.id, "name": scheme.name, "edits": scheme.edits,
+            "proposal_meta": scheme.proposal_meta or {},
             "score": (validation.get("overall") or {}).get("score")}
 
 
@@ -289,9 +328,11 @@ def get_scheme(scan_id: int, scheme_id: int, db: Session = Depends(get_db),
     measurements, structure = _require_measurements(work), _load_structure(work)
     payload = _scheme_payload(scan_id, measurements, structure, scheme.edits or [])
     return {**payload, "score": (payload["overall"] or {}).get("score"),
+            "proposal_meta": scheme.proposal_meta or {},
             **_based_on_status(scheme, work),
             "plan": {"id": scheme.id, "name": scheme.name, "edits": scheme.edits,
-                     "source": scheme.source, "based_on": scheme.based_on}}
+                     "source": scheme.source, "based_on": scheme.based_on,
+                     "proposal_meta": scheme.proposal_meta or {}}}
 
 
 def _scheme_derived(work: Path, scheme: RenovationScheme) -> tuple[dict, dict]:
