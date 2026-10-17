@@ -49,3 +49,6 @@ app/android/local.properties
 app/ios/Pods/
 downloads/
 debug_assets/**/*.mp4
+
+# Locally downloaded/licensed realtime validation media (never publish clips).
+/.cache/realtime-test-media/

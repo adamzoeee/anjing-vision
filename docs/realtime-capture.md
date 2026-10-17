@@ -140,6 +140,16 @@ if frame is not None:
 
 ## 测试与限制
 
+额外提供 [公开视频实际验证报告](realtime-public-video-validation.md) 和可离线执行的验收脚本：
+
+```powershell
+# 仓库根目录；媒体需自行合法下载，脚本不联网。
+python backend/scripts/validate_live_capture.py --video .cache/realtime-test-media/pexels-10135156.mp4
+python backend/scripts/validate_live_capture.py --synthetic
+```
+
+脚本使用原 FastAPI + Uvicorn 启动流程、真实鉴权 HTTP、原 CaptureManager/OpenCVSource；以独立临时数据库和空闲端口运行，不重启已有服务。`--synthetic` 明确标记为合成验证，普通单元测试不依赖下载或外网。详细参数见 `--help`。
+
 ```powershell
 cd backend
 python -m pytest tests/test_realtime_source.py tests/test_realtime_manager.py tests/test_live_capture_api.py -q
