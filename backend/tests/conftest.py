@@ -7,7 +7,7 @@ os.environ["ENVIRONMENT"] = "test"
 os.environ["SECRET_KEY"] = "test-secret-key-with-at-least-32-bytes"
 os.environ["STORAGE_BACKEND"] = "local"
 os.environ["TASK_SYNC"] = "true"  # 测试环境管道同步执行，避免 Redis/Celery 依赖
-os.environ["DEMO_LOGIN"] = "false"
+os.environ["DEEPSEEK_API_KEY"] = ""  # 单元测试不得读取本机密钥或消耗真实 API 配额
 # 用绝对路径，每个测试再分配唯一子目录；保留产物供用户手动清理。
 os.environ["DATA_DIR"] = str(Path(__file__).resolve().parent.parent / ".test-data")
 

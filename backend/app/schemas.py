@@ -36,22 +36,72 @@ class LoginIn(BaseModel):
         return str(value).lower()
 
 
-class DemoLoginIn(BaseModel):
-    email: str = Field(default="", max_length=120)
-    password: str = Field(default="", max_length=64)
-
-
 class UserOut(BaseModel):
     id: int
     name: str
     email: EmailStr
     role: Literal["admin", "member"]
+    is_active: bool = True
     org_name: str
 
 
 class AuthOut(BaseModel):
     token: str
     user: UserOut
+
+
+class UserListItem(BaseModel):
+    """机构成员列表项：管理员在自己机构内管理账号时使用。"""
+
+    id: int
+    name: str
+    email: EmailStr
+    role: Literal["admin", "member"]
+    is_active: bool
+    created_at: datetime | None = None
+    disabled_at: datetime | None = None
+
+
+class UserCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    email: EmailStr = Field(max_length=120)
+    password: str = Field(min_length=8, max_length=64)
+
+    _normalize_name = field_validator("name")(_strip_required)
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: EmailStr) -> str:
+        return str(value).lower()
+
+
+class UserUpdateIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    is_active: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _normalize_name(cls, value: str | None) -> str | None:
+        return None if value is None else _strip_required(value)
+
+    @model_validator(mode="after")
+    def _require_a_change(self):
+        if self.name is None and self.is_active is None:
+            raise ValueError("至少需要提供 name 或 is_active")
+        return self
+
+
+class PasswordResetIn(BaseModel):
+    """管理员为成员重置密码（不需要原密码）。"""
+
+    password: str = Field(min_length=8, max_length=64)
+
+
+class PasswordChangeIn(BaseModel):
+    """本人修改密码：必须校验原密码。"""
+
+    current_password: str = Field(min_length=1, max_length=64)
+    new_password: str = Field(min_length=8, max_length=64)
 
 
 class ProjectIn(BaseModel):

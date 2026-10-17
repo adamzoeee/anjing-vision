@@ -5,8 +5,8 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..db import get_db
-from ..deps import get_org_scope
-from ..models import Scan
+from ..deps import get_org_scope, require_admin
+from ..models import Scan, User
 from ..schemas import ReferenceMeasurementsIn, ScanOut
 from ..storage import (
     MediaTooLargeError,
@@ -33,9 +33,9 @@ def upload(
     scan_id: int,
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
-    org_id: int = Depends(get_org_scope),
+    admin: User = Depends(require_admin),
 ):
-    scan = _own_scan(scan_id, db, org_id)
+    scan = _own_scan(scan_id, db, admin.org_id)
     if scan.capture_type not in ("video", "photos"):
         raise HTTPException(409, "整屋 Scan 不能上传单房间素材")
     stored_paths: list[str] = []
@@ -98,10 +98,10 @@ def set_reference_measurements(
     scan_id: int,
     data: ReferenceMeasurementsIn,
     db: Session = Depends(get_db),
-    org_id: int = Depends(get_org_scope),
+    admin: User = Depends(require_admin),
 ):
     """在上传前保存用户提供的真实尺寸，供统一三维尺度标定。"""
-    scan = _own_scan(scan_id, db, org_id)
+    scan = _own_scan(scan_id, db, admin.org_id)
     if scan.status not in ("uploading", "failed"):
         raise HTTPException(409, "扫描已经开始处理，不能修改参考尺寸")
     scan.reference_measurements = [item.model_dump() for item in data.measurements]

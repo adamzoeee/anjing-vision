@@ -20,3 +20,20 @@ def test_console_static_assets_are_no_store(client):
         res = client.get(path)
         assert res.status_code == 200, path
         assert res.headers.get("cache-control") == "no-store", f"{path} 不得缓存旧资源"
+
+
+def test_console_es_modules_use_javascript_mime_even_with_windows_registry(client, monkeypatch):
+    import mimetypes
+
+    # Windows can register .mjs as text/plain: browsers then reject the whole
+    # import graph even though the HTTP requests return 200.
+    mimetypes.init()
+    monkeypatch.setitem(mimetypes.types_map, '.mjs', 'text/plain')
+    for path in ('/console-static/js/home-plan.mjs',
+                 '/console-static/js/views/assistant_model.mjs',
+                 '/console-static/js/viewer/scheme3d.mjs'):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.headers['content-type'].split(';')[0] in {
+            'text/javascript', 'application/javascript',
+        }

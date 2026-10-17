@@ -17,7 +17,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import Settings, get_settings
 from .db import Base, engine, get_db
-from .routers import assistant_proposals, auth, preview, projects, renovation, reports, scans
+from .routers import assistant_proposals, auth, preview, projects, renovation, reports, scans, users
 
 logger = logging.getLogger("anjing.api")
 
@@ -104,6 +104,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response = await call_next(request)
         if request.url.path.startswith(("/console-static/", "/preview-static/")):
             response.headers["cache-control"] = "no-store"
+            # Windows registry mappings may label ES modules as text/plain.
+            # Browsers require a JavaScript MIME type for the import graph.
+            if response.status_code in (200, 206) and request.url.path.lower().endswith(".mjs"):
+                response.headers["content-type"] = "text/javascript; charset=utf-8"
         return response
 
     @application.exception_handler(StarletteHTTPException)
@@ -160,6 +164,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     application.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+    application.include_router(users.router, prefix="/api/users", tags=["users"])
     application.include_router(projects.router, prefix="/api/projects", tags=["projects"])
     application.include_router(scans.router, prefix="/api/scans", tags=["scans"])
     application.include_router(preview.router, prefix="/api/preview", tags=["preview"])

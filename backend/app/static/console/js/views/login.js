@@ -1,8 +1,9 @@
-/* 登录页：品牌 3D 粒子视觉 + 玻璃登录卡 */
+/* 登录页：品牌 3D 粒子视觉（温馨户型的框架图）+ 玻璃登录卡 */
 
 import { api, getSession, setSession } from '../api.js?v=house-scan-1';
 import { icon } from '../icons.js';
 import { toast, esc } from '../ui.js';
+import { HOME_MODEL } from '../home-plan.mjs';
 
 function startHeroCanvas(canvas) {
   const ctx = canvas.getContext('2d');
@@ -47,15 +48,13 @@ function startHeroCanvas(canvas) {
   }
   resize();
 
-  const roomSize = 1.5;
-  const cube = [];
-  for (const x of [-1, 1]) for (const y of [-1, 1]) for (const z of [-1, 1]) cube.push([x, y, z]);
-  const edges = [];
-  cube.forEach((a, i) => cube.forEach((b, j) => {
-    if (j <= i) return;
-    const diff = a.reduce((acc, v, k) => acc + Math.abs(v - b[k]), 0);
-    if (diff === 2) edges.push([a, b]);
-  }));
+  /* 户型框架图：墙体 / 门 / 窗 / 家具一次性投影，按类别分层描边 */
+  const homeSegments = {
+    walls: HOME_MODEL.segments.filter((seg) => seg.kind === 'walls'),
+    openings: HOME_MODEL.segments.filter((seg) => seg.kind === 'doors' || seg.kind === 'windows'),
+    objects: HOME_MODEL.segments.filter((seg) => seg.kind === 'objects'),
+  };
+  const footprint = HOME_MODEL.footprint;
 
   const project = (p, rotY, rotX, cx, cy, scale) => {
     const [x, y, z] = p;
@@ -90,57 +89,65 @@ function startHeroCanvas(canvas) {
       ctx.fill();
     });
 
-    // 地面网格
-    ctx.strokeStyle = hexToRgba(palette.accent, 0.16);
+    // 地板：沿户型外轮廓铺一块，并画室内网格
+    const floor = footprint.map((p) => project(p, rotY, rotX, cx, cy, scale));
+    ctx.beginPath();
+    floor.forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
+    ctx.closePath();
+    ctx.fillStyle = hexToRgba(palette.accent3, 0.07);
+    ctx.fill();
+    ctx.strokeStyle = hexToRgba(palette.accent2, 0.34);
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+
+    const { minX, maxX, minZ, maxZ } = HOME_MODEL.bounds;
+    ctx.strokeStyle = hexToRgba(palette.accent, 0.14);
     ctx.lineWidth = 1;
-    const gridN = 6;
-    for (let i = 0; i <= gridN; i++) {
-      const v = -1 + (2 * i) / gridN;
-      const a = project([v, 1, -1], rotY, rotX, cx, cy, scale);
-      const b = project([v, 1, 1], rotY, rotX, cx, cy, scale);
-      const c = project([-1, 1, v], rotY, rotX, cx, cy, scale);
-      const d = project([1, 1, v], rotY, rotX, cx, cy, scale);
+    const gridN = 8;
+    for (let i = 1; i < gridN; i++) {
+      const gx = minX + ((maxX - minX) * i) / gridN;
+      const gz = minZ + ((maxZ - minZ) * i) / gridN;
+      const a = project([gx, 0, minZ], rotY, rotX, cx, cy, scale);
+      const b = project([gx, 0, maxZ], rotY, rotX, cx, cy, scale);
+      const c = project([minX, 0, gz], rotY, rotX, cx, cy, scale);
+      const d = project([maxX, 0, gz], rotY, rotX, cx, cy, scale);
       ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(c[0], c[1]); ctx.lineTo(d[0], d[1]); ctx.stroke();
     }
 
-    // 扫描平面（上下往复光带）
-    const scanY = Math.sin(t * 0.55) * 0.92;
-    const corners = [
-      project([-1, scanY, -1], rotY, rotX, cx, cy, scale),
-      project([1, scanY, -1], rotY, rotX, cx, cy, scale),
-      project([1, scanY, 1], rotY, rotX, cx, cy, scale),
-      project([-1, scanY, 1], rotY, rotX, cx, cy, scale),
-    ];
+    // 扫描平面：在户型里上下往复，示意「正在重建的家」
+    const planeY = (Math.sin(t * 0.5) * 0.5 + 0.5) * HOME_MODEL.height;
+    const slab = footprint.map(([fx, , fz]) => project([fx, planeY, fz], rotY, rotX, cx, cy, scale));
     ctx.beginPath();
-    corners.forEach((corner, i) => (i === 0 ? ctx.moveTo(corner[0], corner[1]) : ctx.lineTo(corner[0], corner[1])));
+    slab.forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
     ctx.closePath();
-    ctx.fillStyle = hexToRgba(palette.accent2, 0.1);
+    ctx.fillStyle = hexToRgba(palette.accent2, 0.09);
     ctx.fill();
-    ctx.strokeStyle = hexToRgba(palette.accent2, 0.62);
+    ctx.strokeStyle = hexToRgba(palette.accent2, 0.5);
+    ctx.lineWidth = 1;
     ctx.stroke();
 
-    // 房间线框
-    ctx.save();
-    ctx.shadowColor = hexToRgba(palette.accent, 0.85);
-    ctx.shadowBlur = 16;
-    ctx.strokeStyle = hexToRgba(palette.accent2, 0.85);
-    ctx.lineWidth = 1.4;
-    edges.forEach(([a, b]) => {
-      const pa = project([a[0] * roomSize, a[1] * roomSize * 0.72, a[2] * roomSize], rotY, rotX, cx, cy, scale);
-      const pb = project([b[0] * roomSize, b[1] * roomSize * 0.72, b[2] * roomSize], rotY, rotX, cx, cy, scale);
-      ctx.beginPath(); ctx.moveTo(pa[0], pa[1]); ctx.lineTo(pb[0], pb[1]); ctx.stroke();
-    });
-    ctx.restore();
-
-    // 顶点光点
-    cube.forEach((corner) => {
-      const p = project([corner[0] * roomSize, corner[1] * roomSize * 0.72, corner[2] * roomSize], rotY, rotX, cx, cy, scale);
-      ctx.fillStyle = hexToRgba(palette.accent3, 0.95);
+    // 户型框架图：家具最轻、门窗次之、墙体最重
+    const strokeSegments = (segments, color, alpha, width) => {
+      if (!segments.length) return;
+      ctx.strokeStyle = hexToRgba(color, alpha);
+      ctx.lineWidth = width;
       ctx.beginPath();
-      ctx.arc(p[0], p[1], 2.2, 0, Math.PI * 2);
-      ctx.fill();
-    });
+      segments.forEach(({ a, b }) => {
+        const pa = project(a, rotY, rotX, cx, cy, scale);
+        const pb = project(b, rotY, rotX, cx, cy, scale);
+        ctx.moveTo(pa[0], pa[1]);
+        ctx.lineTo(pb[0], pb[1]);
+      });
+      ctx.stroke();
+    };
+    ctx.save();
+    ctx.shadowColor = hexToRgba(palette.accent, 0.7);
+    ctx.shadowBlur = 12;
+    strokeSegments(homeSegments.walls, palette.accent2, 0.9, 1.35);
+    ctx.restore();
+    strokeSegments(homeSegments.openings, palette.accent2, 0.42, 0.9);
+    strokeSegments(homeSegments.objects, palette.accent3, 0.5, 0.85);
   }
 
   const STATIC_T = 2.6;
@@ -214,8 +221,6 @@ export function loginView(ctx) {
             <div class="field error hidden" id="login-error" role="alert"></div>
             <button class="btn btn-primary btn-lg" id="btn-login" type="submit">${icon('arrowRight', 17)} 登录工作台</button>
           </form>
-          <div class="login-divider">或</div>
-          <button class="btn btn-lg" id="btn-demo" style="width:100%">${icon('sparkles', 17)} 一键进入演示</button>
           <div class="login-foot">安龄智境 · 居家适老化安全评估系统<br>大屏工作台 · 桌面端专用（≥1280px）</div>
         </div>
       </div>
@@ -232,7 +237,6 @@ export function loginView(ctx) {
 
   const form = document.getElementById('login-form');
   const btnLogin = document.getElementById('btn-login');
-  const btnDemo = document.getElementById('btn-demo');
   const errorEl = document.getElementById('login-error');
 
   const setLoading = (btn, loading, label) => {
@@ -240,13 +244,12 @@ export function loginView(ctx) {
     btn.innerHTML = loading ? `<span class="spinner"></span> ${label}` : btn.dataset.html;
   };
   btnLogin.dataset.html = btnLogin.innerHTML;
-  btnDemo.dataset.html = btnDemo.innerHTML;
 
   const enter = (auth, message) => {
     setSession({ token: auth.token, user: auth.user });
     toast('ok', message, `欢迎，${auth.user?.name || '用户'}`);
-    const last = localStorage.getItem('anjing.console.lastScan');
-    location.hash = last ? `#/scans/${last}` : '#/projects';
+    /* 登录后统一回到项目工作台；房间/整屋入口由侧边栏与项目页进入 */
+    location.hash = '#/projects';
   };
 
   form.addEventListener('submit', async (event) => {
@@ -270,14 +273,4 @@ export function loginView(ctx) {
     }
   });
 
-  btnDemo.addEventListener('click', async () => {
-    setLoading(btnDemo, true, '正在进入演示…');
-    try {
-      const auth = await api.demoLogin();
-      enter(auth, '已进入演示环境');
-    } catch (error) {
-      toast('error', '演示登录失败', error?.message || '');
-      setLoading(btnDemo, false);
-    }
-  });
 }

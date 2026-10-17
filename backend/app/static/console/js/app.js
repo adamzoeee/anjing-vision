@@ -1,6 +1,6 @@
 /* 安龄智境 · 大屏工作台外壳 v2：主题 / 动效 / 悬浮 3D / 页面转场 / 路由 */
 
-import { api, getSession, setSession, clearSession } from './api.js?v=house-flow-1';
+import { api, getSession, setSession, clearSession, isAdmin } from './api.js?v=house-flow-1';
 import { icon } from './icons.js';
 import { toast, esc } from './ui.js';
 import { getBackground3D } from './background3d.js';
@@ -11,6 +11,7 @@ import { roomView } from './views/room.js?v=house-flow-1';
 import { schemeView } from './views/scheme.js';
 import { assistantView } from './views/assistant.js';
 import { screenView } from './views/screen.js?v=house-flow-1';
+import { usersView } from './views/users.js';
 
 const root = document.getElementById('app');
 const LAST_SCAN_KEY = 'anjing.console.lastScan';
@@ -125,7 +126,11 @@ function playSweep() {
 /* —— 宽度门帘 —— */
 function checkWidth() {
   const gate = document.getElementById('min-width-gate');
-  gate.hidden = window.innerWidth >= 1280 || location.hash.startsWith('#/projects') || location.hash.startsWith('#/scans/') || location.hash.startsWith('#/house/');
+  gate.hidden = window.innerWidth >= 1280
+    || location.hash.startsWith('#/projects')
+    || location.hash.startsWith('#/scans/')
+    || location.hash.startsWith('#/house/')
+    || location.hash.startsWith('#/users');
   const iconHost = document.getElementById('gate-icon');
   if (!iconHost.dataset.filled) {
     iconHost.innerHTML = icon('monitor', 44);
@@ -136,12 +141,17 @@ function checkWidth() {
 /* —— 应用骨架 —— */
 function buildShell() {
   const session = getSession() || {};
-  const user = session.user || { name: '演示用户', org_name: '演示机构' };
+  const user = session.user || {};
+  const admin = isAdmin();
   const currentHouse = /^#\/house\/(\d+)/.exec(location.hash);
   const lastScan = currentHouse ? currentHouse[1] : getLastScan();
   const houseScan = Boolean(currentHouse) || lastScanIsHouse();
   const hash = location.hash;
   const isActive = (prefix) => hash.startsWith(prefix);
+  /* 「房间/整屋工作台」入口只在当前就在工作台或其下级页（如方案可视化）时出现 */
+  const scanRoute = /^#\/(?:scans|house)\/(\d+)/.exec(hash);
+  const showRoomNav = Boolean(scanRoute);
+  const roomNavId = scanRoute ? scanRoute[1] : lastScan;
   const initial = esc((user.name || '用').slice(0, 1));
   const skin = getSkin();
   const motion = getMotionMode();
@@ -165,13 +175,15 @@ function buildShell() {
         <a class="nav-item ${isActive('#/projects') ? 'active' : ''}" href="#/projects" data-rail-label="项目工作台">
           ${icon('folder', 18)}<span>项目工作台</span>
         </a>
-        <a class="nav-item ${isActive('#/scans') || isActive('#/house') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="#/scans/${lastScan || '0'}" data-rail-label="${houseScan ? '整屋工作台' : '房间工作台'}">
+        ${showRoomNav ? `
+        <a class="nav-item ${isActive('#/scans') || isActive('#/house') ? 'active' : ''}" href="#/scans/${roomNavId}" data-rail-label="${houseScan ? '整屋工作台' : '房间工作台'}">
           ${icon('home', 18)}<span>${houseScan ? '整屋工作台' : '房间工作台'}</span>
-        </a>
-        <div class="nav-section eyebrow">演示</div>
-        <a class="nav-item ${isActive('#/screen') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="${houseScan ? `#/scans/${lastScan}` : `#/screen/${lastScan || '0'}` }" data-rail-label="${houseScan ? '整屋展示' : '大屏模式'}">
-          ${icon('monitor', 18)}<span>${houseScan ? '整屋展示' : '大屏模式'}</span>
-        </a>
+        </a>` : ''}
+        ${admin ? `
+        <div class="nav-section eyebrow">机构</div>
+        <a class="nav-item ${isActive('#/users') ? 'active' : ''}" href="#/users" data-rail-label="用户管理">
+          ${icon('user', 18)}<span>用户管理</span>
+        </a>` : ''}
       </nav>
       <div class="rail-tools">
         <div class="tool-row">
@@ -189,8 +201,8 @@ function buildShell() {
       <div class="rail-user">
         <div class="avatar">${initial}</div>
         <div class="grow" style="min-width:0">
-          <div class="u-name truncate">${esc(user.name || '演示用户')}</div>
-          <div class="u-org truncate">${esc(user.org_name || '')}</div>
+          <div class="u-name truncate">${esc(user.name || '未登录')}</div>
+          <div class="u-org truncate">${esc(user.org_name || '')}${user.role ? ` · ${admin ? '管理员' : '成员'}` : ''}</div>
         </div>
         <button class="icon-btn" id="btn-logout" data-tip="退出登录" aria-label="退出登录">${icon('logout', 17)}</button>
       </div>
@@ -250,6 +262,7 @@ const routes = [
   { re: /^#\/house\/(\d+)\/?$/, layout: 'shell', run: (_ctx, m) => navigate(`#/scans/${m[1]}`, { replace: true }) },
   { re: /^#\/scans\/(\d+)\/schemes\/(\d+)\/?$/, layout: 'shell', run: (ctx, m) => schemeView(ctx, Number(m[1]), Number(m[2])) },
   { re: /^#\/screen\/(\d+)\/?$/, layout: 'bare', run: (ctx, m) => screenView(ctx, Number(m[1])) },
+  { re: /^#\/users\/?$/, layout: 'shell', run: (ctx) => (isAdmin() ? usersView(ctx) : navigate('#/projects', { replace: true })) },
   { re: /^#\/login\/?$/, layout: 'bare', run: (ctx) => loginView(ctx) },
 ];
 
@@ -318,8 +331,10 @@ async function render() {
   };
 
   const bg = getBackground3D();
-  bg.setScan(getLastScan());
+  /* 装饰层默认用设计好的温馨户型；只有进到具体 Scan 工作台才换成该 Scan 的真实布局 */
+  bg.setScan(isImmersive ? getLastScan() : '');
   bg.setSubtle(isImmersive);
+  bg.setMuted(hash.startsWith('#/login'));
 
   const transitionSupported = typeof document.startViewTransition === 'function' && motionEnabled();
   if (transitionSupported) {

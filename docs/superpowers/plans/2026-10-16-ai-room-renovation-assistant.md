@@ -70,7 +70,7 @@
 ### Task 3: 保存所选方案及元数据
 
 **Files:**
-- Create: `backend/migrations/versions/20261016_0006_scheme_proposal_meta.py`
+- Create: `backend/migrations/versions/20261016_0007_scheme_proposal_meta.py`（续接合并时保留账号管理0006，助手改用0007）
 - Modify: `backend/app/models.py`
 - Modify: `backend/app/routers/renovation.py`
 - Test: `backend/tests/test_renovation_schemes_api.py`
@@ -81,7 +81,7 @@
 
 - [ ] **Step 1: 写失败测试。** 保存 AI 方案后断言说明和服务端重算证据可读；旧方案没有元数据仍可读；指纹不匹配返回 409；模型说明过长返回 422；恶意 HTML 说明只作为文本保存；迁移升级后已有行可读。
 - [ ] **Step 2: 验证测试失败。** 从 `backend` 执行 `./.venv/Scripts/python.exe -m pytest tests/test_renovation_schemes_api.py -q`，预期新字段相关测试失败。
-- [ ] **Step 3: 实现迁移与接口。** 新 JSON 列默认 `{}`，`down_revision="20260926_0005"`；保存时重算方案、检查扫描输入指纹、长度限制和数据来源，证据值由服务端产生。旧方案查询不依赖新元数据存在。
+- [ ] **Step 3: 实现迁移与接口。** 新 JSON 列默认 `{}`，合并后的 `down_revision="20261016_0006"`（账号管理）；保存时重算方案、检查扫描输入指纹、长度限制和数据来源，证据值由服务端产生。旧方案查询不依赖新元数据存在。
 - [ ] **Step 4: 重跑方案测试和迁移检查。** 同 Step 2 命令；将 `DATABASE_URL` 临时设为 `sqlite:///./tmp/assistant-migration-check.db` 后执行 `./.venv/Scripts/python.exe -m alembic upgrade head`，预期测试通过且隔离数据库迁移成功。
 - [ ] **Step 5: 提交。** 提交迁移、模型、路由和测试。
 

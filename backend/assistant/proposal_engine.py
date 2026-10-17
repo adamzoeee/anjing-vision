@@ -4,6 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 import math
+from time import monotonic
 from typing import Callable
 
 from pipeline.scheme_assessment import build_scheme, diff_assessments
@@ -265,6 +266,7 @@ def validate_room_candidate(measurements: dict, structure: dict, candidate: dict
 
 def _verified_starters(measurements: dict, structure: dict, baseline: dict) -> list[dict]:
     """Offer a small menu of exact edits already accepted by the normal validator."""
+    deadline = monotonic() + 5.0
     bounds = structure["room"]["bounds_xy"]
     spans = [bounds["max"][axis] - bounds["min"][axis] for axis in (0, 1)]
     attempts = 0
@@ -276,6 +278,9 @@ def _verified_starters(measurements: dict, structure: dict, baseline: dict) -> l
     def consider(edits: list[dict]) -> bool:
         nonlocal attempts
         if attempts >= 40 or len(starters) >= 4:
+            return False
+        if monotonic() >= deadline:
+            attempts = 40
             return False
         attempts += 1
         try:

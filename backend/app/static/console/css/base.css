@@ -57,6 +57,8 @@ body::after {
   transition: opacity 900ms var(--ease-glide);
 }
 #bg3d.subtle { opacity: 0.22; }
+/* 登录页自带 hero 建模图，装饰层让位，避免同一张户型图出现两次 */
+#bg3d.muted { opacity: 0; }
 
 .aurora {
   position: fixed;

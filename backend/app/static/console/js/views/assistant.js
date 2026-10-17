@@ -1,4 +1,4 @@
-import { api } from '../api.js?v=house-flow-1';
+import { api, isAdmin } from '../api.js?v=house-flow-1';
 import { esc, fmtScore, riskLevel, formatMeasurement } from '../ui.js';
 import { icon } from '../icons.js';
 import { navigate } from '../app.js';
@@ -6,6 +6,7 @@ import { createSchemeViewer } from '../viewer/scheme3d.mjs';
 import { candidateViewModel, candidateLayout, proposalSavePayload, describeProposalEdit, proposalNarrativeHTML } from './assistant_model.mjs';
 
 export async function assistantView(ctx, scanId) {
+  const canSave = isAdmin();
   let alive = true, request = null, viewer = null, proposals = [], fingerprints = null;
   let selected = 0, view = 'after', busy = false, saving = false, stale = false;
   ctx.cleanup(() => { alive = false; request?.abort(); viewer?.dispose(); viewer = null; });
@@ -45,8 +46,10 @@ export async function assistantView(ctx, scanId) {
     $('#assistant-goal').disabled = busy || saving;
     $('#assistant-cancel').hidden = !busy;
     $('#assistant-form').setAttribute('aria-busy', String(busy));
-    $('#assistant-save').disabled = saving || stale || !proposals.length;
-    $('#assistant-save').innerHTML = `${icon('save', 15)} ${saving ? '正在保存…' : '保存此方案'}`;
+    $('#assistant-save').disabled = !canSave || saving || stale || !proposals.length;
+    $('#assistant-save').innerHTML = canSave
+      ? `${icon('save', 15)} ${saving ? '正在保存…' : '保存此方案'}`
+      : '仅管理员可保存';
     $('#assistant-candidates').querySelectorAll('button').forEach((button) => { button.disabled = saving; });
   }
   function preview() {
@@ -120,7 +123,7 @@ export async function assistantView(ctx, scanId) {
   ['before', 'after'].forEach((side) => $(`#assistant-${side}`).addEventListener('click', () => { view = side; preview(); }));
   $('#assistant-reset').addEventListener('click', () => viewer?.resetView());
   $('#assistant-save').addEventListener('click', async () => {
-    if (saving || stale || !proposals.length) return;
+    if (!canSave || saving || stale || !proposals.length) return;
     const controller = new AbortController(); request = controller;
     saving = true; controls(); error(); $('#assistant-save-status').textContent = '正在核对扫描指纹并保存…';
     try {

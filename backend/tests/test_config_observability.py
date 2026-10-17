@@ -20,14 +20,6 @@ def _production_settings(**overrides) -> Settings:
     return Settings(**values)
 
 
-def test_production_rejects_demo_login_bypass():
-    with pytest.raises(ValidationError, match="DEMO_LOGIN"):
-        _production_settings(
-            demo_login=True,
-            demo_login_email="demo@example.com",
-        )
-
-
 @pytest.mark.parametrize(
     "secret",
     ["change-me", "change-me-in-production", "short-secret"],

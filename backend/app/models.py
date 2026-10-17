@@ -35,8 +35,15 @@ class User(Base):
     email = Column(String(120), nullable=False, unique=True)
     password_hash = Column(String(128), nullable=False)
     role = Column(String(20), default="member")  # admin | member
+    # 停用即置时间戳：保留账号与历史归属，不物理删除用户
+    disabled_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now)
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
     org = relationship("Organization", back_populates="users")
+
+    @property
+    def is_active(self) -> bool:
+        return self.disabled_at is None
 
 
 class Project(Base):

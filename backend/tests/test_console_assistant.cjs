@@ -109,11 +109,13 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   let browser;
   try {
-    browser = await playwright.chromium.launch({ headless: true });
+    browser = await playwright.chromium.launch({ headless: true,
+      ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+        ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH } : {}) });
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
     page.setDefaultTimeout(10000);
     page.setDefaultNavigationTimeout(10000);
-    await page.addInitScript(() => localStorage.setItem('anjing.console.session', JSON.stringify({ token: 'synthetic-test', user: { name: '测试用户' } })));
+    await page.addInitScript(() => localStorage.setItem('anjing.console.session', JSON.stringify({ token: 'synthetic-test', user: { name: '测试用户', role: 'admin' } })));
     const base = `http://127.0.0.1:${server.address().port}/console`;
     await page.goto(`${base}#/scans/7`);
     await page.locator('#btn-room-assistant').waitFor();
@@ -233,6 +235,17 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
     await page.goto(`${base}#/scans/7/assistant`);
     await page.getByText('请等待房间扫描完成后生成方案。', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: '生成改造方案', exact: true }).isDisabled(), true);
+    // Members can inspect simulated choices, but cannot persist a scheme.
+    scanStatus = 'done'; captureType = 'video'; mode = 'ready';
+    const memberPage = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await memberPage.addInitScript(() => localStorage.setItem('anjing.console.session', JSON.stringify({
+      token: 'synthetic-member', user: { name: '只读成员', role: 'member' },
+    })));
+    await memberPage.goto(`${base}#/scans/7/assistant`);
+    await memberPage.getByRole('button', { name: '生成改造方案', exact: true }).click();
+    await memberPage.locator('.assistant-candidate').nth(1).waitFor();
+    assert.equal(await memberPage.locator('#assistant-save').isDisabled(), true);
+    await memberPage.close();
     scanStatus = 'done'; captureType = 'house';
     await page.reload();
     await page.getByText('小助手仅支持单房间扫描，整屋扫描暂不可用。', { exact: true }).waitFor();

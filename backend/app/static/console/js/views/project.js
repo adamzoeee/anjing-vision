@@ -1,6 +1,6 @@
 /* 项目详情：房间/扫描管理 + 视频上传 + 管道进度 */
 
-import { api } from '../api.js?v=house-flow-1';
+import { api, isAdmin } from '../api.js?v=house-flow-1';
 import { icon } from '../icons.js';
 import {
   esc, toast, fmtScore, timeAgo, scoreTone, emptyState, openModal,
@@ -16,6 +16,7 @@ export async function projectView(ctx, projectId) {
   let scans = [];
   const reportScores = new Map();
   let pollTimer = null;
+  const admin = isAdmin();
 
   ctx.actions.innerHTML = '';
   const refreshBtn = document.createElement('button');
@@ -26,17 +27,19 @@ export async function projectView(ctx, projectId) {
   refreshBtn.addEventListener('click', () => loadAll(true));
   ctx.actions.appendChild(refreshBtn);
 
-  const newScanBtn = document.createElement('button');
-  newScanBtn.className = 'btn btn-primary';
-  newScanBtn.innerHTML = `${icon('plus', 16)} 新建房间`;
-  newScanBtn.addEventListener('click', () => createRoom(ctx, projectId, refresh));
-  ctx.actions.appendChild(newScanBtn);
+  if (admin) {
+    const newScanBtn = document.createElement('button');
+    newScanBtn.className = 'btn btn-primary';
+    newScanBtn.innerHTML = `${icon('plus', 16)} 新建房间`;
+    newScanBtn.addEventListener('click', () => createRoom(ctx, projectId, refresh));
+    ctx.actions.appendChild(newScanBtn);
 
-  const assembleBtn = document.createElement('button');
-  assembleBtn.className = 'btn';
-  assembleBtn.innerHTML = `${icon('home', 16)} 拼接整屋`;
-  assembleBtn.addEventListener('click', () => openAssemblyModal(projectId, refresh));
-  ctx.actions.appendChild(assembleBtn);
+    const assembleBtn = document.createElement('button');
+    assembleBtn.className = 'btn';
+    assembleBtn.innerHTML = `${icon('home', 16)} 拼接整屋`;
+    assembleBtn.addEventListener('click', () => openAssemblyModal(projectId, refresh));
+    ctx.actions.appendChild(assembleBtn);
+  }
 
   ctx.host.innerHTML = `<div class="glass panel" style="height:100%">${'<div class="skeleton-line shimmer" style="width:40%"></div><div class="skeleton-line shimmer" style="width:70%"></div><div class="skeleton-block shimmer" style="flex:1;margin-top:12px"></div>'}</div>`;
 
@@ -86,7 +89,9 @@ export async function projectView(ctx, projectId) {
         </div>
         <div class="glass panel" style="padding:16px 20px;margin:15px 0;display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap">
           <div><strong>逐房间扫描 → 配对两侧门 → 生成整屋 Scan</strong><div class="muted" style="font-size:12px;margin-top:5px">所有房间放在同一项目；至少两个房间完成结构识别后，确认门对应关系即可拼接。</div></div>
-          <button class="btn btn-primary" id="project-assemble">${icon('home', 15)} 拼接整屋</button>
+          ${admin
+            ? `<button class="btn btn-primary" id="project-assemble">${icon('home', 15)} 拼接整屋</button>`
+            : '<span class="faint" style="font-size:12.5px">成员账号为只读，拼接整屋由机构管理员执行</span>'}
         </div>
         <div class="scan-list view-scroll" id="scan-list"></div>
       </div>`;
@@ -97,8 +102,10 @@ export async function projectView(ctx, projectId) {
       list.innerHTML = `<div class="glass panel">${emptyState({
         iconName: 'video',
         title: '还没有房间',
-        desc: '新建房间并上传一段手机拍摄的房间视频，系统将自动完成三维重建、结构识别与风险评估。',
-        action: '<button class="btn btn-primary" id="btn-empty-scan">新建房间</button>',
+        desc: admin
+          ? '新建房间并上传一段手机拍摄的房间视频，系统将自动完成三维重建、结构识别与风险评估。'
+          : '当前项目还没有房间。成员账号为只读，上传视频请由机构管理员操作。',
+        action: admin ? '<button class="btn btn-primary" id="btn-empty-scan">新建房间</button>' : '',
       })}</div>`;
       list.querySelector('#btn-empty-scan')?.addEventListener('click', () => createRoom(ctx, projectId, refresh));
       return;
@@ -192,8 +199,8 @@ export async function projectView(ctx, projectId) {
           ${done ? house ? '<span class="badge info">整屋模型 · 未评分</span>' : `<span class="badge ${scoreTone(score) === 'ok' ? 'ok' : scoreTone(score) === 'warn' ? 'warn' : scoreTone(score) === 'bad' ? 'bad' : ''}">综合评分 ${score === null || score === undefined ? '—' : fmtScore(score)}</span>` : `<span class="faint" style="font-size:12px">${scan.status === 'uploading' ? '等待视频上传' : '处理中…'}</span>`}
         </div>
         <div class="scan-actions">
-          ${scan.status === 'uploading' ? `<button class="btn btn-sm btn-primary" data-action="upload" data-id="${scan.id}">${icon('upload', 14)} 上传视频</button>` : ''}
-          ${failed && !house ? `<button class="btn btn-sm" data-action="upload" data-id="${scan.id}">${icon('refresh', 14)} 重新上传</button>` : ''}
+          ${admin && scan.status === 'uploading' ? `<button class="btn btn-sm btn-primary" data-action="upload" data-id="${scan.id}">${icon('upload', 14)} 上传视频</button>` : ''}
+          ${admin && failed && !house ? `<button class="btn btn-sm" data-action="upload" data-id="${scan.id}">${icon('refresh', 14)} 重新上传</button>` : ''}
           ${done ? `
             <button class="btn btn-sm btn-primary" data-action="open" data-id="${scan.id}">${icon('home', 14)} ${house ? '整屋工作台' : '房间工作台'}</button>
             ${house ? '' : `<button class="btn btn-sm" data-action="screen" data-id="${scan.id}">${icon('monitor', 14)} 大屏</button>
