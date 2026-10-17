@@ -63,6 +63,20 @@ if (-not $SkipSources) {
     } else {
         Write-Host '=== spatiallm already patched ==='
     }
+
+    # SpatialLM 的文本流默认只等 20 秒；大房间/较慢显卡可能在首个 token 前超时。
+    $inferenceTarget = 'E:\.PJs\spatiallm\inference.py'
+    $inferenceText = Get-Content $inferenceTarget -Raw
+    if ($inferenceText -match 'timeout=20\.0') {
+        $inferenceText = $inferenceText.Replace(
+            'timeout=20.0',
+            'timeout=float(os.environ.get("SPATIALLM_STREAM_TIMEOUT_SECONDS", "180"))'
+        )
+        Set-Content -Path $inferenceTarget -Value $inferenceText -NoNewline
+        Write-Host '=== applied spatiallm stream-timeout patch ==='
+    } else {
+        Write-Host '=== spatiallm stream-timeout patch already applied ==='
+    }
 }
 
 # ---------- 2. 环境 ----------

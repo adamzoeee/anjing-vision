@@ -245,21 +245,28 @@ export function openModal({ title, desc = '', body = '', actions = [], width, on
     if (event.target === backdrop) close();
   });
   overlayRoot.appendChild(backdrop);
-  const firstInput = modal.querySelector('input, textarea, select');
-  if (firstInput) setTimeout(() => firstInput.focus(), 60);
+  const initialFocus = modal.querySelector('input, textarea, select')
+    || modal.querySelector('.modal-actions button:not([disabled])');
+  if (initialFocus) setTimeout(() => initialFocus.focus(), 60);
   return { close, modal, body: bodyEl };
 }
 
 export function confirmDialog({ title, message, confirmText = '确认', danger = false }) {
   return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
     const { close } = openModal({
       title,
       body: `<div style="font-size:13.5px;color:var(--text-2);line-height:1.7">${esc(message)}</div>`,
       actions: [
-        { label: '取消', variant: 'btn-ghost', onClick: (c) => { c(); resolve(false); } },
-        { label: confirmText, variant: danger ? 'btn-danger' : 'btn-primary', onClick: (c) => { c(); resolve(true); } },
+        { label: '取消', variant: 'btn-ghost', onClick: (c) => { settle(false); c(); } },
+        { label: confirmText, variant: danger ? 'btn-danger' : 'btn-primary', onClick: (c) => { settle(true); c(); } },
       ],
-      onClose: () => resolve(false),
+      onClose: () => settle(false),
     });
     void close;
   });

@@ -1,7 +1,7 @@
 """SLAM3R 视频稠密重建适配层。
 
 调用独立的 slam3r conda 环境（E:\\PJs\\slam3r 源码 + siyan824 权重）：
-  1. ffmpeg 抽帧（默认 4fps，HEVC/H264/任意输入统一转 JPEG）；
+  1. ffmpeg 抽帧（默认 8fps，HEVC/H264/任意输入统一转 JPEG）；
   2. subprocess 运行 recon.py（offline 模式）逐帧 I2P → L2W 全局注册；
   3. 返回稠密彩色点云 PLY（scene_recon.ply）与逐帧点云/预测缓存。
 
@@ -36,7 +36,7 @@ SLAM3R_I2P_WEIGHTS = Path(
 SLAM3R_L2W_WEIGHTS = Path(
     os.getenv("SLAM3R_L2W_WEIGHTS", r"E:\.PJs\models\slam3r_l2w\slam3r_l2w.pth")
 )
-DEFAULT_FPS = float(os.getenv("SLAM3R_FPS", "4"))
+DEFAULT_FPS = float(os.getenv("SLAM3R_FPS", "8"))
 DEFAULT_KEYFRAME_STRIDE = int(os.getenv("SLAM3R_KEYFRAME_STRIDE", "3"))
 DEFAULT_WIN_R = int(os.getenv("SLAM3R_WIN_R", "5"))
 DEFAULT_NUM_SCENE_FRAME = int(os.getenv("SLAM3R_NUM_SCENE_FRAME", "10"))

@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -206,8 +206,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         name="console-static",
     )
 
-    @application.get("/console", include_in_schema=False)
-    @application.get("/console/", include_in_schema=False)
+    @application.get("/", include_in_schema=False)
     def console_page():
         from fastapi.responses import HTMLResponse
 
@@ -227,6 +226,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             html,
         )
         return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+    @application.get("/console", include_in_schema=False)
+    @application.get("/console/", include_in_schema=False)
+    def console_page_legacy():
+        return RedirectResponse("/", status_code=302)
 
     @application.get("/api/health")
     def health():

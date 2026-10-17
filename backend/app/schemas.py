@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
+from .reference_names import parse_reference_name
+
 
 def _strip_required(value: str) -> str:
     stripped = value.strip()
@@ -132,18 +134,53 @@ class ProjectOut(BaseModel):
     address: str
 
 
+class ProjectRenameIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+    _normalize_name = field_validator("name")(_strip_required)
+
+
 class ScanIn(BaseModel):
     defer_processing: bool = False
     capture_type: Literal["video", "photos"] = "video"
 
 
 class ReferenceMeasurement(BaseModel):
-    object_type: Literal["door", "bed", "sofa", "table", "cabinet", "bookshelf"]
-    dimension: Literal["length", "width", "height"]
+    name: str | None = Field(default=None, max_length=40)
+    object_type: Literal["door", "bed", "sofa", "table", "cabinet", "bookshelf"] | None = None
+    dimension: Literal["length", "width", "height"] | None = None
     meters: float = Field(gt=0.1, le=20.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _resolve_readable_name(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        raw_name = payload.get("name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            return payload
+
+        readable_name = raw_name.strip()
+        parsed = parse_reference_name(readable_name)
+        if parsed is None:
+            raise ValueError(
+                f"无法识别参考项“{readable_name}”。请填写如“床长度”“门宽度”或“门高度”。"
+            )
+        object_type, dimension = parsed
+        if payload.get("object_type") not in (None, "", object_type):
+            raise ValueError("参考项名称与标准物体类别不一致")
+        if payload.get("dimension") not in (None, "", dimension):
+            raise ValueError("参考项名称与标准尺寸方向不一致")
+        payload["name"] = readable_name
+        payload["object_type"] = object_type
+        payload["dimension"] = dimension
+        return payload
 
     @model_validator(mode="after")
     def _supported_dimension(self):
+        if self.object_type is None or self.dimension is None:
+            raise ValueError("需要提供参考项名称，或同时提供物体类别与尺寸方向")
         allowed = {
             "door": {"width", "height"},
             "bed": {"length", "width", "height"},
@@ -158,7 +195,7 @@ class ReferenceMeasurement(BaseModel):
 
 
 class ReferenceMeasurementsIn(BaseModel):
-    measurements: list[ReferenceMeasurement] = Field(min_length=2, max_length=3)
+    measurements: list[ReferenceMeasurement] = Field(min_length=1, max_length=3)
 
     @model_validator(mode="after")
     def _distinct_references(self):

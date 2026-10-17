@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     auto_create_tables: bool = True
     default_page_size: int = Field(default=20, ge=1, le=100)
     max_page_size: int = Field(default=100, ge=1, le=500)
-    max_upload_bytes: int = Field(default=512 * 1024 * 1024, ge=1024)
+    max_upload_bytes: int = Field(default=1536 * 1024 * 1024, ge=1024)
     host: str = "0.0.0.0"
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

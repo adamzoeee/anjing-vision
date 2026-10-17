@@ -40,3 +40,22 @@ def test_validation_reference_is_not_used_to_compute_scale():
     check = result["quality"]["validation"][0]
     assert check["predicted_m"] == .5
     assert round(check["absolute_error_m"], 3) == .05
+
+
+def test_single_bed_reference_calibrates_scene_with_low_confidence():
+    structure = {
+        "room": {"height_m": 2.6, "bounds_xy": {"min": [0, 0], "max": [3, 2]}},
+        "doors": [],
+        "windows": [],
+        "objects": [{"label": "bed", "instance_id": "bed_01", "size": [1.0, .8, .3]}],
+    }
+
+    result = build_measurements(structure, [
+        {"object_type": "bed", "dimension": "length", "meters": 2.0},
+    ])
+
+    assert result["scale"]["global_rescale_applied"] is True
+    assert result["scale"]["status"] == "metric_references"
+    assert result["scale"]["single_reference"] is True
+    assert result["scale"]["confidence"] == "low"
+    assert result["objects"][0]["length_m"] == 2.0

@@ -219,17 +219,23 @@ export function loginView(ctx) {
               </div>
             </div>` : ''}
             <div class="field">
-              <label for="login-email">邮箱</label>
+              <div class="field-label-row">
+                <label for="login-email">邮箱</label>
+                <span class="demo-credential" id="login-email-demo">演示：demo@anjing-vision.com</span>
+              </div>
               <div class="input-wrap">
                 ${icon('user', 16)}
-                <input class="input" id="login-email" type="email" autocomplete="username" maxlength="120" placeholder="you@example.com" required>
+                <input class="input" id="login-email" type="email" autocomplete="username" maxlength="120" placeholder="you@example.com" aria-describedby="login-email-demo" required>
               </div>
             </div>
             <div class="field">
-              <label for="login-password">密码</label>
+              <div class="field-label-row">
+                <label for="login-password">密码</label>
+                <span class="demo-credential" id="login-password-demo">演示：demo@anjing-vision.com</span>
+              </div>
               <div class="input-wrap">
                 ${icon('shield', 16)}
-                <input class="input" id="login-password" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" maxlength="64" minlength="${registering ? '8' : '1'}" placeholder="${registering ? '至少 8 位' : '••••••••'}" required>
+                <input class="input" id="login-password" type="password" autocomplete="${registering ? 'new-password' : 'current-password'}" maxlength="64" minlength="${registering ? '8' : '1'}" placeholder="${registering ? '至少 8 位' : '••••••••'}" aria-describedby="login-password-demo" required>
               </div>
             </div>
             ${registering ? `

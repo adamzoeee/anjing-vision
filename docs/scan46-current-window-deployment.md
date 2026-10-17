@@ -18,7 +18,7 @@ powershell -ExecutionPolicy Bypass -File backend\scripts\deploy_scan46.ps1 -Full
 登录用仓库演示账户（机构「演示机构」，账号 `demo@anjing-vision.com`，密码与账号相同），或接手方自己的账号。
 演示登录旁路已于 2026-10-16 删除，公开部署请按生产说明配置真实账号和密钥，详见[账号与权限](accounts-and-permissions.md)。
 
-然后重启后端，浏览器打开 `http://127.0.0.1:8000/console` 登录工作台。业务界面只有工作台，没有独立前端服务；
+然后重启后端，浏览器打开 `http://127.0.0.1:8000/` 登录工作台。业务界面只有工作台，没有独立前端服务；
 工作台入口页与静态资产每次回源校验，旧浏览器缓存不需要手工清理。
 
 ## 核对

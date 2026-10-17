@@ -317,7 +317,7 @@ def _run_slam3r_pipeline(
     )
 
     # ---- 4.3. 用户实测参考值 → 统一米/当前单位比例 → 长度结果 ----
-    # 前两个参考用于求统一比例；第三个（如有）保留为独立验收，避免拿答案自测。
+    # 单条参考允许低置信度标定；两条以上用前两条求统一比例，第三条作为独立验收。
     from pipeline.measurement_builder import build_measurements_file
     reference_measurements = list(scan.reference_measurements or [])
     validation_keys = {

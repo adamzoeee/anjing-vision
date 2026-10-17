@@ -1,4 +1,5 @@
 """Local and MinIO media storage with bounded streaming writes."""
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
@@ -137,6 +138,31 @@ def delete_media(relative_path: str) -> None:
     target = _local_root() / relative_path
     if target.is_file():
         target.unlink(missing_ok=True)
+
+
+def delete_scan_artifacts(scan_id: int) -> None:
+    """Permanently remove one scan's media, point clouds and intermediate files."""
+    if s.storage_backend == "minio":
+        client = _minio_client()
+        prefix = f"media/{scan_id}/"
+        for item in client.list_objects(s.minio_bucket, prefix=prefix, recursive=True):
+            client.remove_object(s.minio_bucket, item.object_name)
+
+    root = Path(s.data_dir).resolve()
+    targets = [
+        root / "media" / str(scan_id),
+        root / "work" / str(scan_id),
+        root / "reports" / str(scan_id),
+        root / "cache" / "media" / str(scan_id),
+    ]
+    for target in targets:
+        resolved = target.resolve()
+        if not resolved.is_relative_to(root):
+            raise OSError("扫描产物路径越界")
+        if resolved.is_dir():
+            shutil.rmtree(resolved)
+        elif resolved.is_file():
+            resolved.unlink(missing_ok=True)
 
 
 def media_path(relative_path: str) -> Path:

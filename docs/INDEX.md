@@ -55,7 +55,7 @@
 | 三维查看 | `/preview/{scan_id}`、`/api/preview/{scan_id}/manifest.json` | [preview.py](../backend/app/routers/preview.py)、[viewer.js](../backend/app/static/preview/viewer.js) |
 | 展示层 | 点云预览的六个结构展示层 | [visual_layers.js](../backend/app/static/preview/visual_layers.js) |
 | 正式评估数据 | `/api/preview/{scan_id}/spatial-metrics.json`、`risk-assessment.json` | [preview.py](../backend/app/routers/preview.py) |
-| 单房间 AI 助手 | `/console#/scans/{scan_id}/assistant`；`POST /api/assistant/scans/{scan_id}/proposals`、`schemes` | [assistant.js](../backend/app/static/console/js/views/assistant.js)、[assistant_proposals.py](../backend/app/routers/assistant_proposals.py)、[renovation.py](../backend/app/routers/renovation.py)；2–3 案独立框架、前后对比、证据与保存回读 |
+| 单房间 AI 助手 | `/#/scans/{scan_id}/assistant`；`POST /api/assistant/scans/{scan_id}/proposals`、`schemes` | [assistant.js](../backend/app/static/console/js/views/assistant.js)、[assistant_proposals.py](../backend/app/routers/assistant_proposals.py)、[renovation.py](../backend/app/routers/renovation.py)；2–3 案独立框架、前后对比、证据与保存回读 |
 | 历史沙盒接口 | `/api/assistant/scans/{scan_id}/suggestions`、`solve`、`simulate` | [renovation.py](../backend/app/routers/renovation.py)；兼容保留，工作台新助手不调用 |
 | API 客户端与产物解析 | JWT 会话、二进制资源、业务接口 | [api.js](../backend/app/static/console/js/api.js) |
 | 历史对比 | `GET /api/reports/compare` | [reports.py](../backend/app/routers/reports.py) |
@@ -131,7 +131,7 @@
 
 后端 pytest 从 `backend` 工作目录运行。文档中的历史测试数字有对应验收时间和范围，不替代当前全量回归。
 
-> 2026-10-16：Flutter 客户端（原 `app/`）已移除，业务界面只剩 `/console` 工作台；`app/lib/**`、`app/test/**` 等路径只存在于 git 历史与早期设计文档中。账号与权限规则见[账号与权限](accounts-and-permissions.md)。
+> 2026-10-16：Flutter 客户端（原 `app/`）已移除，业务界面只剩根路径工作台；`app/lib/**`、`app/test/**` 等路径只存在于 git 历史与早期设计文档中。账号与权限规则见[账号与权限](accounts-and-permissions.md)。
 
 ## 文档索引
 

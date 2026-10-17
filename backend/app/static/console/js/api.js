@@ -45,8 +45,15 @@ async function readError(res) {
   let message = `请求失败（HTTP ${res.status}）`;
   try {
     const data = await res.json();
-    if (data?.error?.message) message = data.error.message;
-    else if (typeof data?.detail === 'string') message = data.detail;
+    if (data?.error?.message) {
+      const firstDetail = Array.isArray(data.error.details) ? data.error.details[0]?.message : '';
+      message = firstDetail
+        ? String(firstDetail).replace(/^Value error,\s*/, '')
+        : data.error.message;
+    } else if (typeof data?.detail === 'string') message = data.detail;
+    else if (Array.isArray(data?.detail) && data.detail[0]?.msg) {
+      message = String(data.detail[0].msg).replace(/^Value error,\s*/, '');
+    }
   } catch { /* 保留默认信息 */ }
   return message;
 }
@@ -173,12 +180,15 @@ export const api = {
   listProjects: (limit = 60) => request(`/api/projects?limit=${limit}`),
   createProject: (name, address) => request('/api/projects', { method: 'POST', json: { name, address } }),
   getProject: (id) => request(`/api/projects/${id}`),
+  renameProject: (id, name) => request(`/api/projects/${id}`, { method: 'PATCH', json: { name } }),
+  deleteProject: (id) => request(`/api/projects/${id}`, { method: 'DELETE' }),
   listScans: (projectId, limit = 60) => request(`/api/projects/${projectId}/scans?limit=${limit}`),
   createScan: (projectId, { deferProcessing = false } = {}) => request(`/api/projects/${projectId}/scans`, { method: 'POST', json: { capture_type: 'video', defer_processing: deferProcessing } }),
   importHouseDemo: (projectId) => request(`/api/projects/${projectId}/scans/house-demo`, { method: 'POST' }),
   getHouseRooms: (projectId) => request(`/api/projects/${projectId}/scans/house/rooms`),
   assembleHouse: (projectId, payload) => request(`/api/projects/${projectId}/scans/house`, { method: 'POST', json: payload }),
   getScan: (id) => request(`/api/scans/${id}`),
+  deleteScan: (id) => request(`/api/scans/${id}`, { method: 'DELETE' }),
   uploadVideo: (scanId, file, onProgress, { deferProcessing = false } = {}) => uploadWithProgress(`/api/scans/${scanId}/upload${deferProcessing ? '?defer_processing=true' : ''}`, file, onProgress),
   startScan: (scanId) => request(`/api/scans/${scanId}/start`, { method: 'POST' }),
   putReferences: (scanId, measurements) => request(`/api/scans/${scanId}/references`, { method: 'PUT', json: { measurements } }),

@@ -9,8 +9,13 @@ from ..deps import get_org_scope, require_admin
 from ..house_scan import load_house_package, write_house_scan
 from ..room_assembly import read_room, room_catalog, solve_assembly, write_assembly
 from ..models import Project, Scan, User
-from ..schemas import ProjectIn, ProjectOut, ScanIn, ScanOut
+from ..schemas import ProjectIn, ProjectOut, ProjectRenameIn, ScanIn, ScanOut
+from ..storage import delete_scan_artifacts
 router = APIRouter()
+
+PROCESSING_SCAN_STATUSES = {
+    "uploading", "extracting", "reconstructing", "cleaning", "understanding", "importing",
+}
 
 
 class DoorLinkIn(BaseModel):
@@ -72,6 +77,43 @@ def get_project(project_id: int, db: Session = Depends(get_db), org_id: int = De
     if p is None or p.org_id != org_id:
         raise HTTPException(404, "项目不存在")
     return p
+
+
+@router.patch("/{project_id}", response_model=ProjectOut)
+def rename_project(
+    project_id: int,
+    data: ProjectRenameIn,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    project = db.get(Project, project_id)
+    if project is None or project.org_id != admin.org_id:
+        raise HTTPException(404, "项目不存在")
+    project.name = data.name
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+@router.delete("/{project_id}", status_code=204)
+def delete_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    project = db.get(Project, project_id)
+    if project is None or project.org_id != admin.org_id:
+        raise HTTPException(404, "项目不存在")
+    scans = list(project.scans)
+    if any(scan.status in PROCESSING_SCAN_STATUSES for scan in scans):
+        raise HTTPException(409, "项目内还有正在处理的扫描，请等待完成后再删除")
+    try:
+        for scan in scans:
+            delete_scan_artifacts(scan.id)
+    except OSError as exc:
+        raise HTTPException(500, "项目文件清理失败，记录已保留，请重试") from exc
+    db.delete(project)
+    db.commit()
 
 
 @router.post("/{project_id}/scans", response_model=ScanOut)

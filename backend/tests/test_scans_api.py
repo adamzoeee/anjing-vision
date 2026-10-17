@@ -66,6 +66,68 @@ def test_reference_measurements_are_saved_before_upload(client):
     assert response.json()["reference_measurements"][0]["meters"] == 2.05
 
 
+def test_single_bed_length_reference_is_accepted(client):
+    h = _auth(client)
+    pid = client.post("/api/projects", json={"name": "单参考标定"}, headers=h).json()["id"]
+    sid = client.post(
+        f"/api/projects/{pid}/scans", json={"capture_type": "video"}, headers=h
+    ).json()["id"]
+
+    response = client.put(
+        f"/api/scans/{sid}/references",
+        headers=h,
+        json={"measurements": [
+            {"object_type": "bed", "dimension": "length", "meters": 2.0},
+        ]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reference_measurements"] == [
+        {"object_type": "bed", "dimension": "length", "meters": 2.0}
+    ]
+
+
+def test_named_reference_is_normalized_and_saved(client):
+    h = _auth(client)
+    pid = client.post("/api/projects", json={"name": "自由参考名称"}, headers=h).json()["id"]
+    sid = client.post(
+        f"/api/projects/{pid}/scans", json={"capture_type": "video"}, headers=h
+    ).json()["id"]
+
+    response = client.put(
+        f"/api/scans/{sid}/references",
+        headers=h,
+        json={"measurements": [
+            {"name": "床长度", "meters": 2.05},
+        ]},
+    )
+
+    assert response.status_code == 200
+    saved = response.json()["reference_measurements"][0]
+    assert saved["object_type"] == "bed"
+    assert saved["dimension"] == "length"
+    assert saved["name"] == "床长度"
+    assert saved["meters"] == 2.05
+
+
+def test_unknown_named_reference_is_rejected_with_readable_error(client):
+    h = _auth(client)
+    pid = client.post("/api/projects", json={"name": "未知参考名称"}, headers=h).json()["id"]
+    sid = client.post(
+        f"/api/projects/{pid}/scans", json={"capture_type": "video"}, headers=h
+    ).json()["id"]
+
+    response = client.put(
+        f"/api/scans/{sid}/references",
+        headers=h,
+        json={"measurements": [{"name": "电视柜对角线", "meters": 2.05}]},
+    )
+
+    assert response.status_code == 422
+    assert "无法识别参考项" in response.text
+    assert "床长度" in response.text
+
+
 def test_reference_measurements_validate_bounds(client):
     h = _auth(client)
     pid = client.post("/api/projects", json={"name": "非法尺寸"}, headers=h).json()["id"]
@@ -275,18 +337,17 @@ def test_upload_sanitizes_filename(client, tmp_path, monkeypatch):
     assert r2.json()["media"].split("/")[-1].startswith("media")
 
 
-def test_upload_over_limit_rejected(client):
-    """超过 512MB 上限返回 413。"""
+def test_upload_over_limit_rejected(client, monkeypatch):
+    """超过配置的上限返回 413。"""
     h = _auth(client)
     pid = client.post("/api/projects", json={"name": "王奶奶家"}, headers=h).json()["id"]
     sid = client.post(f"/api/projects/{pid}/scans", json={"capture_type": "video"}, headers=h).json()["id"]
-    # 用小上限验证逻辑：直接构造超限数据（512MB+1 太大，用 monkeypatch 缩小常量）
+    # 用小上限验证逻辑，避免测试中构造数 GB 的超大文件。
     from app.routers import scans as scans_mod
-    scans_mod.MAX_UPLOAD_BYTES = 100
+    monkeypatch.setattr(scans_mod, "MAX_UPLOAD_BYTES", 100)
     r = client.post(f"/api/scans/{sid}/upload", headers=h,
                     files={"files": ("big.mp4", b"x" * 101, "video/mp4")})
     assert r.status_code == 413
-    scans_mod.MAX_UPLOAD_BYTES = 512 * 1024 * 1024
 
 
 def test_photos_upload_multiple_files(client, tmp_path, monkeypatch):

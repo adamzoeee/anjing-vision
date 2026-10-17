@@ -41,7 +41,7 @@ def _measured_dimension(item: dict, object_type: str, dimension: str) -> float |
 
 
 def estimate_reference_scale(structure: dict, references: Iterable[dict], *, tolerance: float = 0.15) -> tuple[float | None, dict]:
-    """真实米数 / 当前结构单位，使用至少两个一致参考求统一比例。"""
+    """真实米数 / 当前结构单位。两条以上做一致性校验，单条降级为低置信度标定。"""
     candidates = []
     details = []
     for reference in references:
@@ -54,8 +54,17 @@ def estimate_reference_scale(structure: dict, references: Iterable[dict], *, tol
         scale = float(reference["meters"]) / measured
         candidates.append(scale)
         details.append({**reference, "status": "used", "model_units": measured, "scale": scale})
-    if len(candidates) < 2:
-        return None, {"status": "failed", "reason": "至少需要两个成功测得的参考尺寸", "references": details}
+    if not candidates:
+        return None, {"status": "failed", "reason": "没有成功匹配的参考尺寸", "references": details}
+    if len(candidates) == 1:
+        return candidates[0], {
+            "status": "metric_references",
+            "scale": candidates[0],
+            "single_reference": True,
+            "confidence": "low",
+            "used_count": 1,
+            "references": details,
+        }
     median = float(sorted(candidates)[len(candidates) // 2]) if len(candidates) % 2 else float(sum(sorted(candidates)[len(candidates)//2-1:len(candidates)//2+1]) / 2)
     disagreement = max(abs(value - median) / median for value in candidates)
     if disagreement > tolerance:
@@ -69,7 +78,14 @@ def estimate_reference_scale(structure: dict, references: Iterable[dict], *, tol
                 "absolute_error_m": abs(predicted - actual),
                 "relative_error": abs(predicted - actual) / actual,
             })
-    return median, {"status": "metric_references", "scale": median, "max_relative_disagreement": disagreement, "references": details}
+    return median, {
+        "status": "metric_references",
+        "scale": median,
+        "single_reference": False,
+        "confidence": "medium",
+        "max_relative_disagreement": disagreement,
+        "references": details,
+    }
 
 
 def _scaled_structure(structure: dict, scale: float) -> dict:
@@ -95,7 +111,7 @@ def build_measurements(
     *,
     validation_keys: set[tuple[str, str]] | None = None,
 ) -> dict:
-    """由至少两个实测参考值求统一米/当前单位比例，再换算全部结构坐标。"""
+    """由一条或多条实测参考值求统一米/当前单位比例，再换算全部结构坐标。"""
     references = [dict(item) for item in references]
     validation_keys = validation_keys or set()
     calibration = []
@@ -105,6 +121,7 @@ def build_measurements(
         target.append(item)
 
     scale, scale_quality = estimate_reference_scale(structure, calibration)
+    single_reference = bool(scale_quality.get("single_reference"))
     metric_structure = _scaled_structure(structure, scale) if scale is not None else structure
     room = metric_structure.get("room", {})
     bounds = room.get("bounds_xy", {})
@@ -113,7 +130,7 @@ def build_measurements(
     room_result = {
         "length_m": horizontal[0], "width_m": horizontal[1],
         "height_m": float(room.get("height_m", 0)) or None,
-        "confidence": "medium", "source": "aligned_pointcloud_bounds",
+        "confidence": "low" if single_reference else "medium", "source": "aligned_pointcloud_bounds",
     }
 
     openings = []
@@ -124,7 +141,7 @@ def build_measurements(
             openings.append({
                 "id": f"{singular}_{index:02d}", "type": singular,
                 **dims, "center": source.get("center"),
-                "confidence": "medium" if scale is not None else "unknown",
+                "confidence": ("low" if single_reference else "medium") if scale is not None else "unknown",
                 "source": "metric_reference_scale" if scale is not None else "unscaled_geometry",
             })
 
@@ -134,7 +151,7 @@ def build_measurements(
         objects.append({
             "id": source.get("instance_id"), "type": source.get("label"),
             **dims, "center": source.get("center"), "rotation_z_deg": source.get("rotation_z_deg", 0),
-            "confidence": "medium" if scale is not None and source.get("geometry_status") == "verified" else "low",
+            "confidence": ("low" if single_reference else "medium") if scale is not None and source.get("geometry_status") == "verified" else "low",
             "source": "metric_reference_scale" if scale is not None else "unscaled_geometry",
         })
 

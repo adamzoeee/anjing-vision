@@ -2,7 +2,7 @@
 
 [返回项目首页](../README.md) · [项目索引](INDEX.md)
 
-本页描述工作台账号的注册、登录、权限与演示账户。工作台（`/console`）是业务界面。
+本页描述工作台账号的注册、登录、权限与演示账户。工作台（根路径 `/`）是业务界面。
 
 ## 层级与归属
 
@@ -32,6 +32,8 @@ Organization 机构 ←── 数据隔离边界（project.org_id 决定可见�
 | 项目 / 扫描 / 报告 / PDF / 点云 / 结构图 / 通行图 读取 | ✅ | ✅ |
 | 改造建议、沙盒模拟 `/simulate`、`/solve`（只读计算） | ✅ | ✅ |
 | 新建项目、新建房间扫描、上传视频、写参考尺寸 | ✅ | ❌ 403 |
+| 重命名项目、删除项目及其全部 Scan 和服务器产物 | ✅ | ❌ 403 |
+| 删除尚未提交素材或已完成的 Scan（同步清理媒体与中间产物） | ✅ | ❌ 403 |
 | 整屋拼接、导入合成家庭演示包 | ✅ | ❌ 403 |
 | 保存 / 改名 / 删除改造方案、导出方案 PDF | ✅ | ❌ 403 |
 | 机构成员列表、建号、改名、重置密码、停用启用 | ✅ | ❌ 403 |
@@ -45,6 +47,9 @@ Organization 机构 ←── 数据隔离边界（project.org_id 决定可见�
 | `POST /api/auth/login` | 登录，唯一入口 |
 | `POST /api/auth/password` | 本人改密，需 `current_password` |
 | `GET /api/auth/me` | 当前账号画像（含 `role`、`is_active`、`org_name`） |
+| `PATCH /api/projects/{id}` | 管理员重命名项目 |
+| `DELETE /api/projects/{id}` | 管理员永久删除项目及全部 Scan；项目内有处理中扫描时返回 409 |
+| `DELETE /api/scans/{id}` | 管理员删除无素材或已完成的 Scan；处理中或已有素材但未完成时返回 409 |
 | `GET /api/users` | 本机构成员列表 |
 | `POST /api/users` | 建号，角色固定为 member，可用 `disabled_at` 停用 |
 | `PATCH /api/users/{id}` | 改名 / 启用 / 停用 |

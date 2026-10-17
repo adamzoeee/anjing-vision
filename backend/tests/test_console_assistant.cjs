@@ -122,7 +122,7 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
       if (url.pathname.endsWith('/suggestions')) return json({ suggestions: [] });
       return json({ detail: '合成测试无此资源' }, 404);
     }
-    const relative = url.pathname === '/console' ? 'console/index.html' : url.pathname.replace(/^\/(console|preview)-static\//, '$1/');
+    const relative = url.pathname === '/' ? 'console/index.html' : url.pathname.replace(/^\/(console|preview)-static\//, '$1/');
     const file = path.resolve(staticRoot, relative);
     if (!file.startsWith(staticRoot + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
     const type = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css' }[path.extname(file)] || 'application/octet-stream';
@@ -138,7 +138,7 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
     page.setDefaultTimeout(10000);
     page.setDefaultNavigationTimeout(10000);
     await page.addInitScript(() => localStorage.setItem('anjing.console.session', JSON.stringify({ token: 'synthetic-test', user: { name: '测试用户', role: 'admin' } })));
-    const base = `http://127.0.0.1:${server.address().port}/console`;
+    const base = `http://127.0.0.1:${server.address().port}/`;
     await page.goto(`${base}#/scans/7`);
     await page.locator('#btn-room-assistant').waitFor();
     assert.equal(await page.getByText('AI 改造模拟', { exact: true }).count(), 0);

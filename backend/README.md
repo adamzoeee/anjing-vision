@@ -12,7 +12,7 @@
 4. 复制 `.env.example` 为 `.env`，确认 `SLAM3R_*` / `SPATIALLM_*` 路径，设置 `TASK_SYNC=true`
 5. `uvicorn app.main:app --reload` 启动 API（文档：http://localhost:8000/docs）
 6. 端到端管道：`python scripts/run_pipeline.py --input 你的视频.mp4 --outdir out/`
-7. 业务界面：`http://localhost:8000/console`（大屏工作台，唯一业务入口；登录后进入项目与房间工作台查看点云、结构与报告）
+7. 业务界面：`http://localhost:8000/`（大屏工作台，唯一业务入口；登录后进入项目与房间工作台查看点云、结构与报告）
 
 ## Docker Compose（生产形态：PostgreSQL + Redis + MinIO + GPU worker）
 
@@ -27,7 +27,7 @@
 ## 架构
 
 ```
-Web 大屏工作台（/console）→ FastAPI (REST+JWT) → 管道：ffmpeg 抽帧(4fps)
+Web 大屏工作台（/）→ FastAPI (REST+JWT) → 管道：ffmpeg 抽帧(8fps)
 → SLAM3R（slam3r conda 环境，稠密点云）→ Open3D 后处理（去噪/z-up/贴轴/层高缩放）
 → SpatialLM1.1-Qwen-0.5B（spatiallm conda 环境，墙/门/窗/家具 3D 框）
 → three.js 高密度点云预览（工作台内嵌查看器）

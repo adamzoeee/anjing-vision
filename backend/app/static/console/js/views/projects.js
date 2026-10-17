@@ -3,7 +3,7 @@
 import { api, isAdmin } from '../api.js?v=house-scan-1';
 import { icon } from '../icons.js';
 import {
-  esc, toast, countUp, openModal, blueprintSVG, timeAgo, fmtScore, scoreTone,
+  esc, toast, countUp, openModal, confirmDialog, blueprintSVG, timeAgo, fmtScore, scoreTone,
   emptyState,
 } from '../ui.js';
 import { scoreRingHTML, mountRings } from '../charts.js';
@@ -112,7 +112,15 @@ export async function projectsView(ctx) {
     ctx.host.querySelectorAll('.project-card').forEach((card) => {
       const go = () => navigate(`#/projects/${card.dataset.id}`);
       card.addEventListener('click', go);
-      card.addEventListener('keydown', (event) => { if (event.key === 'Enter') go(); });
+    });
+    ctx.host.querySelectorAll('[data-project-action]').forEach((button) => {
+      button.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const project = projects.find((item) => item.id === Number(button.dataset.id));
+        if (!project) return;
+        if (button.dataset.projectAction === 'rename') openRenameProject(project);
+        if (button.dataset.projectAction === 'delete') await removeProject(project, button);
+      });
     });
     ctx.host.querySelector('#card-new-project')?.addEventListener('click', () => openCreateProject(load));
     ctx.host.querySelector('#btn-empty-new')?.addEventListener('click', () => openCreateProject(load));
@@ -125,7 +133,7 @@ export async function projectsView(ctx) {
     const score = latest ? reportByScan.get(latest.id)?.score ?? null : null;
     const lastUpdate = scans.length ? timeAgo(scans[0].created_at || '') : '';
     return `
-      <div class="project-card glass rise" style="--i:${index + 4}" data-id="${project.id}" role="button" tabindex="0">
+      <article class="project-card glass rise" style="--i:${index + 4}" data-id="${project.id}">
         <div class="pc-cover">
           ${blueprintSVG(project.id)}
           <div class="pc-cover-fade"></div>
@@ -141,13 +149,80 @@ export async function projectsView(ctx) {
             <span class="m-item">${icon('home', 14)} ${scans.length} 间房间</span>
             <span class="m-item">${icon('checkCircle', 14)} ${done.length} 间已完成</span>
           </div>
+          ${admin ? `
+          <div class="pc-manage">
+            <button class="btn btn-sm" type="button" data-project-action="rename" data-id="${project.id}" aria-label="重命名项目 ${esc(project.name)}">${icon('pen', 14)} 重命名</button>
+            <button class="btn btn-sm btn-danger" type="button" data-project-action="delete" data-id="${project.id}" aria-label="删除项目 ${esc(project.name)}">${icon('trash', 14)} 删除</button>
+          </div>` : ''}
           <div class="pc-foot">
             ${icon('clock', 13)} ${lastUpdate ? `最近更新 ${esc(lastUpdate)}` : '尚未创建房间'}
             <span class="grow"></span>
-            进入工作台 ${icon('arrowRight', 14)}
+            <button class="pc-open" type="button" aria-label="进入项目 ${esc(project.name)}">进入工作台 ${icon('arrowRight', 14)}</button>
           </div>
         </div>
-      </div>`;
+      </article>`;
+  }
+
+  function openRenameProject(project) {
+    openModal({
+      title: '重命名项目',
+      desc: `项目编号 P${String(project.id).padStart(3, '0')}`,
+      body: `
+        <div class="field">
+          <label for="rename-project-name">项目名称</label>
+          <input class="input" id="rename-project-name" maxlength="120" value="${esc(project.name)}">
+        </div>
+        <div class="field error hidden" id="rename-project-error" role="alert"></div>`,
+      actions: [
+        { label: '取消', variant: 'btn-ghost', onClick: (close) => close() },
+        {
+          label: '保存名称',
+          variant: 'btn-primary',
+          onClick: async (close, modal) => {
+            const input = modal.querySelector('#rename-project-name');
+            const errorEl = modal.querySelector('#rename-project-error');
+            const name = input.value.trim();
+            if (!name) {
+              errorEl.textContent = '请输入项目名称';
+              errorEl.classList.remove('hidden');
+              input.focus();
+              return;
+            }
+            const button = modal.querySelector('.modal-actions .btn-primary');
+            button.disabled = true;
+            try {
+              await api.renameProject(project.id, name);
+              close();
+              toast('ok', '项目已重命名', name);
+              await load();
+            } catch (error) {
+              errorEl.textContent = error?.message || '重命名失败';
+              errorEl.classList.remove('hidden');
+              button.disabled = false;
+            }
+          },
+        },
+      ],
+    });
+  }
+
+  async function removeProject(project, button) {
+    const confirmed = await confirmDialog({
+      title: `删除项目：${project.name}`,
+      message: '这会永久删除项目及其全部 Scan、视频、点云、报告、改造方案和中间产物，且不可恢复。',
+      confirmText: '确认删除',
+      danger: true,
+    });
+    if (!confirmed) return;
+    button.disabled = true;
+    try {
+      await api.deleteProject(project.id);
+      toast('ok', '项目已删除', project.name);
+      await load();
+    } catch (error) {
+      toast('error', '删除失败', error?.message || '');
+      button.disabled = false;
+    }
   }
 }
 

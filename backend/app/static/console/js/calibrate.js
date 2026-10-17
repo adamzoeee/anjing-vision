@@ -41,7 +41,7 @@
   function ensureSession() {
     var existing = token();
     if (existing) return Promise.resolve(existing);
-    return Promise.reject(new Error('没有控制台登录态，请先在 /console 登录'));
+    return Promise.reject(new Error('没有控制台登录态，请先在网站首页登录'));
   }
 
   /* ---------- 参数 ---------- */
@@ -620,6 +620,6 @@
   /* 没登录时的提示：先到控制台登录，页面复用同一个 localStorage 会话 */
   function showLoginHint() {
     statusEl.style.display = '';
-    statusEl.innerHTML = '当前浏览器没有控制台登录态。<br>请先 <a href="/console" style="color:#7dd3fc">打开控制台</a> 登录后回到本页。';
+    statusEl.innerHTML = '当前浏览器没有控制台登录态。<br>请先 <a href="/" style="color:#7dd3fc">打开控制台</a> 登录后回到本页。';
   }
 })();

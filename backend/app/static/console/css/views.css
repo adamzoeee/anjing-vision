@@ -232,6 +232,13 @@
 .login-card .lc-sub { color: var(--text-3); font-size: 13px; margin-top: 5px; }
 .login-form { display: flex; flex-direction: column; gap: 18px; margin-top: 10px; }
 .login-form .btn-lg { margin-top: 8px; }
+.login-form .field-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.login-form .demo-credential {
+  min-width: 0;
+  color: var(--text-2);
+  font: 500 11.5px/1.4 var(--font-mono);
+  white-space: nowrap;
+}
 .login-switch { margin-top: 21px; color: var(--text-3); font-size: 13px; text-align: center; }
 .login-switch a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; transition: color 220ms var(--ease-soft); }
 .login-switch a:hover { color: var(--accent-2); }
@@ -318,11 +325,13 @@
 .pc-score { position: absolute; right: 16px; top: 14px; }
 .pc-body { padding: 18px 20px 19px; }
 .pc-title { display: flex; align-items: center; gap: 10px; }
-.pc-title h3 { font-size: 17px; font-weight: 650; }
+.pc-title h3 { min-width: 0; flex: 1; overflow: hidden; font-size: 17px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.pc-title .badge { flex: none; }
 .pc-addr { margin-top: 5px; font-size: 12.5px; color: var(--text-3); min-height: 19px; }
 .pc-meta { display: flex; align-items: center; gap: 14px; margin-top: 15px; font-size: 12.5px; color: var(--text-2); }
 .pc-meta .m-item { display: flex; align-items: center; gap: 7px; }
 .pc-meta .icon { color: var(--text-4); }
+.pc-manage { display: flex; gap: 8px; margin-top: 14px; }
 .pc-foot {
   display: flex;
   align-items: center;
@@ -334,6 +343,18 @@
   color: var(--text-3);
   transition: color 320ms var(--ease-glide);
 }
+.pc-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.pc-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
 .project-card:hover .pc-foot { color: var(--accent); }
 
 .new-project-card {
@@ -415,6 +436,8 @@
 .scan-progress .sp-meta { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-3); }
 .scan-progress .sp-meta .num { color: var(--text-2); }
 .scan-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.scan-actions .scan-delete { color: var(--bad); }
+.scan-actions .scan-delete:hover { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 55%, transparent); }
 
 /* ---- 房间工作台 ---- */
 .room-layout { height: 100%; display: flex; flex-direction: column; min-height: 0; }
@@ -764,6 +787,88 @@
 /* 项目详情滚动区 */
 .view-project { height: 100%; display: flex; flex-direction: column; min-height: 0; }
 .scan-list { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* 上传弹窗：自由名称参考尺寸 */
+.upload-reference-panel summary {
+  user-select: none;
+}
+.reference-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.reference-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(116px, 0.65fr) 38px;
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--panel-solid) 38%, transparent);
+}
+.reference-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.reference-field-label {
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.2;
+}
+.reference-row .input {
+  height: 38px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.reference-value {
+  position: relative;
+  display: block;
+}
+.reference-value .input {
+  padding-right: 34px;
+  font-variant-numeric: tabular-nums;
+}
+.reference-unit {
+  position: absolute;
+  top: 50%;
+  right: 11px;
+  transform: translateY(-50%);
+  color: var(--text-3);
+  font-size: 12px;
+  pointer-events: none;
+}
+.reference-remove {
+  width: 38px;
+  height: 38px;
+}
+.reference-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+.reference-count {
+  color: var(--text-4);
+  font: 500 11px/1 var(--font-mono);
+  letter-spacing: 0.02em;
+}
+@media (max-width: 560px) {
+  .reference-row {
+    grid-template-columns: minmax(0, 1fr) 38px;
+  }
+  .reference-field-measure {
+    grid-column: 1;
+  }
+  .reference-remove {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+}
 
 @media (max-width: 1279px) {
   .app-root.project-route .rail { display: none; }

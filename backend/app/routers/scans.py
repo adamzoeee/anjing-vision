@@ -11,6 +11,7 @@ from ..models import Scan, User
 from ..schemas import ReferenceMeasurementsIn, ScanOut
 from ..storage import (
     MediaTooLargeError,
+    delete_scan_artifacts,
     delete_media,
     save_media_stream,
 )
@@ -130,7 +131,7 @@ def start_scan(
     return {"ok": True, "scan_id": scan_id}
 
 
-@router.get("/{scan_id}", response_model=ScanOut)
+@router.get("/{scan_id}", response_model=ScanOut, response_model_exclude_none=True)
 def get_scan(
     scan_id: int,
     db: Session = Depends(get_db),
@@ -139,7 +140,11 @@ def get_scan(
     return _own_scan(scan_id, db, org_id)
 
 
-@router.put("/{scan_id}/references", response_model=ScanOut)
+@router.put(
+    "/{scan_id}/references",
+    response_model=ScanOut,
+    response_model_exclude_none=True,
+)
 def set_reference_measurements(
     scan_id: int,
     data: ReferenceMeasurementsIn,
@@ -150,7 +155,27 @@ def set_reference_measurements(
     scan = _own_scan(scan_id, db, admin.org_id)
     if scan.status not in ("uploading", "awaiting_video", "failed"):
         raise HTTPException(409, "扫描已经开始处理，不能修改参考尺寸")
-    scan.reference_measurements = [item.model_dump() for item in data.measurements]
+    scan.reference_measurements = [
+        item.model_dump(exclude_none=True) for item in data.measurements
+    ]
     db.commit()
     db.refresh(scan)
     return scan
+
+
+@router.delete("/{scan_id}", status_code=204)
+def delete_scan(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    scan = _own_scan(scan_id, db, admin.org_id)
+    if scan.status != "done" and scan.media_path:
+        raise HTTPException(409, "处理中或已有素材但未完成的扫描不能删除")
+    try:
+        delete_scan_artifacts(scan.id)
+    except OSError as exc:
+        logger.exception("scan_artifact_delete_failed scan_id=%s", scan.id)
+        raise HTTPException(500, "扫描文件清理失败，记录已保留，请重试") from exc
+    db.delete(scan)
+    db.commit()
