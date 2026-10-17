@@ -13,10 +13,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.concurrency import run_in_threadpool
 
 from .config import Settings, get_settings
 from .db import Base, engine, get_db
-from .routers import auth, preview, projects, renovation, reports, scans
+from .routers import auth, live_capture, preview, projects, renovation, reports, scans
 
 logger = logging.getLogger("anjing.api")
 
@@ -48,7 +49,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_: FastAPI):
         if app_settings.auto_create_tables:
             Base.metadata.create_all(bind=engine)
-        yield
+        try:
+            yield
+        finally:
+            await run_in_threadpool(application.state.live_capture.stop)
 
     application = FastAPI(
         title="安龄智境 API",
@@ -56,6 +60,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     application.state.settings = app_settings
+    from realtime.manager import CaptureManager
+    capture_config = app_settings.realtime.model_copy(
+        update={"lock_dir": Path(app_settings.data_dir) / ".camera-locks"},
+    )
+    application.state.live_capture = CaptureManager(capture_config)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=app_settings.cors_origins,
@@ -150,6 +159,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     application.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+    application.include_router(live_capture.router, prefix="/api/live-capture", tags=["live-capture"])
     application.include_router(projects.router, prefix="/api/projects", tags=["projects"])
     application.include_router(scans.router, prefix="/api/scans", tags=["scans"])
     application.include_router(preview.router, prefix="/api/preview", tags=["preview"])

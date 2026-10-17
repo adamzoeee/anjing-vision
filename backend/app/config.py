@@ -9,6 +9,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
+from realtime.config import CaptureConfig
 
 # 把 .env 全部变量注入 os.environ（override=False：显式环境变量优先），
 # 使 VID2SCENE_* / GAUSSIAN_* 这类非 Settings 字段也能通过 .env 配置，
@@ -45,6 +46,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        env_nested_delimiter="__",
     )
 
     environment: EnvironmentMode = EnvironmentMode.development
@@ -67,6 +69,9 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://localhost:6379/0"
     task_sync: bool = False
     allow_sync_fallback: bool = True
+
+    realtime_enabled: bool = False
+    realtime: CaptureConfig = Field(default_factory=CaptureConfig)
 
     apriltag_enabled: bool = True
     apriltag_family: str = "tagStandard41h12"
