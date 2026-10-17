@@ -147,6 +147,10 @@ function buildShell() {
   const houseScan = Boolean(currentHouse) || lastScanIsHouse();
   const hash = location.hash;
   const isActive = (prefix) => hash.startsWith(prefix);
+  /* 「房间/整屋工作台」入口只在当前就在工作台或其下级页（如方案可视化）时出现 */
+  const scanRoute = /^#\/(?:scans|house)\/(\d+)/.exec(hash);
+  const showRoomNav = Boolean(scanRoute);
+  const roomNavId = scanRoute ? scanRoute[1] : lastScan;
   const initial = esc((user.name || '用').slice(0, 1));
   const skin = getSkin();
   const motion = getMotionMode();
@@ -170,13 +174,10 @@ function buildShell() {
         <a class="nav-item ${isActive('#/projects') ? 'active' : ''}" href="#/projects" data-rail-label="项目工作台">
           ${icon('folder', 18)}<span>项目工作台</span>
         </a>
-        <a class="nav-item ${isActive('#/scans') || isActive('#/house') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="#/scans/${lastScan || '0'}" data-rail-label="${houseScan ? '整屋工作台' : '房间工作台'}">
+        ${showRoomNav ? `
+        <a class="nav-item ${isActive('#/scans') || isActive('#/house') ? 'active' : ''}" href="#/scans/${roomNavId}" data-rail-label="${houseScan ? '整屋工作台' : '房间工作台'}">
           ${icon('home', 18)}<span>${houseScan ? '整屋工作台' : '房间工作台'}</span>
-        </a>
-        <div class="nav-section eyebrow">展示</div>
-        <a class="nav-item ${isActive('#/screen') ? 'active' : ''} ${lastScan ? '' : 'disabled'}" href="${houseScan ? `#/scans/${lastScan}` : `#/screen/${lastScan || '0'}` }" data-rail-label="${houseScan ? '整屋展示' : '大屏模式'}">
-          ${icon('monitor', 18)}<span>${houseScan ? '整屋展示' : '大屏模式'}</span>
-        </a>
+        </a>` : ''}
         ${admin ? `
         <div class="nav-section eyebrow">机构</div>
         <a class="nav-item ${isActive('#/users') ? 'active' : ''}" href="#/users" data-rail-label="用户管理">
@@ -327,8 +328,10 @@ async function render() {
   };
 
   const bg = getBackground3D();
-  bg.setScan(getLastScan());
+  /* 装饰层默认用设计好的温馨户型；只有进到具体 Scan 工作台才换成该 Scan 的真实布局 */
+  bg.setScan(isImmersive ? getLastScan() : '');
   bg.setSubtle(isImmersive);
+  bg.setMuted(hash.startsWith('#/login'));
 
   const transitionSupported = typeof document.startViewTransition === 'function' && motionEnabled();
   if (transitionSupported) {
