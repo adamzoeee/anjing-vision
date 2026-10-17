@@ -52,8 +52,9 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
   assert.throws(() => proposalSavePayload(proposals[1], null), /指纹/);
   const savedNarrative = proposalNarrativeHTML({ intent: '保留家具', evidence: {
     facts: { score: 40, risks: [] }, verification: { comparison: { before_score: 40, after_score: 52 } },
-  } }, (value) => String(value));
+  } }, (value) => String(value), 'saved');
   assert(savedNarrative.includes('保存时验算'));
+  assert(!savedNarrative.includes('生成时验算'));
 
   // Real DOM and production router/view modules; only HTTP/model responses are synthetic.
   let playwright;
@@ -139,6 +140,8 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
     assert((await cards.nth(1).textContent()).includes('当前预览'));
     assert(!(await cards.nth(0).textContent()).includes('当前预览'));
     assert((await page.locator('#assistant-evidence').textContent()).includes('52'));
+    assert((await page.locator('#assistant-evidence .assistant-narrative').textContent()).includes('生成时验算'));
+    assert(!(await page.locator('#assistant-evidence .assistant-narrative').textContent()).includes('保存时验算'));
     assert.equal(await page.locator('#assistant-stage canvas').count(), 1);
     assert.notDeepEqual(await canvasImage(), firstCandidateImage, 'switching candidates must change rendered geometry');
     for (const width of [375, 768, 1024, 1440]) {

@@ -110,7 +110,7 @@ export async function schemeView(ctx, scanId, schemeId) {
       </div>
 
       <div class="scheme-grid">
-        ${(detail.proposal_meta || plan.proposal_meta)?.intent ? `<div class="glass panel rise scheme-span2">${proposalNarrativeHTML(detail.proposal_meta || plan.proposal_meta, esc)}</div>` : ''}
+        ${(detail.proposal_meta || plan.proposal_meta)?.intent ? `<div class="glass panel rise scheme-span2">${proposalNarrativeHTML(detail.proposal_meta || plan.proposal_meta, esc, 'saved')}</div>` : ''}
         <div class="glass panel rise scheme-span2">
           <div class="panel-head">
             <div class="panel-title">${icon('box', 15)} 家居框架图（3D）</div>

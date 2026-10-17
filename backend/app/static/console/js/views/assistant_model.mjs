@@ -38,18 +38,19 @@ export function describeProposalEdit(edit) {
 }
 
 // All strings, including server evidence, pass through the caller's text escaper.
-export function proposalNarrativeHTML(meta, esc) {
+export function proposalNarrativeHTML(meta, esc, phase = 'candidate') {
   if (!meta?.intent) return '';
   const facts = meta.evidence?.facts || {};
   const verification = meta.evidence?.verification || {};
   const comparison = verification.comparison || {};
+  const evidenceTime = phase === 'saved' ? '保存时' : '生成时';
   return `<section class="assistant-narrative">
     <h3>AI 设计意图</h3><p>${esc(meta.intent)}</p>
     <h3>扫描事实</h3>
     <p>原始正式评分：${esc(facts.score ?? '不可评估')}</p>
     <ul>${(facts.risks || []).map((risk) => `<li>${esc(risk.risk_name || risk.metric_code)}：${esc(risk.measured_value ?? '不可评估')}${esc(risk.unit || '')} · ${esc(risk.assessment_status || risk.risk_level || '')}</li>`).join('')}</ul>
-    <h3>保存时验算 · 正式评估链路</h3>
-    <p>保存时依据本方案独立布局验算。${comparison.after_score != null ? `保存时正式评分 ${esc(comparison.before_score ?? '不可评估')} → ${esc(comparison.after_score)}` : ''}</p>
+    <h3>${evidenceTime}验算 · 正式评估链路</h3>
+    <p>${evidenceTime}依据本方案独立布局验算。${comparison.after_score != null ? `${evidenceTime}正式评分 ${esc(comparison.before_score ?? '不可评估')} → ${esc(comparison.after_score)}` : ''}</p>
     <h3>模拟边界</h3><ul>${(meta.limitations || []).map((text) => `<li>${esc(text)}</li>`).join('')}</ul>
   </section>`;
 }
