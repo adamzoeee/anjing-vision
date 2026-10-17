@@ -4,6 +4,7 @@ import '../api/client.dart';
 import '../api/models.dart';
 import '../state/auth_store.dart';
 import 'project_detail_page.dart';
+import 'live_capture_page.dart';
 
 class ProjectsPage extends StatefulWidget {
   const ProjectsPage({super.key});
@@ -73,6 +74,14 @@ class _ProjectsPageState extends State<ProjectsPage> {
       appBar: AppBar(
         title: Text('项目列表（${store.user?.orgName ?? ''}）'),
         actions: [
+          IconButton(
+            tooltip: '实时视频预览',
+            icon: const Icon(Icons.videocam_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const LiveCapturePage()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {

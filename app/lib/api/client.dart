@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'models.dart';
+import 'live_capture.dart';
 
 class ApiClient {
   static const _webApiBaseUrl = String.fromEnvironment(
@@ -20,8 +22,7 @@ class ApiClient {
             BaseOptions(
               // web 端无模拟器概念，直连本机；移动端默认模拟器宿主机地址
               baseUrl:
-                  baseUrl ??
-                  (kIsWeb ? _webApiBaseUrl : 'http://10.0.2.2:8000'),
+                  baseUrl ?? (kIsWeb ? _webApiBaseUrl : 'http://10.0.2.2:8000'),
               connectTimeout: const Duration(seconds: 15),
               receiveTimeout: const Duration(seconds: 60),
             ),
@@ -40,6 +41,38 @@ class ApiClient {
   }
 
   void setToken(String? t) => _token = t;
+
+  Future<LiveCaptureStatus> liveCaptureStatus({
+    CancelToken? cancelToken,
+  }) async => LiveCaptureStatus.fromJson(
+    (await dio.get('/api/live-capture/status', cancelToken: cancelToken)).data,
+  );
+
+  Future<LiveCaptureStatus> startLiveCapture({
+    CancelToken? cancelToken,
+  }) async => LiveCaptureStatus.fromJson(
+    (await dio.post('/api/live-capture/start', cancelToken: cancelToken)).data,
+  );
+
+  Future<LiveCaptureStatus> stopLiveCapture({CancelToken? cancelToken}) async =>
+      LiveCaptureStatus.fromJson(
+        (await dio.post(
+          '/api/live-capture/stop',
+          cancelToken: cancelToken,
+        )).data,
+      );
+
+  Future<Uint8List?> liveCaptureFrame({CancelToken? cancelToken}) async {
+    final response = await dio.get<List<int>>(
+      '/api/live-capture/frame.jpg',
+      cancelToken: cancelToken,
+      options: Options(responseType: ResponseType.bytes),
+    );
+    final bytes = response.data;
+    return response.statusCode == 204 || bytes == null || bytes.isEmpty
+        ? null
+        : Uint8List.fromList(bytes);
+  }
 
   String? get token => _token;
 
@@ -177,7 +210,8 @@ class ApiClient {
             if (suggestionIds != null && suggestionIds.isNotEmpty)
               'suggestion_ids': suggestionIds,
           },
-        )).data as Map,
+        )).data
+        as Map,
   );
 
   Future<Map<String, dynamic>> compare(
