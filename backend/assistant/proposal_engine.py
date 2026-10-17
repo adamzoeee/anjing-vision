@@ -263,10 +263,74 @@ def validate_room_candidate(measurements: dict, structure: dict, candidate: dict
         raise ProposalRejected("not_evaluable") from None
 
 
+def _verified_starters(measurements: dict, structure: dict, baseline: dict) -> list[dict]:
+    """Offer a small menu of exact edits already accepted by the normal validator."""
+    bounds = structure["room"]["bounds_xy"]
+    spans = [bounds["max"][axis] - bounds["min"][axis] for axis in (0, 1)]
+    attempts = 0
+    starters = []
+    strategies = set()
+    layouts = set()
+    operation_targets = set()
+
+    def consider(edits: list[dict]) -> None:
+        nonlocal attempts
+        if attempts >= 40 or len(starters) >= 4:
+            return
+        attempts += 1
+        try:
+            result, improvements = validate_room_candidate(
+                measurements, structure,
+                {"title": "Verified edit", "intent": "Improve assessed room access",
+                 "edits": edits, "risk_codes": []}, baseline=baseline)
+            strategy = _strategy(result["layout_before"], result["layout_after"], improvements)
+            layout = json.dumps(result["layout_after"], sort_keys=True, allow_nan=False)
+            operation_target = tuple((edit["op"], edit.get("target", "all_doors")) for edit in edits)
+            if strategy in strategies or layout in layouts or operation_target in operation_targets:
+                return
+            strategies.add(strategy)
+            layouts.add(layout)
+            operation_targets.add(operation_target)
+            risk_codes = [risk["risk_code"] for risk in baseline["risks"]
+                          if risk.get("metric_code") in {item["metric_code"] for item in improvements}
+                          and risk.get("risk_code")]
+            starters.append({"edits": deepcopy(edits), "risk_codes": list(dict.fromkeys(risk_codes))})
+        except ProposalRejected:
+            pass
+
+    if any(item.get("type") == "door" for item in measurements.get("openings", [])):
+        for width in (1.0, 1.2, 1.5):
+            consider([{"op": "resize_door", "width_m": width}])
+
+    # Try small axis moves first, then larger diagonal relocations. Every
+    # proposed edit is checked against the actual structure before exposure.
+    offsets = [(0, -0.15 * spans[1]), (0, 0.15 * spans[1]),
+               (-0.15 * spans[0], 0), (0.15 * spans[0], 0),
+               (0, -0.25 * spans[1]), (0, 0.25 * spans[1]),
+               (-0.25 * spans[0], 0), (0.25 * spans[0], 0),
+               (0.45 * spans[0], -0.25 * spans[1]),
+               (-0.45 * spans[0], -0.25 * spans[1]),
+               (0.25 * spans[0], -0.25 * spans[1]),
+               (-0.25 * spans[0], -0.25 * spans[1])]
+    for item in measurements.get("objects", []):
+        target = object_id(item)
+        if not target:
+            continue
+        for dx, dy in offsets:
+            consider([{"op": "move", "target": target,
+                       "dx": round(dx, 3), "dy": round(dy, 3)}])
+            if len(starters) >= 4 or attempts >= 40:
+                return starters
+        for quarter_turns in (1, 2, 3):
+            consider([{"op": "rotate", "target": target, "quarter_turns": quarter_turns}])
+    return starters
+
+
 def generate_room_proposals(measurements: dict, structure: dict, goal: str | None, request_fn: Callable) -> dict:
     """Return 2–3 verified choices, or a reasoned failure after one revision."""
     baseline = build_scheme(measurements, structure, [])
     context = _context(measurements, structure, baseline, goal)
+    context["verified_starters"] = _verified_starters(measurements, structure, baseline)
     accepted, rejections = [], []
     strategies, layouts = set(), set()
     for round_number in (1, 2):

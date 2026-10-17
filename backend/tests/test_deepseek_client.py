@@ -84,6 +84,26 @@ def test_forwards_room_context_and_allowed_schema_without_adding_data(monkeypatc
     assert context["objects"] == [{"id": "desk_01", "center": [1.0, 2.0, 0.4]}]
 
 
+def test_prompt_directs_exact_distinct_verified_starter_selection(monkeypatch):
+    context = {"verified_starters": [
+        {"edits": [{"op": "move", "target": "desk_01", "dx": 0, "dy": -0.6}], "risk_codes": ["access"]},
+        {"edits": [{"op": "resize_door", "width_m": 1.0}], "risk_codes": ["door"]},
+    ]}
+
+    def transport(request, timeout):
+        payload = json.loads(request.data)
+        system = payload["messages"][0]["content"].lower()
+        assert "verified_starters" in system
+        assert "exactly" in system
+        assert "distinct" in system
+        assert "do not combine" in system
+        assert json.loads(payload["messages"][1]["content"])["context"] == context
+        return io.BytesIO(completion())
+
+    monkeypatch.setattr("assistant.deepseek_client.urlopen", transport)
+    request_candidates(context, None, api_key=KEY)
+
+
 def test_passes_revision_feedback_and_connection_overrides(monkeypatch):
     def transport(request, timeout):
         payload = json.loads(request.data)

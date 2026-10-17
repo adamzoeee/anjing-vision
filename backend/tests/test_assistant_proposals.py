@@ -77,6 +77,45 @@ def test_context_has_real_ids_and_explicit_schema_without_private_inputs(scheme_
     assert context["risks"] and context["score"] == 84.0
 
 
+def test_context_offers_distinct_server_verified_starters(scheme_inputs):
+    from assistant.proposal_engine import validate_room_candidate
+
+    m, s = scheme_inputs
+    seen = []
+    _engine()(m, s, None, lambda context, feedback: seen.append(context) or [])
+    starters = seen[0]["verified_starters"]
+    assert 2 <= len(starters) <= 4
+    strategies = set()
+    for starter in starters:
+        assert set(starter) == {"edits", "risk_codes"}
+        candidate = {"title": "Model wording", "intent": "Model design intent", **starter}
+        result, improvements = validate_room_candidate(m, s, candidate)
+        assert improvements and not result["conflicts"]
+        strategies.add(tuple((edit["op"], edit.get("target", "all_doors")) for edit in starter["edits"]))
+    assert len(strategies) == len(starters)
+
+
+def test_model_can_select_verified_starters_but_invalid_reply_is_not_filled(scheme_inputs):
+    m, s = scheme_inputs
+
+    def select(context, feedback):
+        return [{"title": f"Model strategy {index}", "intent": "Model design intent", **starter}
+                for index, starter in enumerate(context["verified_starters"][:3])]
+
+    selected = _engine()(m, s, None, select)
+    assert selected["status"] == "ready"
+    assert len(selected["proposals"]) >= 2
+    assert all(item["intent"] == "Model design intent" for item in selected["proposals"])
+
+    def invent(context, feedback):
+        return [_candidate([{"op": "move", "target": "desk_001", "dx": 4, "dy": 0}])]
+
+    invalid = _engine()(m, s, None, invent)
+    assert invalid["status"] == "insufficient"
+    assert invalid["proposals"] == []
+    assert "geometry_conflict" in {item["reason"] for item in invalid["rejections"]}
+
+
 @pytest.mark.parametrize("edit,reason", [
     ({"op": "move", "target": "missing", "dx": 0, "dy": -0.6}, "unknown_target"),
     ({"op": "move", "target": "desk_001", "dx": float("nan"), "dy": 0}, "invalid_number"),
