@@ -22,9 +22,21 @@ const proposals = [1, 2].map((n) => ({
   limitations: ['空间模拟，须现场复核'], disclaimer: '沙盒模拟 · 非实测', requires_construction: false,
 }));
 const fingerprints = { measurements_sha256: 'abc', structure_sha256: 'def' };
+const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
+  ...proposals[1], title: `旋转方案 ${quarter_turns}`,
+  edits: [{ op: 'rotate', target: 'desk_001', quarter_turns }],
+  layout_after: { ...layout(1), objects: layout(1).objects.map((item) => ({
+    ...item, rotation_z_deg: 90 * quarter_turns,
+    size: quarter_turns % 2 ? [.5, 1, .8] : item.size,
+  })) },
+}));
 
 (async () => {
-  const { candidateViewModel, proposalSavePayload, candidateLayout } = await import('../app/static/console/js/views/assistant_model.mjs');
+  const { candidateViewModel, proposalSavePayload, candidateLayout, describeProposalEdit } = await import('../app/static/console/js/views/assistant_model.mjs');
+  for (const [quarter_turns, degrees] of [[1, 90], [2, 180], [3, 270]]) {
+    assert.equal(describeProposalEdit({ op: 'rotate', target: 'desk_001', quarter_turns }), `旋转 desk_001 ${degrees}°`);
+  }
+  assert.equal(describeProposalEdit({ op: 'rotate', target: 'desk_001' }), '旋转 desk_001 90°', 'legacy omitted quarter_turns defaults to one turn like the backend');
   const a = candidateViewModel(proposals[0]);
   const b = candidateViewModel(proposals[1]);
   assert.equal(a.comparison.after_score, 51);
@@ -59,14 +71,17 @@ const fingerprints = { measurements_sha256: 'abc', structure_sha256: 'def' };
         if (mode === 'pending') { pending = res; return; }
         if (mode === 'error') return json({ error: { message: 'AI 服务暂时不可用，请重试' } }, 503);
         if (mode === 'insufficient') return json({ error: { message: '当前资料不足以生成多个可信方案，请补充测量后重试。' } }, 422);
-        return json({ status: 'ready', scan_id: 7, input_fingerprints: fingerprints, proposals });
+        return json({ status: 'ready', scan_id: 7, input_fingerprints: fingerprints, proposals: mode === 'rotations' ? rotationProposals : proposals });
       }
       if (url.pathname.endsWith('/schemes') && req.method === 'POST') {
         let body = ''; for await (const chunk of req) body += chunk;
         if (saveConflict) return json({ detail: '扫描输入已更新，请重新生成方案后保存' }, 409);
         saved = JSON.parse(body); return json({ id: 8, ...saved });
       }
-      if (url.pathname.endsWith('/schemes/8')) return json({ ...proposals[1], plan: { id: 8, name: saved.name, edits: saved.edits }, proposal_meta: { ...saved.proposal_meta, evidence: proposals[1].evidence } });
+      if (url.pathname.endsWith('/schemes/8')) {
+        const proposal = mode === 'rotations' ? rotationProposals.find((item) => item.title === saved.name) : proposals[1];
+        return json({ ...proposal, plan: { id: 8, name: saved.name, edits: saved.edits }, proposal_meta: { ...saved.proposal_meta, evidence: proposal.evidence } });
+      }
       if (url.pathname.endsWith('/schemes')) return json({ schemes: [] });
       if (url.pathname === '/api/scans/7') return json({ id: 7, project_id: 1, status: scanStatus, capture_type: captureType });
       if (url.pathname === '/api/projects/1') return json({ id: 1, name: '测试房间' });
@@ -141,6 +156,19 @@ const fingerprints = { measurements_sha256: 'abc', structure_sha256: 'def' };
     await page.getByText('保留家具，扩大通行空间', { exact: true }).waitFor();
     assert.deepEqual(saved.based_on, fingerprints); assert.equal(saved.source, 'ai');
     assert.equal(saved.proposal_meta.title, '移动桌子');
+    mode = 'rotations';
+    for (const [index, degrees] of [[0, 90], [1, 180], [2, 270]]) {
+      await page.goto(`${base}#/scans/7/assistant`);
+      await page.getByRole('button', { name: '生成改造方案', exact: true }).click();
+      await cards.nth(2).waitFor();
+      await cards.nth(index).click();
+      assert((await page.locator('#assistant-evidence ol li').textContent()).includes(`${degrees}°`), `candidate must describe ${degrees}°`);
+      await page.getByRole('button', { name: '保存此方案', exact: true }).click();
+      await page.waitForURL(/#\/scans\/7\/schemes\/8$/);
+      await page.locator('.edit-list li').waitFor();
+      assert((await page.locator('.edit-list li').textContent()).includes(`${degrees}°`), `saved scheme must describe ${degrees}°`);
+    }
+    mode = 'ready';
     await page.goto(`${base}#/scans/7/assistant`);
     await page.getByRole('button', { name: '生成改造方案', exact: true }).click();
     await cards.nth(1).waitFor();
@@ -180,7 +208,7 @@ const fingerprints = { measurements_sha256: 'abc', structure_sha256: 'def' };
     await page.waitForURL(/#\/scans\/7$/);
     pending?.end(JSON.stringify({ status: 'ready', proposals, input_fingerprints: fingerprints }));
     await page.locator('#btn-room-assistant').waitFor();
-    assert.equal(generationCalls, 6);
+    assert.equal(generationCalls, 9);
     assert.equal(await page.locator('.assistant-candidate').count(), 0);
     scanStatus = 'understanding';
     await page.goto(`${base}#/scans/7/assistant`);

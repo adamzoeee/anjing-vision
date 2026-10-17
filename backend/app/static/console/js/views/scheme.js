@@ -10,13 +10,14 @@ import { esc, toast, fmtScore, riskLevel, emptyState, lightbox } from '../ui.js'
 import { navigate } from '../app.js';
 import { createSchemeViewer, diffLayout } from '../viewer/scheme3d.mjs';
 import { drawPlanPNG } from './room.js';
-import { proposalNarrativeHTML } from './assistant_model.mjs';
+import { describeProposalEdit, proposalNarrativeHTML } from './assistant_model.mjs';
 
 const EDIT_LABEL = {
-  move: '移动', add: '新增', remove: '移除', rotate: '旋转 90°', resize_door: '调整门洞宽度',
+  move: '移动', add: '新增', remove: '移除', resize_door: '调整门洞宽度',
 };
 
 function describeEdit(edit) {
+  if (edit?.op === 'rotate') return describeProposalEdit(edit);
   const op = EDIT_LABEL[edit?.op] || edit?.op || '编辑';
   const target = edit?.target || edit?.label || '物体';
   if (edit?.op === 'move') {

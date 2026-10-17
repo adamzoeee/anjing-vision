@@ -32,7 +32,7 @@ export function describeProposalEdit(edit) {
   if (edit.op === 'move') return `移动 ${target}：X ${edit.dx ?? 0} m，Y ${edit.dy ?? 0} m`;
   if (edit.op === 'add') return `新增 ${target}（假设放置，尺寸 ${(edit.size || []).join(' × ')} m）`;
   if (edit.op === 'remove') return `移除 ${target}`;
-  if (edit.op === 'rotate') return `旋转 ${target} ${edit.angle_deg ?? 90}°`;
+  if (edit.op === 'rotate') return `旋转 ${target} ${90 * (edit.quarter_turns || 1)}°`;
   if (edit.op === 'resize_door') return `调整门宽 ${edit.width_m} m（需施工复核）`;
   return `${edit.op || '编辑'} ${target}`;
 }
