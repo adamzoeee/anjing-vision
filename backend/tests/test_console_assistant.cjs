@@ -271,6 +271,7 @@ const rotationProposals = [1, 2, 3].map((quarter_turns) => ({
     assert.equal(await memberPage.getByRole('button', { name: '重新上传新视频', exact: true }).isDisabled(), true);
     await memberPage.close();
     // Reupload must require a fresh file and create a separate scan, never reuse scan 7's media.
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(`${base}#/scans/7/assistant`);
     await page.reload();
     await page.getByRole('button', { name: '生成改造方案', exact: true }).click();
