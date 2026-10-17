@@ -97,6 +97,7 @@
 - Modify: `backend/app/static/console/js/views/room.js`
 - Modify: `backend/app/static/console/js/views/scheme.js`
 - Test: `backend/tests/test_console_assistant.cjs`
+- Test: `backend/tests/test_console_asset_cache.py`（对齐现有 `no-store` 响应头）
 
 **Interfaces:**
 - Consumes: Task 2 的候选响应和 Task 3 的保存接口；`createSchemeViewer`/`diffLayout` from `scheme3d.mjs`。
@@ -105,5 +106,5 @@
 - [ ] **Step 1: 写失败测试。** Node 测试断言各候选独立布局/分数绑定，切换前后所用布局正确，保存载荷含指纹和元数据，标题/描述按文本转义；验证房间页助手入口实际导航到新页面且旧模拟控件不呈现（测试用户可见行为，不搜索源码）。
 - [ ] **Step 2: 验证测试失败。** 从 `backend` 执行 `node tests/test_console_assistant.cjs`，预期因新模块或路由缺失失败。
 - [ ] **Step 3: 实现新页面和入口。** 房间页顶部按钮进入新路由；三案卡选择控制同一 3D viewer，未保存即可看前后；卡片呈现服务端证据、限制和保存动作。生成中显示进度，离开页面时中止页面请求。旧模拟面板从工作台移除；方案详情显示保存的说明。复用工作台 token、主题、组件与 `scheme3d.mjs`，窄屏折叠且保留键盘焦点样式。
-- [ ] **Step 4: 重跑测试及静态回归。** 执行 `node tests/test_console_assistant.cjs`、`node tests/test_console_scheme3d.cjs` 与相关后端测试，预期通过；在运行中的 8000/console 对真实房间做一次受控模型调用，验证候选切换、改后框架图、保存与重读。
+- [ ] **Step 4: 重跑测试及静态回归。** 执行 `node tests/test_console_assistant.cjs`、`node tests/test_console_scheme3d.cjs` 与相关后端测试。将旧缓存测试的 `no-cache` 断言改为当前中间件实际设置的 `no-store` 并验证；此差异由早期缓存策略变更产生，不能为通过测试而减弱运行时策略。后端 pytest 均使用临时目录保留参数并跳过含批量删除循环的 `test_preview_frame_calibration.py`。在运行中的 8000/console 对真实房间做一次受控模型调用，验证候选切换、改后框架图、保存与重读。
 - [ ] **Step 5: 提交并核查。** 更新 `README.md` 和 `docs/INDEX.md` 的助手入口说明；运行 `git diff --check`、目标测试与 `git status --short`，提交本任务文件与文档，不包含密钥。
